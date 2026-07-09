@@ -440,14 +440,23 @@ export default function App() {
     (async () => {
       let s = await sget(SETUP_KEY);
       if (!s) {
-        s = {
-          drivers: seedDrivers().map((d) => d.firstName === "Toni" && d.lastName === "Penno" ? { ...d, plate: "N-SH 1234" } : d), // Demo-Kennzeichen für den Gast-Link-Test
-          dispatchers: seedDispatchers(), locations: seedLocations(), zones: ZONES,
-          matrix: seedMatrix(), config: { ...seedConfig(), coordinationPhone: "+491701234567" }, // Demo-Nummer, bitte vor dem Einsatz durch die echte ersetzen
-          // Fester Demo-Token zum sofortigen Ausprobieren (Einstellungen → Gast-/Artist-Links → Vorschau).
-          guestTokens: [{ token: "demo0000timmytrumpet0000000000", djName: "Timmy Trumpet", createdAt: Date.now() }],
-        };
-        await sset(SETUP_KEY, s);
+        if (hasSupabase()) {
+          // Bei Supabase heißt "nichts geladen" fast immer: kurzer Verbindungsfehler,
+          // NICHT ein leerer Erststart (die Zeile existiert ja per Datenbank-Schema
+          // immer). Deshalb hier NIE Demo-Daten zurückschreiben — sonst könnte ein
+          // kurzer Netzwerk-Hänger mitten im Betrieb echte Daten überschreiben.
+          // Stattdessen: sicherer, rein lokaler Platzhalter, nichts wird gespeichert.
+          s = { drivers: [], dispatchers: [], locations: [], zones: ZONES, matrix: {}, config: seedConfig(), guestTokens: [], rev: 0 };
+        } else {
+          s = {
+            drivers: seedDrivers().map((d) => d.firstName === "Toni" && d.lastName === "Penno" ? { ...d, plate: "N-SH 1234" } : d), // Demo-Kennzeichen für den Gast-Link-Test
+            dispatchers: seedDispatchers(), locations: seedLocations(), zones: ZONES,
+            matrix: seedMatrix(), config: { ...seedConfig(), coordinationPhone: "+491701234567" }, // Demo-Nummer, bitte vor dem Einsatz durch die echte ersetzen
+            // Fester Demo-Token zum sofortigen Ausprobieren (Einstellungen → Gast-/Artist-Links → Vorschau).
+            guestTokens: [{ token: "demo0000timmytrumpet0000000000", djName: "Timmy Trumpet", createdAt: Date.now() }],
+          };
+          await sset(SETUP_KEY, s);
+        }
       } else {
         let touched = false;
         if (!s.dispatchers) { s = { ...s, dispatchers: seedDispatchers() }; touched = true; } // Migration: älterer Stand ohne Leitstellen-Nutzer
@@ -459,10 +468,14 @@ export default function App() {
         if (s.config && s.config.stagePin === undefined) { s = { ...s, config: { ...s.config, stagePin: "" } }; touched = true; }
         if (s.drivers && s.drivers.some((d) => d.pin === undefined)) { s = { ...s, drivers: s.drivers.map((d) => ({ ...d, pin: d.pin ?? "" })) }; touched = true; }
         if (s.dispatchers && s.dispatchers.some((p) => p.pin === undefined)) { s = { ...s, dispatchers: s.dispatchers.map((p) => ({ ...p, pin: p.pin ?? "" })) }; touched = true; }
-        if (touched) await sset(SETUP_KEY, s);
+        if (touched && !hasSupabase()) await sset(SETUP_KEY, s); // bei Supabase pflegt die Leitstelle das selbst über die Einstellungen-UI, kein automatisches Zurückschreiben von Migrationen
       }
       let d = await sget(DYN_KEY);
-      if (!d) { d = { rides: seedExampleRides(s), driverState: {}, rev: 0 }; await sset(DYN_KEY, d); }
+      if (!d) {
+        // Gleiche Begründung wie oben bei setup: bei Supabase nie automatisch schreiben.
+        d = hasSupabase() ? { rides: [], driverState: {}, rev: 0 } : { rides: seedExampleRides(s), driverState: {}, rev: 0 };
+        if (!hasSupabase()) await sset(DYN_KEY, d);
+      }
       setSetup(s); setDyn(d); setLoading(false);
 
       // Gespeicherten Login wiederherstellen — nur wenn der referenzierte Fahrer/
