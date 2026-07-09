@@ -43,7 +43,11 @@ const hasStore = typeof window !== "undefined" && window.storage;
 // window.__obfSupabase ab, falls VITE_SUPABASE_URL/ANON_KEY gesetzt sind. Im
 // Chat-Artifact existiert dieser Wert nicht -> automatischer Rückfall auf
 // window.storage. Dieselbe Datei läuft also unverändert in beiden Umgebungen.
-const hasSupabase = typeof window !== "undefined" && window.__obfSupabase;
+// Als Funktion, nicht als eingefrorene Konstante: main.jsx setzt window.__obfSupabase
+// erst NACHDEM dieses Modul (per import) schon geladen wurde — eine Konstante hier
+// würde also immer "nicht verbunden" einfrieren, selbst wenn Supabase kurz danach
+// bereitsteht. Bei jedem Aufruf frisch prüfen behebt das zuverlässig.
+const hasSupabase = () => typeof window !== "undefined" && !!window.__obfSupabase;
 
 const fromDbDriver = (d) => ({
   id: d.id, firstName: d.first_name, lastName: d.last_name, vehicleType: d.vehicle_type,
@@ -106,7 +110,7 @@ async function sbSetDyn(val) {
 
 async function sget(key) {
   try {
-    if (hasSupabase) return key === SETUP_KEY ? await sbGetSetup() : await sbGetDyn();
+    if (hasSupabase()) return key === SETUP_KEY ? await sbGetSetup() : await sbGetDyn();
     if (!hasStore) return mem[key] ? JSON.parse(mem[key]) : null;
     const r = await window.storage.get(key, SHARED);
     return r ? JSON.parse(r.value) : null;
@@ -114,7 +118,7 @@ async function sget(key) {
 }
 async function sset(key, val) {
   try {
-    if (hasSupabase) { key === SETUP_KEY ? await sbSetSetup(val) : await sbSetDyn(val); return true; }
+    if (hasSupabase()) { key === SETUP_KEY ? await sbSetSetup(val) : await sbSetDyn(val); return true; }
     const s = JSON.stringify(val);
     if (!hasStore) { mem[key] = s; return true; }
     await window.storage.set(key, s, SHARED);
@@ -2346,7 +2350,7 @@ async function askChatAssistant(setup, dyn, day, history, userText) {
   // Im Chat-Artifact (window.storage vorhanden, kein Supabase-Client): direkt gegen
   // die Anthropic API, wie von Claude bereitgestellt. Nach dem Deploy (hasSupabase)
   // läuft derselbe Aufruf stattdessen über /api/chat, wo der echte Schlüssel liegt.
-  if (hasSupabase) {
+  if (hasSupabase()) {
     const res = await fetch("/api/chat", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
