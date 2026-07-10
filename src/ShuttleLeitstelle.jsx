@@ -74,13 +74,24 @@ const toDbDriver = (d) => ({
 
 async function sbGetSetup() {
   const sb = window.__obfSupabase;
-  const [{ data: row }, { data: drivers }] = await Promise.all([
+  const [settingsRes, driversRes] = await Promise.all([
     sb.from("settings").select("*").eq("id", 1).single(),
     sb.from("drivers").select("*"),
   ]);
+  // PGRST116 = "keine Zeile gefunden" bei .single() -> das ist ein legitimer
+  // Fall (z. B. Schema gerade erst angelegt), kein Ladefehler. Jeder andere
+  // Fehler (Netzwerk, RLS, Timeout, ...) muss als echter Fehler durchgereicht
+  // werden statt hier still zu "keine Daten" zu werden (siehe sget unten).
+  if (settingsRes.error && settingsRes.error.code !== "PGRST116") {
+    throw new Error("Supabase-Ladefehler (settings): " + settingsRes.error.message);
+  }
+  if (driversRes.error) {
+    throw new Error("Supabase-Ladefehler (drivers): " + driversRes.error.message);
+  }
+  const row = settingsRes.data;
   if (!row) return null;
   return {
-    drivers: (drivers || []).map(fromDbDriver),
+    drivers: (driversRes.data || []).map(fromDbDriver),
     dispatchers: row.dispatchers || [],
     locations: row.locations || [],
     matrix: row.matrix || {},
@@ -98,24 +109,35 @@ async function sbGetSetup() {
 // baseRev wird für ein atomares Compare-and-Swap in der DB gebraucht:
 // schlägt es fehl (jemand anders hat zwischenzeitlich geschrieben), kommt
 // { ok:false, value: <aktueller Serverstand> } zurück statt zu überschreiben.
+// Nicht mehr parallel (Promise.all): Settings-CAS und Drivers-Save liefen
+// vorher gleichzeitig, sodass Drivers auch dann geschrieben wurden, wenn der
+// Settings-CAS wegen Rev-Konflikt scheiterte — nicht atomar. Jetzt erst
+// Settings-CAS, Ergebnis prüfen, NUR bei echtem Erfolg (row.ok) danach
+// dispatcher_save_drivers. Schlägt die Drivers-RPC ihrerseits fehl, wird das
+// (wie jeder echte Supabase-Fehler) geworfen statt verschluckt.
 async function sbSetSetup(val, baseRev) {
   const sb = window.__obfSupabase;
-  const [{ data, error }] = await Promise.all([
-    sb.rpc("write_setup_if_unchanged", {
-      p_expected_rev: baseRev ?? 0,
-      p_dispatchers: val.dispatchers || [],
-      p_locations: val.locations || [],
-      p_matrix: val.matrix || {},
-      p_zones: val.zones || [],
-      p_config: val.config || {},
-    }),
-    val.drivers && val.drivers.length
-      ? sb.rpc("dispatcher_save_drivers", { p_drivers: val.drivers.map(toDbDriver) })
-      : Promise.resolve(),
-  ]);
+  const { data, error } = await sb.rpc("write_setup_if_unchanged", {
+    p_expected_rev: baseRev ?? 0,
+    p_dispatchers: val.dispatchers || [],
+    p_locations: val.locations || [],
+    p_matrix: val.matrix || {},
+    p_zones: val.zones || [],
+    p_config: val.config || {},
+  });
   if (error) throw error;
   const row = Array.isArray(data) ? data[0] : data;
   if (!row) return { ok: false, value: null };
+  if (row.ok) {
+    // Auf Array.isArray statt val.drivers.length prüfen: ein bewusst
+    // geleertes Fahrer-Array ([]) muss ebenfalls gespeichert werden, sonst
+    // lassen sich nie alle Fahrer auf einmal löschen. undefined/null
+    // (Aufruf ohne Drivers-Änderung) lässt die Fahrer-Tabelle unangetastet.
+    if (Array.isArray(val.drivers)) {
+      const { error: driversError } = await sb.rpc("dispatcher_save_drivers", { p_drivers: val.drivers.map(toDbDriver) });
+      if (driversError) throw driversError;
+    }
+  }
   const { data: drivers } = await sb.from("drivers").select("*");
   return {
     ok: row.ok,
@@ -144,7 +166,12 @@ async function saveGuestTokens(tokens) {
 }
 async function sbGetDyn() {
   const sb = window.__obfSupabase;
-  const { data: row } = await sb.from("settings").select("dyn_data, dyn_rev").eq("id", 1).single();
+  const { data: row, error } = await sb.from("settings").select("dyn_data, dyn_rev").eq("id", 1).single();
+  // Siehe sbGetSetup: PGRST116 (keine Zeile) ist legitim, alles andere ein
+  // echter Ladefehler, der nicht als "keine Daten" durchgehen darf.
+  if (error && error.code !== "PGRST116") {
+    throw new Error("Supabase-Ladefehler (dyn_data): " + error.message);
+  }
   if (!row) return null;
   const d = row.dyn_data || {};
   return { rides: d.rides || [], driverState: d.driverState || {}, dispatcherState: d.dispatcherState || {}, rev: row.dyn_rev || 0 };
@@ -169,12 +196,18 @@ async function sbSetDyn(val, baseRev) {
 }
 
 async function sget(key) {
+  // WICHTIG: der Supabase-Pfad bewusst NICHT in dieses try/catch einschließen.
+  // sbGetSetup/sbGetDyn werfen bei einem echten Ladefehler (Netzwerk, RLS,
+  // Timeout, ...) jetzt selbst ("throw new Error(...)"), das muss bis zum
+  // Aufrufer durchgereicht werden — sonst sieht ein Ladefehler für die App
+  // identisch aus wie "es gibt einfach noch keine Daten", und sie zeigt sich
+  // im schlimmsten Fall leer statt einen Fehler zu melden.
+  if (hasSupabase()) return key === SETUP_KEY ? await sbGetSetup() : await sbGetDyn();
   try {
-    if (hasSupabase()) return key === SETUP_KEY ? await sbGetSetup() : await sbGetDyn();
     if (!hasStore) return mem[key] ? JSON.parse(mem[key]) : null;
     const r = await window.storage.get(key, SHARED);
     return r ? JSON.parse(r.value) : null;
-  } catch { return null; }
+  } catch { return null; } // window.storage: fehlender Key wirft laut API, das ist hier der Normalfall "keine Daten"
 }
 // Rückgabe jetzt { ok, value } statt boolean: bei Supabase ist "ok" das
 // Ergebnis eines echten atomaren Compare-and-Swap in der DB (siehe
@@ -520,6 +553,18 @@ export default function App() {
   const useMobileView = viewOverride === "mobile" || (viewOverride === "auto" && isNarrow);
   const setViewMode = (mode) => { setViewOverride(mode); try { localStorage.setItem("obf:viewMode", mode); } catch {} };
   const [loading, setLoading] = useState(true);
+  // Unterscheidung "noch keine Daten" (loadError=null, ganz normaler erster
+  // Start) vs. "echter Ladefehler/Supabase nicht erreichbar" (loadError
+  // gesetzt) — siehe sget/sbGetSetup/sbGetDyn. connIssue ist die schwächere
+  // Variante während des laufenden Betriebs (Polling schlägt mal fehl):
+  // dort NICHT die ganze App durch eine Fehlerseite ersetzen (würde bei
+  // jedem kurzen Netzwerk-Hänger die laufende Ansicht wegreißen), sondern
+  // nur ein Hinweis-Banner über den zuletzt bekannten, weiter angezeigten
+  // Daten.
+  const [loadError, setLoadError] = useState(null);
+  const [connIssue, setConnIssue] = useState(null);
+  const [retryTick, setRetryTick] = useState(0);
+  const retryLoad = () => { setLoadError(null); setLoading(true); setRetryTick((t) => t + 1); };
   // Gast-Link: ?guest=TOKEN in der URL (Produktivbetrieb) ODER lokale Vorschau aus den
   // Einstellungen heraus (fürs Testen hier im Artifact, wo eine echte URL-Navigation
   // nicht möglich ist). Wird VOR dem normalen Login geprüft — Gäste loggen sich nie ein.
@@ -532,6 +577,7 @@ export default function App() {
   // Initial laden + ggf. seeden
   useEffect(() => {
     (async () => {
+    try {
       let s = await sget(SETUP_KEY);
       if (!s) {
         if (hasSupabase()) {
@@ -582,20 +628,40 @@ export default function App() {
         else if (saved.role === "stage") setSessionState(saved);
         else saveSession(null); // veralteter/ungültiger Stand -> aufräumen
       }
+    } catch (e) {
+      // Echter Ladefehler (sget wirft jetzt bei Supabase-/Netzwerkfehlern statt
+      // still null zu liefern, siehe sget/sbGetSetup/sbGetDyn). NICHT setSetup/
+      // setDyn aufrufen — sonst würde die App mit leeren Daten weiterlaufen und
+      // das wie ein echter "keine Fahrten"-Zustand aussehen. Stattdessen eigene
+      // Fehleransicht statt Splash oder leerem Dashboard.
+      console.error("Initial-Load fehlgeschlagen:", e);
+      setLoadError(e?.message || "Unbekannter Ladefehler");
+      setLoading(false);
+    }
     })();
-  }, []);
+  }, [retryTick]);
 
-  // Polling der dynamischen Daten
+  // Polling der dynamischen Daten. Ein einzelner fehlgeschlagener Poll (kurzer
+  // Netzwerk-Hänger) darf die laufende Ansicht NICHT wegreißen — es bleibt bei
+  // den zuletzt bekannten setup/dyn, nur ein kleines Hinweis-Banner zeigt an,
+  // dass der letzte Abgleich fehlgeschlagen ist. Erst ein erfolgreicher Poll
+  // löscht das Banner wieder.
   useEffect(() => {
-    if (loading) return;
+    if (loading || loadError) return;
     const t = setInterval(async () => {
-      const d = await sget(DYN_KEY);
-      if (d) setDyn((prev) => (prev && prev.rev === d.rev ? prev : d));
-      const s = await sget(SETUP_KEY);
-      if (s) setSetup((prev) => (JSON.stringify(prev) === JSON.stringify(s) ? prev : s));
+      try {
+        const d = await sget(DYN_KEY);
+        if (d) setDyn((prev) => (prev && prev.rev === d.rev ? prev : d));
+        const s = await sget(SETUP_KEY);
+        if (s) setSetup((prev) => (JSON.stringify(prev) === JSON.stringify(s) ? prev : s));
+        setConnIssue(null);
+      } catch (e) {
+        console.error("Polling fehlgeschlagen:", e);
+        setConnIssue(e?.message || "Verbindung zu Supabase gerade gestört");
+      }
     }, POLL_MS);
     return () => clearInterval(t);
-  }, [loading]);
+  }, [loading, loadError]);
 
   // Punkt 8: Read-Check-Write mit Retry. Ändert ein anderes Gerät zwischendurch,
   // wird die Mutation auf den frischen Stand neu angewendet statt ihn zu überschreiben.
@@ -618,32 +684,43 @@ export default function App() {
     setUndoCount(undoStackRef.current.length);
   }, []);
 
+  // Rückgabe jetzt IMMER { ok, value, error }, nicht mehr nur die rohen Daten
+  // (siehe applyChatAction/confirmAction unten, die das jetzt wirklich
+  // auswerten). Wirft NIE ungefangen — sget/sset können bei einem echten
+  // Supabase-/Netzwerkfehler werfen (siehe sget oben), das wird hier zu
+  // einem sprechenden { ok:false, error } statt als unhandled rejection im
+  // Nirgendwo zu landen.
   const updateDyn = useCallback(async (mutator) => {
     let last = null;
-    for (let attempt = 0; attempt < 6; attempt++) {
-      const cur = (await sget(DYN_KEY)) || { rides: [], driverState: {}, dispatcherState: {}, rev: 0 };
-      const baseRev = cur.rev || 0;
-      const next = mutator(structuredClone(cur));
-      next.rev = baseRev + 1;
-      const result = await sset(DYN_KEY, next, baseRev);
-      if (result.ok) {
-        const applied = result.value || next;
-        pushUndoEntry(cur.rides, applied.rides);
-        setDyn(applied);
-        return applied;
+    try {
+      for (let attempt = 0; attempt < 6; attempt++) {
+        const cur = (await sget(DYN_KEY)) || { rides: [], driverState: {}, dispatcherState: {}, rev: 0 };
+        const baseRev = cur.rev || 0;
+        const next = mutator(structuredClone(cur));
+        next.rev = baseRev + 1;
+        const result = await sset(DYN_KEY, next, baseRev);
+        if (result.ok) {
+          const applied = result.value || next;
+          pushUndoEntry(cur.rides, applied.rides);
+          setDyn(applied);
+          return { ok: true, value: applied };
+        }
+        // Konflikt (baseRev stimmt in der DB nicht mehr) -> mit dem
+        // zurückgegebenen, aktuellen Serverstand erneut versuchen
+        last = result.value;
       }
-      // Konflikt (baseRev stimmt in der DB nicht mehr) -> mit dem
-      // zurückgegebenen, aktuellen Serverstand erneut versuchen
-      last = result.value;
+      // Nach wiederholten Kollisionen (bei wenigen gleichzeitigen Nutzern sehr
+      // unwahrscheinlich): NICHT blind überschreiben, das würde genau die
+      // Race Condition zurückbringen, die dieses CAS verhindern soll. Statt-
+      // dessen den aktuellen Serverstand übernehmen, die Änderung selbst geht
+      // verloren und muss erneut ausgelöst werden (z. B. nochmal klicken).
+      console.error("updateDyn: mehrfacher Schreibkonflikt, Änderung nicht angewendet");
+      if (last) setDyn(last);
+      return { ok: false, value: last, error: "Mehrfacher Schreibkonflikt, bitte erneut versuchen." };
+    } catch (e) {
+      console.error("updateDyn: Speicherfehler", e);
+      return { ok: false, value: null, error: e?.message || "Unbekannter Speicherfehler" };
     }
-    // Nach wiederholten Kollisionen (bei wenigen gleichzeitigen Nutzern sehr
-    // unwahrscheinlich): NICHT blind überschreiben, das würde genau die
-    // Race Condition zurückbringen, die dieses CAS verhindern soll. Statt-
-    // dessen den aktuellen Serverstand übernehmen, die Änderung selbst geht
-    // verloren und muss erneut ausgelöst werden (z. B. nochmal klicken).
-    console.error("updateDyn: mehrfacher Schreibkonflikt, Änderung nicht angewendet");
-    if (last) setDyn(last);
-    return last;
   }, [pushUndoEntry]);
 
   // Nimmt gezielt nur die Fahrten zurück, die die letzte Änderung betraf — nicht
@@ -667,51 +744,59 @@ export default function App() {
     });
   }, [updateDyn]);
 
+  // Gleiche Rückgabe-Form wie updateDyn: { ok, value, error }, nie ungefangen werfen.
   const updateSetup = useCallback(async (mutator) => {
     let last = null;
-    for (let attempt = 0; attempt < 6; attempt++) {
-      const cur = (await sget(SETUP_KEY)) || setup;
-      const baseRev = cur.rev || 0;
-      const next = mutator(structuredClone(cur));
-      next.rev = baseRev + 1;
-      const result = await sset(SETUP_KEY, next, baseRev);
-      if (result.ok) {
-        const applied = result.value || next;
-        setSetup(applied);
-        return applied;
+    try {
+      for (let attempt = 0; attempt < 6; attempt++) {
+        const cur = (await sget(SETUP_KEY)) || setup;
+        const baseRev = cur.rev || 0;
+        const next = mutator(structuredClone(cur));
+        next.rev = baseRev + 1;
+        const result = await sset(SETUP_KEY, next, baseRev);
+        if (result.ok) {
+          const applied = result.value || next;
+          setSetup(applied);
+          return { ok: true, value: applied };
+        }
+        last = result.value;
       }
-      last = result.value;
+      console.error("updateSetup: mehrfacher Schreibkonflikt, Änderung nicht angewendet");
+      if (last) setSetup(last);
+      return { ok: false, value: last, error: "Mehrfacher Schreibkonflikt, bitte erneut versuchen." };
+    } catch (e) {
+      console.error("updateSetup: Speicherfehler", e);
+      return { ok: false, value: null, error: e?.message || "Unbekannter Speicherfehler" };
     }
-    console.error("updateSetup: mehrfacher Schreibkonflikt, Änderung nicht angewendet");
-    if (last) setSetup(last);
-    return last;
   }, [setup]);
 
   if (loading) return <><BrandStyles /><Splash /></>;
+  if (loadError) return <><BrandStyles /><LoadErrorScreen message={loadError} onRetry={retryLoad} /></>;
 
   // Gast-Link hat Vorrang vor allem anderen — kein Login, kein Rollen-Wechsel nötig.
   if (guestToken) {
-    return <><BrandStyles /><GuestApp setup={setup} dyn={dyn} token={guestToken} updateDyn={updateDyn}
+    return <><BrandStyles /><ConnIssueBanner message={connIssue} /><GuestApp setup={setup} dyn={dyn} token={guestToken} updateDyn={updateDyn}
       onExitPreview={previewGuestToken ? () => setPreviewGuestToken(null) : null} /></>;
   }
 
-  if (!session) return <><BrandStyles /><Login setup={setup} onLogin={setSession} /></>;
+  if (!session) return <><BrandStyles /><ConnIssueBanner message={connIssue} /><Login setup={setup} onLogin={setSession} /></>;
 
   if (session.role === "driver") {
-    return <><BrandStyles /><DriverApp setup={setup} dyn={dyn} session={session}
+    return <><BrandStyles /><ConnIssueBanner message={connIssue} /><DriverApp setup={setup} dyn={dyn} session={session}
       updateDyn={updateDyn} onLogout={() => { unsubscribePush(session.driverId, "driverState", updateDyn); setSession(null); }} /></>;
   }
   if (session.role === "stage") {
-    return <><BrandStyles /><StageApp setup={setup} dyn={dyn}
+    return <><BrandStyles /><ConnIssueBanner message={connIssue} /><StageApp setup={setup} dyn={dyn}
       updateDyn={updateDyn} onLogout={() => setSession(null)} /></>;
   }
   if (useMobileView) {
-    return <><BrandStyles /><MobileDispatcherView setup={setup} dyn={dyn} session={session}
+    return <><BrandStyles /><ConnIssueBanner message={connIssue} /><MobileDispatcherView setup={setup} dyn={dyn} session={session}
       updateDyn={updateDyn} onLogout={() => { unsubscribePush(session.dispatcherId, "dispatcherState", updateDyn); setSession(null); }}
       onSwitchToDesktop={() => setViewMode("desktop")} /></>;
   }
   return <>
     <BrandStyles />
+    <ConnIssueBanner message={connIssue} />
     <Dashboard setup={setup} dyn={dyn} session={session}
       updateDyn={updateDyn} updateSetup={updateSetup} onLogout={() => { unsubscribePush(session.dispatcherId, "dispatcherState", updateDyn); setSession(null); }}
       onPreviewGuest={setPreviewGuestToken} onUndo={undo} undoCount={undoCount}
@@ -762,6 +847,41 @@ function Splash() {
         <RefreshCw className="w-5 h-5 animate-spin text-orange-400" />
         <span className="font-mono text-sm">Leitstelle wird geladen…</span>
       </div>
+    </div>
+  );
+}
+
+// Eigene Fehleransicht statt Splash-Endlosschleife oder leerem Dashboard,
+// wenn der Initial-Load einen echten Ladefehler wirft (siehe sget/
+// sbGetSetup/sbGetDyn). Bewusst von "keine Daten" getrennt: dieser Fall
+// bedeutet "wir wissen nicht, was in der DB steht", nicht "es steht nichts drin".
+function LoadErrorScreen({ message, onRetry }) {
+  return (
+    <div className="min-h-screen w-full flex flex-col items-center justify-center gap-4 bg-stone-950 text-stone-300 px-6 text-center">
+      <img src={OB_HORIZ} alt="Open Beatz" style={obInvert} className="h-10 w-auto opacity-90" />
+      <AlertTriangle className="w-8 h-8 text-red-400" />
+      <div className="font-mono text-sm text-stone-100">Daten konnten nicht geladen werden</div>
+      <div className="text-xs text-stone-500 max-w-sm break-words">{message}</div>
+      <div className="text-xs text-stone-600 max-w-sm">Keine Verbindung zu Supabase oder ein Ladefehler. Es wurden keine Platzhalter- oder Demo-Daten angezeigt.</div>
+      <button onClick={onRetry}
+        className="mt-2 flex items-center gap-2 px-4 py-2 rounded-lg bg-orange-600 hover:bg-orange-500 text-white text-sm font-medium">
+        <RefreshCw className="w-4 h-4" /> Erneut versuchen
+      </button>
+    </div>
+  );
+}
+
+// Dezentes Hinweis-Banner für einen fehlgeschlagenen Polling-Zyklus (kurzer
+// Netzwerk-Hänger o. ä.) — reißt die laufende Ansicht bewusst NICHT weg,
+// zeigt nur an, dass der letzte Datenabgleich nicht geklappt hat. Rein
+// informativ, keine Aktion/kein Button, greift also auch beim Stage Manager
+// nicht in dessen Ablauf ein.
+function ConnIssueBanner({ message }) {
+  if (!message) return null;
+  return (
+    <div className="fixed top-0 inset-x-0 z-[60] bg-red-900/90 text-red-100 text-xs px-3 py-1.5 flex items-center justify-center gap-2 font-mono">
+      <AlertTriangle className="w-3.5 h-3.5 flex-shrink-0" />
+      <span>Letzter Datenabgleich fehlgeschlagen: {message}</span>
     </div>
   );
 }
@@ -2697,13 +2817,20 @@ async function askChatAssistant(setup, dyn, day, history, userText) {
 // Führt eine bestätigte Aktion über GENAU dieselben Funktionen aus wie die
 // normalen Buttons (setRideStatus/logRide/dateForNightTime/triggerPush) —
 // der Chat bekommt keinen eigenen, ungeprüften Schreibweg auf die Daten.
-function applyChatAction(setup, dyn, updateDyn, by, action) {
+// ASYNC und awaitet updateDyn wirklich: erst wenn der Schreibvorgang von
+// updateDyn mit { ok:true } bestätigt ist, gilt die Aktion als übernommen.
+// Schlägt updateDyn fehl (Konflikt nach mehreren Versuchen oder ein echter
+// Supabase-/Netzwerkfehler, siehe updateDyn oben), wird das als Fehler
+// zurückgegeben statt stillschweigend so zu tun, als wäre gespeichert
+// worden — der Push nach erfolgreicher Zuteilung/Umplanung läuft deshalb
+// ebenfalls erst NACH dem bestätigten Schreiben.
+async function applyChatAction(setup, dyn, updateDyn, by, action) {
   const ride = (dyn.rides || []).find((r) => r.id === action.rideId);
   if (!ride) return { ok: false, error: "Diese Fahrt existiert nicht mehr." };
 
   if (action.type === "assign") {
     if (action.driverId && !setup.drivers.some((d) => d.id === action.driverId)) return { ok: false, error: "Unbekannter Fahrer." };
-    updateDyn((d) => {
+    const res = await updateDyn((d) => {
       const r = d.rides.find((x) => x.id === action.rideId);
       if (r) {
         logRide(r, r.assignedDriverId ? "reassigned" : "assigned", by, "Über Chat-Assistent vorgeschlagen, bestätigt");
@@ -2712,12 +2839,13 @@ function applyChatAction(setup, dyn, updateDyn, by, action) {
       }
       return d;
     });
+    if (!res.ok) return { ok: false, error: res.error || "Speichern fehlgeschlagen." };
     if (action.driverId) triggerPush(action.driverId, "Neue Fahrt zugeteilt", `${ride.time} · ${ride.djName || "Fahrt"}`, `ride-${ride.id}`);
     return { ok: true };
   }
   if (action.type === "reschedule") {
     if (!/^\d{1,2}:\d{2}$/.test(action.time || "")) return { ok: false, error: "Ungültige Uhrzeit." };
-    updateDyn((d) => {
+    const res = await updateDyn((d) => {
       const r = d.rides.find((x) => x.id === action.rideId);
       if (r) {
         logRide(r, "time", by, `${r.time} → ${action.time} (Chat-Assistent, bestätigt)`);
@@ -2727,16 +2855,19 @@ function applyChatAction(setup, dyn, updateDyn, by, action) {
       }
       return d;
     });
+    if (!res.ok) return { ok: false, error: res.error || "Speichern fehlgeschlagen." };
     if (ride.assignedDriverId) triggerPush(ride.assignedDriverId, "Fahrt geändert", `${ride.djName || "Fahrt"} · neue Zeit ${action.time}`, `ride-${ride.id}`);
     return { ok: true };
   }
   if (action.type === "cancel") {
-    updateDyn((d) => { const r = d.rides.find((x) => x.id === action.rideId); if (r) setRideStatus(r, "cancelled", by); return d; });
+    const res = await updateDyn((d) => { const r = d.rides.find((x) => x.id === action.rideId); if (r) setRideStatus(r, "cancelled", by); return d; });
+    if (!res.ok) return { ok: false, error: res.error || "Speichern fehlgeschlagen." };
     return { ok: true };
   }
   if (action.type === "note") {
     const note = String(action.note || "").slice(0, 300);
-    updateDyn((d) => { const r = d.rides.find((x) => x.id === action.rideId); if (r) { logRide(r, "route", by, "Notiz über Chat-Assistent ergänzt"); r.notes = note; r.updatedAt = Date.now(); } return d; });
+    const res = await updateDyn((d) => { const r = d.rides.find((x) => x.id === action.rideId); if (r) { logRide(r, "route", by, "Notiz über Chat-Assistent ergänzt"); r.notes = note; r.updatedAt = Date.now(); } return d; });
+    if (!res.ok) return { ok: false, error: res.error || "Speichern fehlgeschlagen." };
     return { ok: true };
   }
   return { ok: false, error: "Unbekannter Aktionstyp." };
@@ -2770,9 +2901,14 @@ function ChatPanel({ setup, dyn, day, updateDyn, by, liftOffset }) {
     } finally { setBusy(false); }
   };
 
-  const confirmAction = (idx) => {
+  // ASYNC: awaitet applyChatAction wirklich, statt sofort "Übernommen" zu
+  // zeigen. Zwischenzeitlich "saving" (Buttons ausgeblendet, kleiner
+  // Spinner statt Bestätigen/Verwerfen), damit nicht doppelt geklickt werden
+  // kann während der Schreibvorgang noch läuft.
+  const confirmAction = async (idx) => {
+    setMessages((m) => m.map((x, i) => i === idx ? { ...x, resolved: "saving" } : x));
     const msg = messages[idx];
-    const result = applyChatAction(setup, dyn, updateDyn, by, msg.action);
+    const result = await applyChatAction(setup, dyn, updateDyn, by, msg.action);
     setMessages((m) => m.map((x, i) => i === idx ? { ...x, resolved: result.ok ? "done" : "error", resolveError: result.error } : x));
   };
   const dismissAction = (idx) => setMessages((m) => m.map((x, i) => i === idx ? { ...x, resolved: "dismissed" } : x));
@@ -2813,9 +2949,15 @@ function ChatPanel({ setup, dyn, day, updateDyn, by, liftOffset }) {
                           <button onClick={() => dismissAction(i)} className="text-xs bg-stone-700 hover:bg-stone-600 text-stone-200 px-2.5 py-1 rounded-lg">Verwerfen</button>
                         </div>
                       )}
+                      {m.resolved === "saving" && <div className="text-xs text-stone-400 flex items-center gap-1"><RefreshCw className="w-3 h-3 animate-spin" />wird gespeichert…</div>}
                       {m.resolved === "done" && <div className="text-xs text-emerald-300 flex items-center gap-1"><Check className="w-3 h-3" />Übernommen</div>}
                       {m.resolved === "dismissed" && <div className="text-xs text-stone-400">Verworfen</div>}
-                      {m.resolved === "error" && <div className="text-xs text-red-300">Fehler: {m.resolveError}</div>}
+                      {m.resolved === "error" && (
+                        <div className="space-y-1">
+                          <div className="text-xs text-red-300">Fehler, nicht gespeichert: {m.resolveError}</div>
+                          <button onClick={() => confirmAction(i)} className="text-xs bg-stone-700 hover:bg-stone-600 text-stone-200 px-2.5 py-1 rounded-lg flex items-center gap-1"><RefreshCw className="w-3 h-3" />Erneut versuchen</button>
+                        </div>
+                      )}
                     </div>
                   )}
                 </div>
