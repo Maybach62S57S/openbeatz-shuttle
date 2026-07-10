@@ -1411,11 +1411,15 @@ const PUSH_STATUS_LABEL = {
 async function triggerPush(driverId, title, body, tag) {
   if (!driverId) return;
   try {
-    await fetch("/api/send-push", {
+    const res = await fetch("/api/send-push", {
       method: "POST", headers: apiHeaders(),
       body: JSON.stringify({ driverId, title, body, tag }),
     });
-  } catch { /* kein Deployment / kein Abo — bewusst stiller Fallback */ }
+    // fetch() wirft NUR bei echten Netzwerkfehlern, nicht bei 4xx/5xx-Antworten —
+    // ohne diese Prüfung sehen wir serverseitige Fehler (Auth-Check, fehlendes
+    // Abo, RPC-Fehler) nirgends, weder in der Konsole noch sonstwo.
+    if (!res.ok) { const t = await res.text().catch(() => ""); console.error("triggerPush fehlgeschlagen:", res.status, t); }
+  } catch (e) { console.error("triggerPush Netzwerkfehler (evtl. kein Deployment):", e); }
 }
 // Nachtrag 4: an ALLE Leitstellen-Nutzer pushen, die Push aktiviert haben —
 // nicht nur einen. Wer konkret abonniert ist, muss der Client dafür nicht
@@ -1427,11 +1431,14 @@ async function triggerPush(driverId, title, body, tag) {
 // piepst bei 4 Leitstellen-Nutzern ständig irgendein Handy.
 async function triggerDispatcherPush(title, body, tag) {
   try {
-    await fetch("/api/send-push", {
+    const res = await fetch("/api/send-push", {
       method: "POST", headers: apiHeaders(),
       body: JSON.stringify({ broadcastToDispatchers: true, title, body, tag }),
     });
-  } catch { /* kein Deployment / kein Abo — bewusst stiller Fallback */ }
+    if (!res.ok) { const t = await res.text().catch(() => ""); console.error("triggerDispatcherPush fehlgeschlagen:", res.status, t); return; }
+    const data = await res.json().catch(() => null);
+    if (data && !data.ok) console.warn("triggerDispatcherPush: nichts zugestellt —", data.reason || `${data.sent}/${data.total} erfolgreich`);
+  } catch (e) { console.error("triggerDispatcherPush Netzwerkfehler (evtl. kein Deployment):", e); }
 }
 
 // Kontakt-Telefonnummer(n) aus dem Passagiere-Text – eingeklappt, erst auf Tap
