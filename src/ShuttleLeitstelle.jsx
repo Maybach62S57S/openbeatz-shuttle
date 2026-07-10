@@ -2139,8 +2139,9 @@ function GuestApp({ setup, dyn, token, updateDyn, onExitPreview }) {
     try {
       const sb = window.__obfSupabase;
       const { data, error } = await sb.rpc("guest_session", { p_token: token });
+      if (error) console.error("guest_session RPC-Fehler:", error);
       setSession(error || !data ? { valid: false } : data);
-    } catch { setSession({ valid: false }); }
+    } catch (e) { console.error("guest_session unerwarteter Fehler:", e); setSession({ valid: false }); }
   }, [token]);
 
   useEffect(() => {
@@ -3571,6 +3572,7 @@ function GuestLinksSection({ setup, dyn, updateSetup, onPreviewGuest }) {
   const [savedPhone, setSavedPhone] = useState(false);
   const [newArtist, setNewArtist] = useState("");
   const [copiedTok, setCopiedTok] = useState(null);
+  const [saveError, setSaveError] = useState("");
   // Token-Liste ist seit Nachtrag 3 nicht mehr Teil des generellen setup-
   // Objekts (das ging vorher an jede Rolle raus, Fahrer/Stage inklusive).
   // Hier separat laden: im Supabase-Betrieb über die dispatcher-RPC, im
@@ -3580,7 +3582,10 @@ function GuestLinksSection({ setup, dyn, updateSetup, onPreviewGuest }) {
   useEffect(() => {
     if (!hasSupabase()) return;
     let stop = false;
-    loadGuestTokens().then((t) => { if (!stop) setTokens(t); }).catch(() => { if (!stop) setTokens([]); });
+    loadGuestTokens().then((t) => { if (!stop) setTokens(t); }).catch((e) => {
+      console.error("loadGuestTokens fehlgeschlagen:", e);
+      if (!stop) { setTokens([]); setSaveError("Gast-Links konnten nicht geladen werden. Bitte Seite neu laden."); }
+    });
     return () => { stop = true; };
   }, []);
 
@@ -3596,10 +3601,25 @@ function GuestLinksSection({ setup, dyn, updateSetup, onPreviewGuest }) {
   const list = tokens || [];
   const existingNames = new Set(list.map((t) => t.djName.toLowerCase()));
 
+  // WICHTIG: erst wirklich speichern, DANACH die Liste aktualisieren. Vorher
+  // stand hier eine "optimistische" Aktualisierung vor dem Speichern — sah
+  // in der Oberfläche sofort nach Erfolg aus, auch wenn das Speichern im
+  // Hintergrund scheiterte (z. B. RPC-Fehler), der Link existierte dann gar
+  // nicht wirklich in der Datenbank. Jetzt: bei Fehler bleibt die alte Liste
+  // stehen und es gibt eine sichtbare Fehlermeldung statt eines stillen,
+  // falschen Erfolgs.
   const persist = async (next) => {
-    setTokens(next); // optimistisch, damit die Liste sofort reagiert
-    if (hasSupabase()) await saveGuestTokens(next);
-    else await updateSetup((s) => { s.guestTokens = next; return s; });
+    setSaveError("");
+    const prev = list;
+    try {
+      if (hasSupabase()) await saveGuestTokens(next);
+      else await updateSetup((s) => { s.guestTokens = next; return s; });
+      setTokens(next);
+    } catch (e) {
+      console.error("Gast-Link speichern fehlgeschlagen:", e);
+      setTokens(prev); // zurückrollen, nicht mit falschem Stand weitermachen
+      setSaveError("Speichern fehlgeschlagen, bitte nochmal versuchen. (Details in der Browser-Konsole)");
+    }
   };
   const genFor = async (name) => {
     const n = (name || "").trim();
@@ -3622,6 +3642,11 @@ function GuestLinksSection({ setup, dyn, updateSetup, onPreviewGuest }) {
         Persönliche Info-Seite für Artist/Manager — nur Ansicht, keine Dispo-Funktionen, standardmäßig Englisch.
         <b className="text-orange-300/90"> Sicherheitshinweis:</b> Im Chat-Artifact blendet der Link nur die Oberfläche aus, ist keine echte Zugriffssperre. Nach dem Supabase-Deploy ist der Link echt auf die eigenen Fahrten beschränkt (RPC-basiert); die vollständige Liste hier ist trotzdem nur für die Leitstelle gedacht, nicht zum Weitergeben.
       </p>
+      {saveError && (
+        <div className="mb-3 text-xs bg-red-500/10 border border-red-500/30 text-red-300 px-3 py-2 rounded-lg flex items-center gap-2">
+          <AlertTriangle className="w-3.5 h-3.5 shrink-0" />{saveError}
+        </div>
+      )}
 
       <div className="mb-4 pb-4 border-b border-stone-800">
         <Field label="Zentrale Shuttle-Coordination-Nummer (nicht die private Fahrer-Nummer)">
