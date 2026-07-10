@@ -1384,9 +1384,9 @@ function usePushNotifications(id, stateKey, updateDyn, vapidPublicKey) {
   }, [vapidPublicKey]);
 
   const enable = async () => {
-    if (!id) { setStatus("error"); return; } // z.B. Leitstelle ohne gewählten Namen
-    if (!vapidPublicKey) { setStatus("unconfigured"); return; }
-    if (!("serviceWorker" in navigator) || !("PushManager" in window)) { setStatus("unsupported"); return; }
+    if (!id) { console.error("usePushNotifications: keine id (z.B. Leitstelle ohne gewählten Namen)"); setStatus("error"); return; }
+    if (!vapidPublicKey) { console.error("usePushNotifications: kein vapidPublicKey gesetzt"); setStatus("unconfigured"); return; }
+    if (!("serviceWorker" in navigator) || !("PushManager" in window)) { console.error("usePushNotifications: serviceWorker/PushManager auf diesem Gerät nicht verfügbar"); setStatus("unsupported"); return; }
     try {
       const perm = await Notification.requestPermission();
       if (perm !== "granted") { setStatus("denied"); return; }
@@ -1394,7 +1394,7 @@ function usePushNotifications(id, stateKey, updateDyn, vapidPublicKey) {
       const sub = await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: urlBase64ToUint8Array(vapidPublicKey) });
       await updateDyn((d) => { d[stateKey] = d[stateKey] || {}; d[stateKey][id] = d[stateKey][id] || {}; d[stateKey][id].pushSubscription = sub.toJSON(); return d; });
       setStatus("active");
-    } catch { setStatus("error"); }
+    } catch (e) { console.error("usePushNotifications enable() fehlgeschlagen:", e); setStatus("error"); }
   };
   return { status, enable };
 }
