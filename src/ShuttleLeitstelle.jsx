@@ -146,7 +146,7 @@ async function sbGetDyn() {
   const { data: row } = await sb.from("settings").select("dyn_data, dyn_rev").eq("id", 1).single();
   if (!row) return null;
   const d = row.dyn_data || {};
-  return { rides: d.rides || [], driverState: d.driverState || {}, rev: row.dyn_rev || 0 };
+  return { rides: d.rides || [], driverState: d.driverState || {}, dispatcherState: d.dispatcherState || {}, rev: row.dyn_rev || 0 };
 }
 // Atomares Compare-and-Swap statt blindem Überschreiben (siehe
 // write_dyn_if_unchanged in supabase-schema.sql, Nachtrag 3). baseRev ist
@@ -159,11 +159,12 @@ async function sbSetDyn(val, baseRev) {
     p_expected_rev: baseRev ?? 0,
     p_rides: val.rides || [],
     p_driver_state: val.driverState || {},
+    p_dispatcher_state: val.dispatcherState || {},
   });
   if (error) throw error;
   const row = Array.isArray(data) ? data[0] : data;
   if (!row) return { ok: false, value: null };
-  return { ok: row.ok, value: { rides: row.rides || [], driverState: row.driver_state || {}, rev: row.rev } };
+  return { ok: row.ok, value: { rides: row.rides || [], driverState: row.driver_state || {}, dispatcherState: row.dispatcher_state || {}, rev: row.rev } };
 }
 
 async function sget(key) {
@@ -540,7 +541,7 @@ export default function App() {
       let d = await sget(DYN_KEY);
       if (!d) {
         // Gleiche Begründung wie oben bei setup: bei Supabase nie automatisch schreiben.
-        d = hasSupabase() ? { rides: [], driverState: {}, rev: 0 } : { rides: seedExampleRides(s), driverState: {}, rev: 0 };
+        d = hasSupabase() ? { rides: [], driverState: {}, dispatcherState: {}, rev: 0 } : { rides: seedExampleRides(s), driverState: {}, dispatcherState: {}, rev: 0 };
         if (!hasSupabase()) await sset(DYN_KEY, d);
       }
       setSetup(s); setDyn(d); setLoading(false);
@@ -594,7 +595,7 @@ export default function App() {
   const updateDyn = useCallback(async (mutator) => {
     let last = null;
     for (let attempt = 0; attempt < 6; attempt++) {
-      const cur = (await sget(DYN_KEY)) || { rides: [], driverState: {}, rev: 0 };
+      const cur = (await sget(DYN_KEY)) || { rides: [], driverState: {}, dispatcherState: {}, rev: 0 };
       const baseRev = cur.rev || 0;
       const next = mutator(structuredClone(cur));
       next.rev = baseRev + 1;
@@ -1339,7 +1340,10 @@ function urlBase64ToUint8Array(base64String) {
 // App an. Braucht: Service Worker (sw.js), Nutzer-Freigabe per Klick, und einen
 // von der Leitstelle hinterlegten VAPID-Public-Key (Einstellungen). Ohne echtes
 // Deployment (HTTPS + /sw.js erreichbar) bleibt der Status "nicht verfügbar".
-function usePushNotifications(driverId, updateDyn, vapidPublicKey) {
+// stateKey ist "driverState" oder "dispatcherState" — dieselbe Logik gilt seit
+// Nachtrag 4 für beide Rollen, das Abo landet nur in einem anderen Zweig von
+// dyn_data. id ist driver.id bzw. session.dispatcherId.
+function usePushNotifications(id, stateKey, updateDyn, vapidPublicKey) {
   const [status, setStatus] = useState("idle"); // idle|active|denied|unsupported|unconfigured|error
   useEffect(() => {
     if (!vapidPublicKey) { setStatus("unconfigured"); return; }
@@ -1352,6 +1356,7 @@ function usePushNotifications(driverId, updateDyn, vapidPublicKey) {
   }, [vapidPublicKey]);
 
   const enable = async () => {
+    if (!id) { setStatus("error"); return; } // z.B. Leitstelle ohne gewählten Namen
     if (!vapidPublicKey) { setStatus("unconfigured"); return; }
     if (!("serviceWorker" in navigator) || !("PushManager" in window)) { setStatus("unsupported"); return; }
     try {
@@ -1359,7 +1364,7 @@ function usePushNotifications(driverId, updateDyn, vapidPublicKey) {
       if (perm !== "granted") { setStatus("denied"); return; }
       const reg = await navigator.serviceWorker.register("/sw.js");
       const sub = await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: urlBase64ToUint8Array(vapidPublicKey) });
-      await updateDyn((d) => { d.driverState[driverId] = d.driverState[driverId] || {}; d.driverState[driverId].pushSubscription = sub.toJSON(); return d; });
+      await updateDyn((d) => { d[stateKey] = d[stateKey] || {}; d[stateKey][id] = d[stateKey][id] || {}; d[stateKey][id].pushSubscription = sub.toJSON(); return d; });
       setStatus("active");
     } catch { setStatus("error"); }
   };
@@ -1381,6 +1386,22 @@ async function triggerPush(driverId, title, body, tag) {
     await fetch("/api/send-push", {
       method: "POST", headers: apiHeaders(),
       body: JSON.stringify({ driverId, title, body, tag }),
+    });
+  } catch { /* kein Deployment / kein Abo — bewusst stiller Fallback */ }
+}
+// Nachtrag 4: an ALLE Leitstellen-Nutzer pushen, die Push aktiviert haben —
+// nicht nur einen. Wer konkret abonniert ist, muss der Client dafür nicht
+// kennen (wichtig für GuestApp, die aus Datenschutzgründen keinen Zugriff
+// auf den vollen dyn-Datensatz mehr hat, siehe Nachtrag 3): der Server liest
+// dyn_data.dispatcherState selbst und verteilt serverseitig.
+// Bewusst nur für die wirklich dringenden Fälle ausgelöst (Problem gemeldet,
+// Flugstatus kritisch), nicht bei jeder normalen Zuteilung/Änderung — sonst
+// piepst bei 4 Leitstellen-Nutzern ständig irgendein Handy.
+async function triggerDispatcherPush(title, body, tag) {
+  try {
+    await fetch("/api/send-push", {
+      method: "POST", headers: apiHeaders(),
+      body: JSON.stringify({ broadcastToDispatchers: true, title, body, tag }),
     });
   } catch { /* kein Deployment / kein Abo — bewusst stiller Fallback */ }
 }
@@ -1487,6 +1508,7 @@ function DriverApp({ setup, dyn, session, updateDyn, onLogout }) {
       }
       return d;
     });
+    triggerDispatcherPush("Problem gemeldet", `${driver.firstName} ${driver.lastName[0]}. · ${type}`, `ride-${ride.id}`);
     setIssueFor(null);
   };
 
@@ -1494,7 +1516,7 @@ function DriverApp({ setup, dyn, session, updateDyn, onLogout }) {
   // bleibt einzeln abschaltbar (z. B. Pause). Läuft nur während die App offen ist.
   const [shareLocation, setShareLocation] = useState(true);
   const locStatus = useDriverLocationSharing(driver.id, updateDyn, shareLocation);
-  const push = usePushNotifications(driver.id, updateDyn, setup.config.vapidPublicKey);
+  const push = usePushNotifications(driver.id, "driverState", updateDyn, setup.config.vapidPublicKey);
 
   const loc = (id, txt) => setup.locations.find((l) => l.id === id)?.short || txt || "—";
 
@@ -1851,6 +1873,7 @@ function StageApp({ setup, dyn, updateDyn, onLogout }) {
       }
       return d;
     });
+    triggerDispatcherPush("Problem gemeldet", `${label} · ${type}`, `ride-${ride.id}`);
     setIssueFor(null);
   };
 
@@ -2189,10 +2212,12 @@ function GuestApp({ setup, dyn, token, updateDyn, onExitPreview }) {
         }
         return d;
       });
+      triggerDispatcherPush("Problem gemeldet", `${djName} · ${type}`, `ride-${ride.id}`);
     } else {
       const sb = window.__obfSupabase;
       const { data: ok } = await sb.rpc("guest_report_issue", { p_token: token, p_ride: ride.id, p_type: type, p_note: note || "" });
       if (ok && ride.assignedDriverId) triggerPush(ride.assignedDriverId, "Problem gemeldet", `${djName} · ${type}`, `ride-${ride.id}`);
+      if (ok) triggerDispatcherPush("Problem gemeldet", `${djName} · ${type}`, `ride-${ride.id}`);
       await loadSupabase();
     }
     setIssueFor(null);
@@ -2667,6 +2692,12 @@ function Dashboard({ setup, dyn, session, updateDyn, updateSetup, onLogout, onPr
   // Wer ist gerade angemeldet — fließt in jede Protokoll-Zeile statt anonym "Leitstelle".
   const me = (setup.dispatchers || []).find((p) => p.id === session?.dispatcherId);
   const meBy = `dispo:${session?.dispatcherId || ""}`;
+  // Nachtrag 4: Push-Benachrichtigungen auch für die Leitstelle (bei Problem-
+  // Meldungen und kritischem Flugstatus, siehe triggerDispatcherPush). Ein
+  // Abo pro angemeldetem Namen, nicht pro Gerät — meldet sich dieselbe
+  // Person auf einem zweiten Gerät neu an, ersetzt das dortige Aktivieren
+  // das vorherige Abo (wie bei Fahrern auch).
+  const push = usePushNotifications(session?.dispatcherId, "dispatcherState", updateDyn, setup.config.vapidPublicKey);
   const days = dayTabs(setup, dyn);
   const [day, setDay] = useState(days[0]?.key || "");
   useEffect(() => {
@@ -2734,6 +2765,13 @@ function Dashboard({ setup, dyn, session, updateDyn, updateSetup, onLogout, onPr
             <RefreshCw className="w-3.5 h-3.5 -scale-x-100" />Rückgängig{undoCount > 1 ? ` (${undoCount})` : ""}
           </button>
           {me && <span className="hidden sm:inline text-xs text-stone-500 ml-1">{me.name}</span>}
+          {push.status !== "unconfigured" && (
+            <button onClick={push.status === "active" ? undefined : push.enable} title={PUSH_STATUS_LABEL[push.status]}
+              className="hidden sm:flex items-center gap-1.5 text-[11px] text-stone-500 hover:text-stone-300 px-1.5">
+              <span className={`w-2 h-2 rounded-full shrink-0 ${push.status === "active" ? "bg-emerald-400" : push.status === "denied" || push.status === "error" ? "bg-red-400" : "bg-stone-600"}`} />
+              Push{push.status === "idle" ? " · antippen" : ""}
+            </button>
+          )}
           <button onClick={onLogout} className="text-stone-500 hover:text-stone-300 p-2"><LogOut className="w-5 h-5" /></button>
         </div>
         {/* Tage + KPIs */}
@@ -4014,6 +4052,9 @@ function FlightTab({ setup, dyn, day, updateDyn, by, onEdit }) {
       if (r.assignedDriverId && ["verspätet", "gelandet", "annulliert"].includes(r.flightStatus)) {
         triggerPush(r.assignedDriverId, `Flug jetzt ${flightStyle(r.flightStatus).l}`, `${r.flightNo || ""} · ${r.djName || "Fahrt"}`, `ride-${r.id}`);
       }
+      if (flightAlert(r).level === "critical") {
+        triggerDispatcherPush(`Flug kritisch: ${flightAlert(r).label}`, `${r.flightNo || ""} · ${r.djName || "Fahrt"}`, `ride-${r.id}`);
+      }
     }
     return d;
   });
@@ -4048,6 +4089,9 @@ function FlightTab({ setup, dyn, day, updateDyn, by, onEdit }) {
         logRide(r, "flight", by, `Flug: ${flightStyle(patch.flightStatus).l}`);
         if (r.assignedDriverId && ["verspätet", "gelandet", "annulliert"].includes(patch.flightStatus)) {
           triggerPush(r.assignedDriverId, `Flug jetzt ${flightStyle(patch.flightStatus).l}`, `${r.flightNo || ""} · ${r.djName || "Fahrt"}`, `ride-${r.id}`);
+        }
+        if (flightAlert(r).level === "critical") {
+          triggerDispatcherPush(`Flug kritisch: ${flightAlert(r).label}`, `${r.flightNo || ""} · ${r.djName || "Fahrt"}`, `ride-${r.id}`);
         }
       }
       if (r.scheduledArrival && (r.actualArrival || r.estimatedArrival)) r.delayMinutes = Math.max(0, sortMin(r.actualArrival || r.estimatedArrival) - sortMin(r.scheduledArrival));

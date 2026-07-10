@@ -38,24 +38,26 @@ Persönliche Info-Seite für Artist/Manager über einen Link mit Token (`?guest=
 - Aktionen des Gastes (Confirm pickup, I am at pickup, Problem melden) schreiben ausschließlich Flags/Log-Einträge (`guestConfirmedAt`, `guestAtPickupAt`, `issues[]`) – nie Status oder Fahrer-Zuteilung. Dieselbe Absicherung wie beim Stage-Manager-Modus, jetzt zusätzlich in der DB-Funktion selbst erzwungen (nicht nur im Frontend-Code).
 - Zentrale „Shuttle-Coordination"-Nummer statt privater Fahrer-Nummer (Einstellungen → Gast-/Artist-Links), damit keine persönlichen Telefonnummern über den Gast-Link kursieren.
 
-## Fahrer-Benachrichtigungen
+## Fahrer- & Leitstellen-Benachrichtigungen
 
 **Stufe 1 – Vordergrund (funktioniert sofort, auch im Artifact):** Die Fahrer-App erkennt bei jedem Datenabgleich Änderungen an den eigenen Fahrten und zeigt eine Toast-Meldung + Vibration + Ton: neue Zuteilung, geänderte Zeit/Route/Treffpunkt, Flug jetzt verspätet/gelandet/annulliert, neues Problem gemeldet, Gast hat bestätigt / ist am Treffpunkt, Fahrt umverteilt. Kein Spam beim ersten Laden — nur echte Änderungen gegenüber dem zuletzt gesehenen Stand. Läuft nur, solange die App-Seite offen ist.
 
-**Stufe 2 – echte Push-Benachrichtigung (jetzt vorbereitet, braucht Deploy):** Kommt auch bei gesperrtem Handy/geschlossener App an. Dafür sind jetzt vorbereitet:
+**Stufe 2 – echte Push-Benachrichtigung:** Kommt auch bei gesperrtem Handy/geschlossener App an. Seit Nachtrag 4 nicht mehr nur für Fahrer, sondern auch für die Leitstelle:
 - **`sw.js`** (Service Worker) — zeigt die System-Benachrichtigung, öffnet die App beim Antippen.
-- **`usePushNotifications`** in `shuttle-leitstelle.jsx` — Fahrer aktiviert per Klick (Button neben der Standort-Freigabe im Kopfbereich), fragt Browser-Berechtigung ab, registriert den Service Worker, abonniert Push, speichert das Abo in `driverState[driverId].pushSubscription`.
-- **`api/send-push.js`** — verschickt den eigentlichen Push über die `web-push`-Bibliothek (VAPID-Standard). Wird an sieben Stellen ausgelöst: neue Zuteilung, Zeit/Route/Treffpunkt geändert, Flugstatus jetzt kritisch (manuell oder automatisch), sowie die drei Gast-Aktionen (Confirm pickup, I am at pickup, Problem melden).
-- `driver_state` hat jetzt `push_subscription jsonb`; `supabaseStore.js` hat `setDriverPushSubscription()`.
+- **`usePushNotifications`** in `ShuttleLeitstelle.jsx` — jetzt für beide Rollen nutzbar (`stateKey` = `"driverState"` oder `"dispatcherState"`). Fahrer aktiviert per Klick im Kopfbereich seiner App, Leitstellen-Nutzer im Dashboard-Header. Speichert das Abo in `dyn_data.driverState[id].pushSubscription` bzw. `dyn_data.dispatcherState[id].pushSubscription`.
+- **`api/send-push.js`** — verschickt den eigentlichen Push über die `web-push`-Bibliothek (VAPID-Standard). Zwei Modi: `{driverId, ...}` für einen einzelnen Fahrer, `{broadcastToDispatchers: true, ...}` für alle Leitstellen-Nutzer mit aktivem Abo auf einmal (Server liest die Abo-Liste selbst, der Client muss sie nicht kennen).
+  - **An Fahrer ausgelöst** (`triggerPush`): neue Zuteilung, Zeit/Route/Treffpunkt geändert, Flugstatus jetzt verspätet/gelandet/annulliert, sowie die drei Gast-Aktionen.
+  - **An die Leitstelle ausgelöst** (`triggerDispatcherPush`, neu): Problem gemeldet (egal ob von Fahrer, Stage Manager oder Gast) und Flugstatus wird kritisch (`flightAlert(...).level === "critical"`, also annulliert oder gelandet-ohne-Fahrer-unterwegs) — bewusst enger gefasst als bei Fahrern, sonst piepst bei mehreren Dispo-Handys ständig irgendeins.
+- **Bugfix (Nachtrag 4):** `api/send-push.js` suchte Push-Abos vorher in der separaten `driver_state`-TABELLE. Die App schreibt sie aber (wie die Fahrten selbst) in `settings.dyn_data`, die separate Tabelle wird nirgends beschrieben. Echte Push-Benachrichtigungen an Fahrer hätten dadurch **nie funktioniert**, unabhängig von allen anderen Einstellungen — jetzt korrigiert und gegen eine echte Postgres-Instanz mit Testdaten verifiziert.
 
-**Einrichtung (zusätzlich zu Schritt 1–5 oben):**
-1. `npm install web-push` im Projekt (für `api/send-push.js`).
+**Einrichtung:**
+1. `web-push` ist als Abhängigkeit in `package.json` eingetragen, kein manueller `npm install` nötig (Vercel installiert das beim Build automatisch mit).
 2. Einmalig Schlüsselpaar erzeugen: `npx web-push generate-vapid-keys`.
 3. `VAPID_PUBLIC_KEY`, `VAPID_PRIVATE_KEY`, `VAPID_SUBJECT` als Env-Variablen bei Vercel setzen (siehe `.env.example`) — der private Key darf **nie** ins Frontend.
 4. `SUPABASE_URL` + `SUPABASE_SERVICE_ROLE_KEY` als Env-Variablen setzen (für `api/send-push.js` — braucht direkten DB-Zugriff, nicht den anon-Key).
-5. `sw.js` in den `public/`-Ordner des Frontend-Projekts legen, damit es unter `/sw.js` erreichbar ist.
+5. `sw.js` liegt bereits in `public/sw.js`, kein weiterer Schritt nötig.
 6. Den **öffentlichen** VAPID-Key zusätzlich in der App eintragen: Einstellungen → „Echte Push-Benachrichtigungen".
-7. Jeder Fahrer tippt einmal auf „Push-Benachrichtigungen aktivieren" im Kopfbereich seiner App und erlaubt die Browser-Abfrage.
+7. Jeder Fahrer tippt einmal auf „Push-Benachrichtigungen aktivieren" im Kopfbereich seiner App; jeder Leitstellen-Nutzer auf den Push-Button im Dashboard-Header. Ein Abo pro angemeldetem Namen, nicht automatisch pro Gerät — meldet sich dieselbe Person auf einem zweiten Gerät neu an und aktiviert dort erneut, ersetzt das dortige Abo das vorherige.
 
 Ohne diese Einrichtung bleibt automatisch alles bei Stufe 1 (Vordergrund) — nichts bricht, es kommt nur keine echte Push-Benachrichtigung an. Das ist auch der Zustand im Chat-Artifact hier.
 

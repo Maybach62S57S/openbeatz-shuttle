@@ -1,25 +1,30 @@
 // ============================================================================
-// /api/send-push — verschickt eine Web-Push-Benachrichtigung an einen Fahrer.
+// /api/send-push — verschickt eine Web-Push-Benachrichtigung an einen Fahrer
+// ODER an alle Leitstellen-Nutzer mit aktiviertem Push (Nachtrag 4).
 // Läuft SERVERSEITIG (VAPID-Private-Key darf niemals ins Frontend).
 //
 // Aufruf aus der App:
-//   POST /api/send-push  { driverId, title, body, tag? }
-// Die Funktion lädt das gespeicherte Push-Abo des Fahrers aus der DB
-// (driver_state.push_subscription, siehe supabase-schema.sql) und schickt den
-// Push über den Anbieter des Browsers (Google/Mozilla/Apple) zu — web-push
-// übernimmt die Verschlüsselung nach dem VAPID-Standard.
+//   POST /api/send-push  { driverId, title, body, tag? }              -> ein Fahrer
+//   POST /api/send-push  { broadcastToDispatchers: true, title, ... } -> alle Dispo-Nutzer mit Abo
+//
+// WICHTIG (Nachtrag 4, Bugfix): Push-Abos liegen NICHT in der separaten
+// driver_state-Tabelle (die beschreibt die App nirgends), sondern wie die
+// Fahrten selbst in settings.dyn_data — driverState[id].pushSubscription
+// bzw. dispatcherState[id].pushSubscription. Vorher suchte diese Funktion
+// am falschen Ort, echte Push-Benachrichtigungen hätten dadurch nie
+// funktioniert, unabhängig von allen anderen Einstellungen.
 //
 // Setup: `npm install web-push` im Projekt, VAPID-Schlüsselpaar einmalig
 // erzeugen (siehe FLIGHT-README/BACKEND-README), als Env-Variablen setzen.
 //
 // Sicherheitshinweis (Nachtrag 3, Security-Review): diese Funktion nutzt den
-// Supabase-Service-Role-Key (umgeht RLS komplett) und akzeptiert driverId +
-// beliebigen Titel/Text vom Aufrufer. War vorher völlig offen — jeder mit
-// der URL konnte einem (erratbaren) Fahrer eine frei erfundene Push-
-// Nachricht schicken, ein Social-Engineering-Risiko auf echten Fahrer-
-// Handys. Dieselben drei Checks wie bei /api/chat (Origin, optionales
-// Shared-Secret, Rate-Limit) — kein vollwertiges Auth, aber verhindert
-// automatisiertes/wildes Fremdnutzen. Details: BACKEND-README.md.
+// Supabase-Service-Role-Key (umgeht RLS komplett) und akzeptiert Titel/Text
+// frei vom Aufrufer. War vorher völlig offen — jeder mit der URL konnte
+// einem (erratbaren) Fahrer eine frei erfundene Push-Nachricht schicken,
+// ein Social-Engineering-Risiko auf echten Fahrer-Handys. Dieselben drei
+// Checks wie bei /api/chat (Origin, optionales Shared-Secret, Rate-Limit)
+// — kein vollwertiges Auth, aber verhindert automatisiertes/wildes
+// Fremdnutzen. Details: BACKEND-README.md.
 // ============================================================================
 import webpush from "web-push";
 import { createClient } from "@supabase/supabase-js";
@@ -57,29 +62,48 @@ export default async function handler(req, res) {
   if (!allowRate(req)) return res.status(429).json({ error: "Zu viele Anfragen, bitte kurz warten" });
   if (!VAPID_PUBLIC || !VAPID_PRIVATE) return res.status(500).json({ error: "VAPID-Keys nicht gesetzt" });
 
-  const { driverId, title, body, tag, url } = req.body || {};
-  if (!driverId || !title) return res.status(400).json({ error: "driverId und title erforderlich" });
+  const { driverId, broadcastToDispatchers, title, body, tag, url } = req.body || {};
+  if (!title) return res.status(400).json({ error: "title erforderlich" });
+  if (!driverId && !broadcastToDispatchers) return res.status(400).json({ error: "driverId oder broadcastToDispatchers erforderlich" });
 
   webpush.setVapidDetails(VAPID_SUBJECT, VAPID_PUBLIC, VAPID_PRIVATE);
+  const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SERVICE_ROLE_KEY);
+  const payload = JSON.stringify({ title, body: body || "", tag: tag || "shuttle-update", url: url || "/" });
+
+  const { data: row, error: readError } = await supabase.from("settings").select("dyn_data").eq("id", 1).single();
+  if (readError || !row) return res.status(502).json({ error: "Konnte Push-Abos nicht laden" });
+  const dynData = row.dyn_data || {};
+
+  const send = async (role, id, sub) => {
+    if (!sub) return { id, ok: false, reason: "kein Push-Abo" };
+    try {
+      await webpush.sendNotification(sub, payload);
+      return { id, ok: true };
+    } catch (e) {
+      // Abo abgelaufen/widerrufen (410 Gone bzw. 404) -> aufräumen, damit nicht ständig fehlschlägt
+      if (e.statusCode === 410 || e.statusCode === 404) {
+        try { await supabase.rpc("clear_push_subscription", { p_role: role, p_id: id }); } catch {}
+        return { id, ok: false, reason: "Abo abgelaufen, entfernt" };
+      }
+      return { id, ok: false, reason: String(e.message || e) };
+    }
+  };
 
   try {
-    const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SERVICE_ROLE_KEY);
-    const { data: state } = await supabase.from("driver_state").select("push_subscription").eq("driver_id", driverId).single();
-    const sub = state?.push_subscription;
-    if (!sub) return res.status(200).json({ ok: false, reason: "kein Push-Abo für diesen Fahrer" });
-
-    const payload = JSON.stringify({ title, body: body || "", tag: tag || "shuttle-update", url: url || "/" });
-    await webpush.sendNotification(sub, payload);
-    return res.status(200).json({ ok: true });
-  } catch (e) {
-    // Abo abgelaufen/widerrufen (410 Gone) -> in der DB aufräumen, damit nicht ständig fehlschlägt
-    if (e.statusCode === 410 || e.statusCode === 404) {
-      try {
-        const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SERVICE_ROLE_KEY);
-        await supabase.from("driver_state").update({ push_subscription: null }).eq("driver_id", driverId);
-      } catch {}
-      return res.status(200).json({ ok: false, reason: "Abo abgelaufen, entfernt" });
+    if (driverId) {
+      const sub = dynData.driverState?.[driverId]?.pushSubscription;
+      const result = await send("driver", driverId, sub);
+      return res.status(200).json(result);
     }
+
+    // broadcastToDispatchers: an ALLE Leitstellen-Nutzer mit aktivem Abo
+    const dispatcherState = dynData.dispatcherState || {};
+    const targets = Object.keys(dispatcherState).filter((id) => dispatcherState[id]?.pushSubscription);
+    if (targets.length === 0) return res.status(200).json({ ok: false, reason: "keine Leitstellen-Nutzer mit Push-Abo", sent: 0, total: 0 });
+    const results = await Promise.all(targets.map((id) => send("dispatcher", id, dispatcherState[id].pushSubscription)));
+    const sent = results.filter((r) => r.ok).length;
+    return res.status(200).json({ ok: sent > 0, sent, total: targets.length, results });
+  } catch (e) {
     return res.status(502).json({ error: String(e.message || e) });
   }
 }

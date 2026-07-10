@@ -458,8 +458,12 @@ end $$;
 -- zwischenzeitlich jemand anders geschrieben hat), bekommt die App den
 -- aktuellen Serverstand zurück und wiederholt ihre Änderung darauf statt
 -- ihn zu überschreiben.
-create or replace function write_dyn_if_unchanged(p_expected_rev int, p_rides jsonb, p_driver_state jsonb)
-returns table(ok boolean, rev int, rides jsonb, driver_state jsonb)
+-- Signatur seit Nachtrag 4 um dispatcher_state erweitert (Leitstellen-Push,
+-- siehe unten) -> alte 3-Parameter-Version zuerst explizit entfernen, sonst
+-- bleibt sie als separate Überladung stehen statt ersetzt zu werden.
+drop function if exists write_dyn_if_unchanged(int, jsonb, jsonb);
+create or replace function write_dyn_if_unchanged(p_expected_rev int, p_rides jsonb, p_driver_state jsonb, p_dispatcher_state jsonb default '{}'::jsonb)
+returns table(ok boolean, rev int, rides jsonb, driver_state jsonb, dispatcher_state jsonb)
 language plpgsql
 security definer
 set search_path = public
@@ -468,7 +472,7 @@ declare
   v_rows int;
 begin
   update settings
-  set dyn_data = jsonb_build_object('rides', p_rides, 'driverState', p_driver_state),
+  set dyn_data = jsonb_build_object('rides', p_rides, 'driverState', p_driver_state, 'dispatcherState', p_dispatcher_state),
       dyn_rev = p_expected_rev + 1,
       updated_at = now()
   where id = 1 and dyn_rev = p_expected_rev;
@@ -476,13 +480,14 @@ begin
   get diagnostics v_rows = row_count;
 
   if v_rows > 0 then
-    return query select true, p_expected_rev + 1, p_rides, p_driver_state;
+    return query select true, p_expected_rev + 1, p_rides, p_driver_state, p_dispatcher_state;
   else
     return query
-      select false, s.dyn_rev, coalesce(s.dyn_data->'rides', '[]'::jsonb), coalesce(s.dyn_data->'driverState', '{}'::jsonb)
+      select false, s.dyn_rev, coalesce(s.dyn_data->'rides', '[]'::jsonb), coalesce(s.dyn_data->'driverState', '{}'::jsonb), coalesce(s.dyn_data->'dispatcherState', '{}'::jsonb)
       from settings s where s.id = 1;
   end if;
 end $$;
+
 
 create or replace function write_setup_if_unchanged(
   p_expected_rev int, p_dispatchers jsonb, p_locations jsonb, p_matrix jsonb, p_zones jsonb, p_config jsonb
@@ -565,7 +570,6 @@ grant execute on function guest_session(text) to anon, authenticated;
 grant execute on function guest_confirm_pickup(text, text) to anon, authenticated;
 grant execute on function guest_at_pickup(text, text) to anon, authenticated;
 grant execute on function guest_report_issue(text, text, text, text) to anon, authenticated;
-grant execute on function write_dyn_if_unchanged(int, jsonb, jsonb) to anon, authenticated;
 grant execute on function write_setup_if_unchanged(int, jsonb, jsonb, jsonb, jsonb, jsonb) to anon, authenticated;
 grant execute on function dispatcher_save_drivers(jsonb) to anon, authenticated;
 grant execute on function dispatcher_list_guest_tokens() to anon, authenticated;
@@ -584,3 +588,48 @@ drop policy if exists write_guest_tokens on guest_tokens;
 -- Login), aber Schreiben nur noch über die Funktionen oben.
 drop policy if exists write_settings on settings;
 drop policy if exists write_drivers on drivers;
+
+-- ============================================================================
+-- Nachtrag 4: Push-Benachrichtigungen auch für die Leitstelle
+--
+-- Bisher gab es echte Push-Benachrichtigungen (Web Push, kommen auch bei
+-- gesperrtem Handy an) nur für Fahrer. Push-Abos von Fahrern liegen in
+-- settings.dyn_data.driverState[driverId].pushSubscription. Für Leitstellen-
+-- Nutzer legen wir dieselbe Struktur parallel an: dyn_data.dispatcherState.
+-- write_dyn_if_unchanged wurde oben bereits entsprechend erweitert.
+--
+-- Nebenbei gefunden und mit gefixt: api/send-push.js suchte Push-Abos bisher
+-- in der separaten driver_state-TABELLE, die App schreibt sie aber (wie die
+-- Fahrten selbst) in settings.dyn_data — die separate Tabelle wird nirgends
+-- beschrieben. Echte Push-Benachrichtigungen an Fahrer hätten dadurch nie
+-- funktioniert, unabhängig von allen anderen Einstellungen. api/send-push.js
+-- ist im selben Zug korrigiert.
+-- ============================================================================
+
+-- Entfernt ein einzelnes, abgelaufenes/widerrufenes Push-Abo (410/404 vom
+-- Push-Dienst) aus dem jeweiligen Zweig, ohne den Rest von dyn_data
+-- anzufassen. Wird von api/send-push.js mit dem Service-Role-Key aufgerufen
+-- (der umgeht RLS ohnehin), SECURITY DEFINER hier nur der Konsistenz halber.
+create or replace function clear_push_subscription(p_role text, p_id text)
+returns void
+language plpgsql
+security definer
+set search_path = public
+as $$
+begin
+  if p_role = 'driver' then
+    update settings set dyn_data = jsonb_set(dyn_data, array['driverState', p_id, 'pushSubscription'], 'null'::jsonb)
+    where id = 1 and dyn_data #> array['driverState', p_id] is not null;
+  elsif p_role = 'dispatcher' then
+    update settings set dyn_data = jsonb_set(dyn_data, array['dispatcherState', p_id, 'pushSubscription'], 'null'::jsonb)
+    where id = 1 and dyn_data #> array['dispatcherState', p_id] is not null;
+  end if;
+end $$;
+
+grant execute on function write_dyn_if_unchanged(int, jsonb, jsonb, jsonb) to anon, authenticated;
+-- clear_push_subscription bewusst NICHT an anon/authenticated vergeben — nur
+-- für api/send-push.js gedacht (läuft mit dem Service-Role-Key, der braucht
+-- diese Freigabe nicht, umgeht Postgres-Grants ohnehin). Sonst könnte jeder
+-- mit dem anon-Key beliebige Push-Abos löschen (Verfügbarkeits-Ärgernis,
+-- kein Datenleck, aber unnötig).
+revoke execute on function clear_push_subscription(text, text) from public;
