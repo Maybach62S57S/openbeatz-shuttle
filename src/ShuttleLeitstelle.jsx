@@ -4967,6 +4967,7 @@ function TimelinePage({ setup, dyn, day, onEdit, onAssign, updateDyn, by, onUndo
   const [filter, setFilter] = useState("all");
   const [selectedId, setSelectedId] = useState(null);
   const gridRef = useRef(null);
+  const scrollRef = useRef(null); // die horizontal scrollbare Zeitraster-Fläche (für Zoom + Ziehen-Berechnung)
   const [drag, setDrag] = useState(null);
   const dragRef = useRef(null);
   // Bestätigung vor dem eigentlichen Verschieben: erst nach Loslassen wird nichts
@@ -5011,13 +5012,35 @@ function TimelinePage({ setup, dyn, day, onEdit, onAssign, updateDyn, by, onUndo
   for (let m = Math.ceil(winStart / 60) * 60; m <= winEnd; m += 60) hours.push(m);
   const showNowLine = live && nowMin >= winStart && nowMin <= winEnd;
 
+  // Zoom: Zeitraster bekommt eine feste Pixelbreite statt sich immer auf die
+  // verfügbare Breite zu strecken -> "Passend" misst die tatsächlich
+  // verfügbare Breite und setzt den Zoom so, dass alles ohne Scrollen reinpasst
+  // (das ist der bisherige, einzige Zustand gewesen). +/- weicht davon ab,
+  // wird bei Bedarf horizontal scrollbar. Läuft automatisch neu beim
+  // Tageswechsel, NICHT bei jeder kleinen Datenänderung — sonst würde ein
+  // manuell gewählter Zoom ständig überschrieben.
+  const [zoom, setZoom] = useState(1);
+  const ZOOM_MIN = 0.4, ZOOM_MAX = 5;
+  const BASE_PX_PER_MIN = 1.3;
+  const fitToScreen = useCallback(() => {
+    const el = scrollRef.current;
+    const available = el ? el.clientWidth - TL_LABEL_W : 0;
+    if (available <= 0) { setZoom(1); return; }
+    const needed = available / (span * BASE_PX_PER_MIN);
+    setZoom(Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, needed)));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [span]);
+  useEffect(() => { fitToScreen(); }, [day]); // eslint-disable-line react-hooks/exhaustive-deps
+  const pxPerMin = BASE_PX_PER_MIN * zoom;
+  const contentW = Math.max(280, span * pxPerMin);
   // Konflikt-Zähler: über den kompletten (ungefilterten) Tag, nicht nur die sichtbare Auswahl.
   const withDriverAll = setup.drivers.map((d) => ({ d, rs: allRides.filter((r) => r.assignedDriverId === d.id).sort((a, b) => start(a) - start(b)) }));
   let conflictCount = 0;
   withDriverAll.forEach(({ rs }) => rs.forEach((r, i) => { if (hasConflict(rs, i)) conflictCount++; }));
 
-  // Status-Filter — Zeilen ohne passende Fahrten werden ausgeblendet, damit es bei
-  // vollen Tagen nicht unnötig lang wird.
+  // Status-Filter — filtert welche FAHRTEN gezeigt werden (Alle/Unterwegs/...).
+  // Fahrer-ZEILEN bleiben unabhängig davon immer alle sichtbar (siehe withDriver
+  // unten), auch wenn der Filter gerade keine ihrer Fahrten zeigt.
   const FILTERS = [["all", "Alle"], ["active", "Unterwegs"], ["problem", "Problem"], ["done", "Erledigt"], ["unassigned", "Ohne Fahrer"]];
   const passesFilter = (r) => {
     if (filter === "active") return ["enroute_pickup", "onboard"].includes(r.status);
@@ -5027,10 +5050,13 @@ function TimelinePage({ setup, dyn, day, onEdit, onAssign, updateDyn, by, onUndo
     return true;
   };
   const rides = allRides.filter(passesFilter);
+  // Auf Jordans Wunsch: ALLE Fahrer sichtbar, auch ohne Fahrten heute (vorher
+  // .filter((x) => x.rs.length > 0) rausgenommen), UND feste Reihenfolge, die
+  // sich nicht mit Zuteilungen verschiebt (vorher nach Beginn der ersten
+  // Fahrt sortiert -> Zeilen sprangen um). Reihenfolge jetzt einfach wie in
+  // den Fahrer-Stammdaten (Einstellungen → Fahrer), bleibt stabil.
   const withDriver = setup.drivers
-    .map((d) => ({ d, rs: rides.filter((r) => r.assignedDriverId === d.id).sort((a, b) => start(a) - start(b)) }))
-    .filter((x) => x.rs.length > 0)
-    .sort((a, b) => start(a.rs[0]) - start(b.rs[0]));
+    .map((d) => ({ d, rs: rides.filter((r) => r.assignedDriverId === d.id).sort((a, b) => start(a) - start(b)) }));
   const unassigned = rides.filter((r) => !r.assignedDriverId).sort((a, b) => start(a) - start(b));
 
   // Lücken-Hervorhebung: offene Fahrt anklicken -> passende Fahrer leuchten in der
@@ -5054,12 +5080,17 @@ function TimelinePage({ setup, dyn, day, onEdit, onAssign, updateDyn, by, onUndo
   };
 
   // ---- Ziehen: Zeit ändern (horizontal) und/oder Fahrer wechseln (Zeile) --------
+  // Nutzt jetzt scrollRef (die tatsächliche Zeitraster-Fläche, feste Pixel-
+  // breite bei Zoom) statt gridRef (das war vorher der ganze Seiten-Wrapper,
+  // hat nur zufällig gepasst weil er dieselbe Breite wie das Raster hatte —
+  // stimmt seit dem horizontalen Scrollen bei Zoom nicht mehr). scrollLeft
+  // wird mit eingerechnet, sonst stimmt die Zielzeit beim Ziehen nicht mehr,
+  // sobald nach rechts gescrollt wurde.
   const timeFromClientX = (clientX) => {
-    const el = gridRef.current; if (!el) return null;
+    const el = scrollRef.current; if (!el || contentW <= 0) return null;
     const rect = el.getBoundingClientRect();
-    const usableW = rect.width - TL_LABEL_W;
-    if (usableW <= 0) return null;
-    const relX = Math.min(1, Math.max(0, (clientX - rect.left - TL_LABEL_W) / usableW));
+    const contentX = (clientX - rect.left - TL_LABEL_W) + el.scrollLeft;
+    const relX = Math.min(1, Math.max(0, contentX / contentW));
     return Math.round((winStart + relX * span) / 5) * 5;
   };
   const driverIdFromClientY = (clientX, clientY) => {
@@ -5184,12 +5215,12 @@ function TimelinePage({ setup, dyn, day, onEdit, onAssign, updateDyn, by, onUndo
     return (
       <div data-row-driver={driverId || "unassigned"} onClick={() => clickable && quickAssign(driverId)}
         className={`flex items-stretch border-b border-stone-800/60 transition ${rowTone} ${clickable ? "cursor-pointer hover:bg-emerald-500/20" : ""}`}>
-        <div className="w-40 shrink-0 px-3 py-2.5">
+        <div className="w-40 shrink-0 px-3 py-2.5 sticky left-0 z-10 bg-stone-900">
           <div className={`text-sm font-medium truncate ${warn ? "text-orange-400" : "text-stone-100"}`}>{label}</div>
           {sub && <div className="text-[10px] font-mono text-stone-500 truncate mt-0.5">{sub}</div>}
           {clickable && <div className={`text-[9px] mt-0.5 ${ev.feasible ? "text-emerald-400" : "text-amber-400"}`}>{ev.feasible ? "passt · antippen" : "knapp · antippen"}</div>}
         </div>
-        <div className="relative flex-1 h-16">
+        <div className="relative shrink-0 h-16" style={{ width: contentW }}>
           {hours.map((m) => <div key={m} className="absolute top-0 bottom-0 w-px bg-stone-800" style={{ left: `${pct(m)}%` }} />)}
           <NowLine />
           {rs.map((r, i) => <Block key={r.id} r={r} warn={warn} conflict={conflictCheck && hasConflict(rs, i)} />)}
@@ -5265,10 +5296,20 @@ function TimelinePage({ setup, dyn, day, onEdit, onAssign, updateDyn, by, onUndo
             <span className="text-xs bg-red-500/20 text-red-300 px-2 py-1 rounded-full flex items-center gap-1"><AlertTriangle className="w-3 h-3" />{conflictCount} Konflikt{conflictCount > 1 ? "e" : ""}</span>
           )}
         </div>
-        <div className="flex items-center gap-3 text-xs text-stone-500">
-          <span className="flex items-center gap-1.5"><span className="w-3 h-3 rounded bg-orange-500/90" />unterwegs</span>
-          <span className="flex items-center gap-1.5"><span className="w-3 h-3 rounded bg-emerald-600/80" />erledigt</span>
-          <span className="flex items-center gap-1.5"><span className="w-3 h-3 rounded ring-2 ring-red-500" />Konflikt</span>
+        <div className="flex items-center gap-3">
+          <div className="flex items-center gap-0.5 bg-stone-900 border border-stone-800 rounded-lg p-0.5">
+            <button onClick={() => setZoom((z) => Math.max(ZOOM_MIN, z / 1.3))} title="Kleiner"
+              className="w-7 h-7 flex items-center justify-center text-stone-300 hover:bg-stone-800 rounded text-base font-medium leading-none">−</button>
+            <button onClick={fitToScreen} title="An Bildschirmbreite anpassen"
+              className="px-2 h-7 flex items-center text-[11px] text-stone-400 hover:bg-stone-800 rounded whitespace-nowrap">Passend</button>
+            <button onClick={() => setZoom((z) => Math.min(ZOOM_MAX, z * 1.3))} title="Größer"
+              className="w-7 h-7 flex items-center justify-center text-stone-300 hover:bg-stone-800 rounded text-base font-medium leading-none">+</button>
+          </div>
+          <div className="flex items-center gap-3 text-xs text-stone-500">
+            <span className="flex items-center gap-1.5"><span className="w-3 h-3 rounded bg-orange-500/90" />unterwegs</span>
+            <span className="flex items-center gap-1.5"><span className="w-3 h-3 rounded bg-emerald-600/80" />erledigt</span>
+            <span className="flex items-center gap-1.5"><span className="w-3 h-3 rounded ring-2 ring-red-500" />Konflikt</span>
+          </div>
         </div>
       </div>
 
@@ -5289,15 +5330,20 @@ function TimelinePage({ setup, dyn, day, onEdit, onAssign, updateDyn, by, onUndo
         <div className="text-stone-500 text-sm py-16 text-center border border-dashed border-stone-800 rounded-xl">Keine Fahrten in dieser Ansicht.</div>
       ) : (
         <div className="bg-stone-900 border border-stone-800 rounded-xl overflow-hidden">
-          <div className="flex border-b border-stone-800 bg-stone-950/50">
-            <div className="w-40 shrink-0" />
-            <div className="relative flex-1 h-6">
-              {hours.map((m) => <div key={m} className="absolute text-[10px] text-stone-500 top-1.5" style={{ left: `${pct(m)}%`, transform: "translateX(-50%)" }}>{fromMin(m % 1440)}</div>)}
+          {/* Eigener scrollbarer Bereich (statt der ganzen Seite): so bleiben
+              Kopfzeile (oben) UND Fahrer-Namen (links) beim Scrollen stehen,
+              ohne mit dem Dashboard-Header oben in der Seite zu kollidieren. */}
+          <div ref={scrollRef} className="overflow-auto max-h-[65vh]">
+            <div className="flex border-b border-stone-800 bg-stone-950/95 sticky top-0 z-20">
+              <div className="w-40 shrink-0 sticky left-0 z-30 bg-stone-950/95" />
+              <div className="relative shrink-0 h-6" style={{ width: contentW }}>
+                {hours.map((m) => <div key={m} className="absolute text-[10px] text-stone-500 top-1.5" style={{ left: `${pct(m)}%`, transform: "translateX(-50%)" }}>{fromMin(m % 1440)}</div>)}
+              </div>
             </div>
-          </div>
-          <div>
-            {unassigned.length > 0 && <Row label="Ohne Fahrer" sub={`${unassigned.length} Fahrt(en)`} rs={unassigned} warn />}
-            {withDriver.map(({ d, rs }) => <Row key={d.id} driverId={d.id} label={`${d.firstName} ${d.lastName}`} sub={d.vehicleType === "Van" ? "Van" : "Car"} rs={rs} conflictCheck />)}
+            <div>
+              {unassigned.length > 0 && <Row label="Ohne Fahrer" sub={`${unassigned.length} Fahrt(en)`} rs={unassigned} warn />}
+              {withDriver.map(({ d, rs }) => <Row key={d.id} driverId={d.id} label={`${d.firstName} ${d.lastName}`} sub={d.vehicleType === "Van" ? "Van" : "Car"} rs={rs} conflictCheck />)}
+            </div>
           </div>
         </div>
       )}
