@@ -710,10 +710,28 @@ export default function App() {
       updateDyn={updateDyn} onLogout={() => { unsubscribePush(session.dispatcherId, "dispatcherState", updateDyn); setSession(null); }}
       onSwitchToDesktop={() => setViewMode("desktop")} /></>;
   }
-  return <><BrandStyles /><Dashboard setup={setup} dyn={dyn} session={session}
-    updateDyn={updateDyn} updateSetup={updateSetup} onLogout={() => { unsubscribePush(session.dispatcherId, "dispatcherState", updateDyn); setSession(null); }}
-    onPreviewGuest={setPreviewGuestToken} onUndo={undo} undoCount={undoCount}
-    onSwitchToMobile={() => setViewMode("mobile")} /></>;
+  return <>
+    <BrandStyles />
+    <Dashboard setup={setup} dyn={dyn} session={session}
+      updateDyn={updateDyn} updateSetup={updateSetup} onLogout={() => { unsubscribePush(session.dispatcherId, "dispatcherState", updateDyn); setSession(null); }}
+      onPreviewGuest={setPreviewGuestToken} onUndo={undo} undoCount={undoCount}
+      onSwitchToMobile={() => setViewMode("mobile")} />
+    {/* Notausstieg: falls die Desktop-Ansicht (durch einen früheren manuellen
+        Wechsel) auf einem schmalen Bildschirm feststeckt, ist der normale
+        Umschalt-Button im Dashboard-Header eventuell außerhalb des sichtbaren
+        Bereichs und nicht erreichbar (genau das ist Jordan auf dem iPhone
+        passiert). Dieser Button ist FEST positioniert (nicht Teil des
+        normalen Seitenflusses), bleibt also immer erreichbar, unabhängig
+        davon wie breit der übrige Seiteninhalt gerade ist. Setzt bewusst auf
+        "auto" statt fest "mobile", damit sich das Gerät ab jetzt wieder von
+        selbst an die Bildschirmbreite anpasst. */}
+    {isNarrow && viewOverride === "desktop" && (
+      <button onClick={() => setViewMode("auto")}
+        className="fixed bottom-4 left-4 z-[100] flex items-center gap-1.5 bg-orange-600 hover:bg-orange-500 text-white text-xs px-3 py-2 rounded-full shadow-lg">
+        <Smartphone className="w-3.5 h-3.5" />Handy-Ansicht
+      </button>
+    )}
+  </>;
 }
 
 /* ---------------------------- Open Beatz Brand ---------------------------- */
