@@ -131,9 +131,26 @@ end $$;
 -- ============================================================================
 -- Realtime aktivieren (Punkt 0): Änderungen werden an alle Clients gepusht.
 -- ============================================================================
-alter publication supabase_realtime add table rides;
-alter publication supabase_realtime add table driver_state;
-alter publication supabase_realtime add table settings;
+-- Idempotent gemacht (Nachtrag 3): "alter publication ... add table" ist von
+-- Haus aus NICHT gefahrlos wiederholbar — ein zweiter Lauf bricht mit
+-- "relation is already member of publication" ab und reißt (weil Supabase
+-- das gesamte eingefügte Skript als einen Block ausführt) alles andere im
+-- selben Lauf mit runter, auch bereits erfolgreich ausgeführte Teile davor
+-- und danach. Deshalb hier über eine Prüfung statt direkt.
+do $$
+begin
+  if exists (select 1 from pg_publication where pubname = 'supabase_realtime') then
+    if not exists (select 1 from pg_publication_tables where pubname = 'supabase_realtime' and schemaname = 'public' and tablename = 'rides') then
+      alter publication supabase_realtime add table rides;
+    end if;
+    if not exists (select 1 from pg_publication_tables where pubname = 'supabase_realtime' and schemaname = 'public' and tablename = 'driver_state') then
+      alter publication supabase_realtime add table driver_state;
+    end if;
+    if not exists (select 1 from pg_publication_tables where pubname = 'supabase_realtime' and schemaname = 'public' and tablename = 'settings') then
+      alter publication supabase_realtime add table settings;
+    end if;
+  end if;
+end $$;
 
 -- ============================================================================
 -- RLS (Punkt 2: je nach Rolle nur nötige Daten). Startpunkt – an euer Auth
@@ -146,11 +163,17 @@ alter table settings     enable row level security;
 alter table rides        enable row level security;
 alter table driver_state enable row level security;
 
+drop policy if exists read_drivers on drivers;
 create policy read_drivers      on drivers      for select using (true);
+drop policy if exists read_settings on settings;
 create policy read_settings     on settings     for select using (true);
+drop policy if exists rw_rides_select on rides;
 create policy rw_rides_select   on rides        for select using (true);
+drop policy if exists rw_rides_update on rides;
 create policy rw_rides_update   on rides        for update using (true) with check (true);
+drop policy if exists rw_rides_insert on rides;
 create policy rw_rides_insert   on rides        for insert with check (true);
+drop policy if exists rw_state_all on driver_state;
 create policy rw_state_all      on driver_state for all using (true) with check (true);
 
 -- Tipp: Für „Fahrer sieht nur eigene Fahrten" später eine View oder Policy mit
@@ -166,8 +189,16 @@ create table if not exists guest_tokens (
   dj_name    text not null,
   created_at timestamptz not null default now()
 );
-alter publication supabase_realtime add table guest_tokens;
+do $$
+begin
+  if exists (select 1 from pg_publication where pubname = 'supabase_realtime')
+     and not exists (select 1 from pg_publication_tables where pubname = 'supabase_realtime' and schemaname = 'public' and tablename = 'guest_tokens')
+  then
+    alter publication supabase_realtime add table guest_tokens;
+  end if;
+end $$;
 alter table guest_tokens enable row level security;
+drop policy if exists read_guest_tokens on guest_tokens;
 create policy read_guest_tokens on guest_tokens for select using (true);
 
 -- Wichtig: In der App darf ein Gast-Client NICHT einfach "select * from rides"
@@ -208,8 +239,11 @@ alter table settings add column if not exists dyn_rev     int  not null default 
 
 -- Schreibrechte ergänzen: die App liest settings/drivers/guest_tokens bereits
 -- (Policies oben), braucht ab jetzt aber auch Schreibzugriff dafür.
+drop policy if exists write_settings on settings;
 create policy write_settings on settings for update using (true) with check (true);
+drop policy if exists write_drivers on drivers;
 create policy write_drivers  on drivers  for all    using (true) with check (true);
+drop policy if exists write_guest_tokens on guest_tokens;
 create policy write_guest_tokens on guest_tokens for all using (true) with check (true);
 
 -- Nachtrag 2: Fahrzeugtyp auf "Van"/"Car" umbenannt (statt "V"/"SUV"). Falls die
