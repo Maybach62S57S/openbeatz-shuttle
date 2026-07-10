@@ -2914,11 +2914,16 @@ function Dashboard({ setup, dyn, session, updateDyn, updateSetup, onLogout, onPr
                 <I className="w-4 h-4" />{l}
               </button>
             ))}
+            {/* Rückgängig: auf Jordans Wunsch direkt neben Einstellungen, als
+                Teil derselben Reihe statt als eigenes, separat stehendes
+                Element daneben — läuft dadurch auch mit derselben
+                overflow-x-auto-Zeile mit statt eine zusätzliche eigene
+                Position im Kopfbereich zu beanspruchen. */}
+            <button onClick={onUndo} disabled={undoCount === 0} title={undoCount > 0 ? "Letzte Änderung rückgängig machen" : "Nichts zum Rückgängigmachen"}
+              className={`shrink-0 flex items-center gap-1.5 text-sm px-3 py-1.5 rounded-lg ${undoCount > 0 ? "text-stone-400 hover:text-stone-200" : "text-stone-700 cursor-not-allowed"}`}>
+              <RefreshCw className="w-4 h-4 -scale-x-100" />Rückgängig{undoCount > 1 ? ` (${undoCount})` : ""}
+            </button>
           </nav>
-          <button onClick={onUndo} disabled={undoCount === 0} title={undoCount > 0 ? "Letzte Änderung rückgängig machen" : "Nichts zum Rückgängigmachen"}
-            className={`flex items-center gap-1.5 text-xs px-2.5 py-1.5 rounded-lg ${undoCount > 0 ? "bg-stone-800 hover:bg-stone-700 text-stone-200" : "bg-stone-900 text-stone-600 cursor-not-allowed"}`}>
-            <RefreshCw className="w-3.5 h-3.5 -scale-x-100" />Rückgängig{undoCount > 1 ? ` (${undoCount})` : ""}
-          </button>
           {me && <span className="hidden sm:inline text-xs text-stone-500 ml-1">{me.name}</span>}
           {push.status !== "unconfigured" && (
             <button onClick={push.enable} title={push.status === "active" ? `${PUSH_STATUS_LABEL[push.status]} · antippen zum erneuten Synchronisieren` : PUSH_STATUS_LABEL[push.status]}
