@@ -5,6 +5,7 @@ import {
   ArrowRight, Plus, Settings, Upload, LogOut, Radio, Navigation, AlertTriangle,
   RefreshCw, Search, X, Route, Timer, Gauge, ChevronRight, Play, Flag, Ban,
   MessageSquare, Copy, Check, Moon, LayoutGrid, BarChart3, Siren, History, Link2, Eye, Trash2,
+  Smartphone,
 } from "lucide-react";
 
 /* ============================================================================
@@ -504,6 +505,20 @@ export default function App() {
   // Wrapper statt des rohen State-Setters: schreibt jeden Login/Logout zusätzlich
   // in localStorage, damit die Anmeldung einen Tab-Neustart/App-Kill übersteht.
   const setSession = useCallback((s) => { setSessionState(s); saveSession(s); }, []);
+  // Handy-Leitstellen-Ansicht: automatisch bei schmalem Bildschirm (< 768px,
+  // dieselbe Grenze wie Tailwinds "md", an der die App schon an anderen
+  // Stellen unterscheidet), jederzeit manuell umschaltbar. Präferenz wird wie
+  // der Login pro GERÄT gemerkt (localStorage), nicht zwischen Geräten
+  // geteilt — jedes Handy/jeder Laptop entscheidet für sich.
+  const [viewOverride, setViewOverride] = useState(() => { try { return localStorage.getItem("obf:viewMode") || "auto"; } catch { return "auto"; } }); // auto | mobile | desktop
+  const [isNarrow, setIsNarrow] = useState(() => typeof window !== "undefined" && window.innerWidth < 768);
+  useEffect(() => {
+    const onResize = () => setIsNarrow(window.innerWidth < 768);
+    window.addEventListener("resize", onResize);
+    return () => window.removeEventListener("resize", onResize);
+  }, []);
+  const useMobileView = viewOverride === "mobile" || (viewOverride === "auto" && isNarrow);
+  const setViewMode = (mode) => { setViewOverride(mode); try { localStorage.setItem("obf:viewMode", mode); } catch {} };
   const [loading, setLoading] = useState(true);
   // Gast-Link: ?guest=TOKEN in der URL (Produktivbetrieb) ODER lokale Vorschau aus den
   // Einstellungen heraus (fürs Testen hier im Artifact, wo eine echte URL-Navigation
@@ -690,9 +705,15 @@ export default function App() {
     return <><BrandStyles /><StageApp setup={setup} dyn={dyn}
       updateDyn={updateDyn} onLogout={() => setSession(null)} /></>;
   }
+  if (useMobileView) {
+    return <><BrandStyles /><MobileDispatcherView setup={setup} dyn={dyn} session={session}
+      updateDyn={updateDyn} onLogout={() => setSession(null)}
+      onSwitchToDesktop={() => setViewMode("desktop")} /></>;
+  }
   return <><BrandStyles /><Dashboard setup={setup} dyn={dyn} session={session}
     updateDyn={updateDyn} updateSetup={updateSetup} onLogout={() => setSession(null)}
-    onPreviewGuest={setPreviewGuestToken} onUndo={undo} undoCount={undoCount} /></>;
+    onPreviewGuest={setPreviewGuestToken} onUndo={undo} undoCount={undoCount}
+    onSwitchToMobile={() => setViewMode("mobile")} /></>;
 }
 
 /* ---------------------------- Open Beatz Brand ---------------------------- */
@@ -2647,7 +2668,7 @@ function applyChatAction(setup, dyn, updateDyn, by, action) {
   return { ok: false, error: "Unbekannter Aktionstyp." };
 }
 
-function ChatPanel({ setup, dyn, day, updateDyn, by }) {
+function ChatPanel({ setup, dyn, day, updateDyn, by, liftOffset }) {
   const [open, setOpen] = useState(false);
   const [messages, setMessages] = useState([]); // {role:'user'|'assistant', text, action?, resolved?}
   const [input, setInput] = useState("");
@@ -2685,12 +2706,14 @@ function ChatPanel({ setup, dyn, day, updateDyn, by }) {
   return (
     <>
       <button onClick={() => setOpen((o) => !o)} title="Chat-Assistent"
-        className="fixed bottom-5 right-5 z-50 w-12 h-12 rounded-full bg-orange-600 hover:bg-orange-500 text-white shadow-lg flex items-center justify-center">
+        style={{ bottom: `calc(1.25rem + ${liftOffset || "0px"})` }}
+        className="fixed right-5 z-50 w-12 h-12 rounded-full bg-orange-600 hover:bg-orange-500 text-white shadow-lg flex items-center justify-center">
         {open ? <X className="w-5 h-5" /> : <MessageSquare className="w-5 h-5" />}
       </button>
 
       {open && (
-        <div className="fixed bottom-20 right-5 z-50 w-[22rem] max-w-[calc(100vw-2.5rem)] h-[28rem] max-h-[calc(100vh-8rem)] bg-stone-900 border border-stone-800 rounded-2xl shadow-2xl flex flex-col overflow-hidden">
+        <div style={{ bottom: `calc(5rem + ${liftOffset || "0px"})` }}
+          className="fixed right-5 z-50 w-[22rem] max-w-[calc(100vw-2.5rem)] h-[28rem] max-h-[calc(100vh-8rem)] bg-stone-900 border border-stone-800 rounded-2xl shadow-2xl flex flex-col overflow-hidden">
           <div className="px-3.5 py-2.5 border-b border-stone-800 flex items-center gap-2">
             <MessageSquare className="w-4 h-4 text-orange-400" />
             <span className="text-sm font-medium text-stone-100">Chat-Assistent</span>
@@ -2740,7 +2763,7 @@ function ChatPanel({ setup, dyn, day, updateDyn, by }) {
   );
 }
 
-function Dashboard({ setup, dyn, session, updateDyn, updateSetup, onLogout, onPreviewGuest, onUndo, undoCount }) {
+function Dashboard({ setup, dyn, session, updateDyn, updateSetup, onLogout, onPreviewGuest, onUndo, undoCount, onSwitchToMobile }) {
   // Wer ist gerade angemeldet — fließt in jede Protokoll-Zeile statt anonym "Leitstelle".
   const me = (setup.dispatchers || []).find((p) => p.id === session?.dispatcherId);
   const meBy = `dispo:${session?.dispatcherId || ""}`;
@@ -2823,6 +2846,9 @@ function Dashboard({ setup, dyn, session, updateDyn, updateSetup, onLogout, onPr
               <span className={`w-2 h-2 rounded-full shrink-0 ${push.status === "active" ? "bg-emerald-400" : push.status === "denied" || push.status === "error" ? "bg-red-400" : "bg-stone-600"}`} />
               Push{push.status === "idle" ? " · antippen" : ""}
             </button>
+          )}
+          {onSwitchToMobile && (
+            <button onClick={onSwitchToMobile} title="Zur schlanken Handy-Ansicht wechseln" className="text-stone-500 hover:text-stone-300 p-2"><Smartphone className="w-4 h-4" /></button>
           )}
           <button onClick={onLogout} className="text-stone-500 hover:text-stone-300 p-2"><LogOut className="w-5 h-5" /></button>
         </div>
@@ -3088,6 +3114,262 @@ function Dashboard({ setup, dyn, session, updateDyn, updateSetup, onLogout, onPr
       )}
 
       <ChatPanel setup={setup} dyn={dyn} day={day} updateDyn={updateDyn} by={meBy} />
+    </div>
+  );
+}
+
+/* =========================================================================
+   MOBILE-LEITSTELLE — schlanke Ansicht für unterwegs (auf Jordans Wunsch,
+   Scoping: nur Übersicht/Zuteilen/Status + Timeline/Karte/Rückfahrten/Chat,
+   NICHT alle 9 Desktop-Reiter). Nutzt bewusst dieselben Daten- und
+   Schreibwege wie das Desktop-Dashboard (AssignModal, ChatPanel,
+   buildMapNodes/computeMapPositions/SchematicMap, logRide/setRideStatus,
+   triggerPush) — kein eigener Datenpfad, nur eine eigene, handygerechte
+   Oberfläche obendrauf.
+========================================================================= */
+function MobileDispatcherView({ setup, dyn, session, updateDyn, onLogout, onSwitchToDesktop }) {
+  const meBy = `dispo:${session?.dispatcherId || ""}`;
+  const push = usePushNotifications(session?.dispatcherId, "dispatcherState", updateDyn, setup.config.vapidPublicKey);
+
+  const days = dayTabs(setup, dyn);
+  const [day, setDay] = useState(days[0]?.key || "");
+  useEffect(() => {
+    if (days.length === 0) { if (day) setDay(""); return; }
+    if (!days.some((d) => d.key === day)) setDay(days[0].key);
+  }, [days, day]);
+
+  const [tab, setTab] = useState("rides"); // rides | timeline | map | returns
+  const [q, setQ] = useState("");
+  const [filter, setFilter] = useState("all"); // all | open | active | critical
+  const [assignRide, setAssignRide] = useState(null);
+  const [clock, setClock] = useState(nowHM());
+  useEffect(() => { const t = setInterval(() => setClock(nowHM()), 20000); return () => clearInterval(t); }, []);
+
+  const dayRides = useMemo(() => (dyn.rides || [])
+    .filter((r) => r.dayKey === day && r.status !== "cancelled")
+    .sort((a, b) => sortMin(a.time) - sortMin(b.time)), [dyn.rides, day]);
+  const returnRides = useMemo(() => dayRides.filter((r) => r.type === "return" || r.fromId === "festival"), [dayRides]);
+
+  const kpi = {
+    all: dayRides.length,
+    open: dayRides.filter((r) => !r.assignedDriverId).length,
+    active: dayRides.filter((r) => ["accepted", "enroute_pickup", "onboard"].includes(r.status)).length,
+    critical: dayRides.filter((r) => rideHasOpenIssue(r) || needsDispatcherFlightAlert(r)).length,
+  };
+
+  const matchesSearch = (r) => {
+    if (!q.trim()) return true;
+    const drv = setup.drivers.find((d) => d.id === r.assignedDriverId);
+    const hay = `${r.djName || ""} ${drv ? drv.firstName + " " + drv.lastName : ""}`.toLowerCase();
+    return hay.includes(q.trim().toLowerCase());
+  };
+  const matchesFilter = (r) => {
+    if (filter === "open") return !r.assignedDriverId;
+    if (filter === "active") return ["accepted", "enroute_pickup", "onboard"].includes(r.status);
+    if (filter === "critical") return rideHasOpenIssue(r) || needsDispatcherFlightAlert(r);
+    return true;
+  };
+  const visibleRides = dayRides.filter((r) => matchesSearch(r) && matchesFilter(r));
+  const visibleReturns = returnRides.filter((r) => matchesSearch(r));
+
+  const locName = (id, txt) => setup.locations.find((l) => l.id === id)?.short || txt || "—";
+
+  const doAssign = (rideId, driverId) => {
+    updateDyn((d) => {
+      const r = d.rides.find((x) => x.id === rideId);
+      if (r) {
+        const changed = r.assignedDriverId !== driverId;
+        const drvName = (id) => { const dr = setup.drivers.find((x) => x.id === id); return dr ? `${dr.firstName} ${dr.lastName[0]}. (${dr.vehicleType === "Van" ? "Van" : "Car"})` : "—"; };
+        if (changed) logRide(r, r.assignedDriverId ? "reassigned" : "assigned", meBy, driverId ? `→ ${drvName(driverId)}` : "Zuteilung entfernt");
+        r.assignedDriverId = driverId;
+        if ((!driverId || changed) && r.status !== "planned") setRideStatus(r, "planned", meBy);
+        else r.updatedAt = Date.now();
+        if (changed && driverId) triggerPush(driverId, "Neue Fahrt zugeteilt", `${r.time} · ${r.djName || "Fahrt"}`, `ride-${r.id}`);
+      }
+      return d;
+    });
+    setAssignRide(null);
+  };
+
+  const RideCard = ({ r }) => {
+    const drv = setup.drivers.find((d) => d.id === r.assignedDriverId);
+    const issue = rideHasOpenIssue(r);
+    const alert = flightAlert(r);
+    const borderColor = issue || alert.level === "critical" ? "border-red-500" : alert.level === "warn" ? "border-amber-500" : r.assignedDriverId ? "border-blue-500" : "border-amber-500";
+    return (
+      <div className={`rounded-xl p-3 bg-stone-900 border-l-2 ${borderColor}`}>
+        <div className="flex items-baseline justify-between gap-2">
+          <span className="text-orange-300 font-medium truncate">{r.djName || "Fahrt"}</span>
+          <span className="font-mono text-sm text-stone-100 shrink-0">{r.time}</span>
+        </div>
+        <div className="text-xs text-stone-400 mt-0.5 truncate">{locName(r.fromId, r.fromCustom)} → {locName(r.toId, r.toCustom)}</div>
+        {(r.flightNo || issue) && (
+          <div className="flex gap-1.5 mt-1.5 flex-wrap">
+            {r.flightNo && <span className="text-[11px] px-1.5 py-0.5 rounded bg-red-500/10 text-red-300 flex items-center gap-1"><Plane className="w-3 h-3" />{r.flightNo}{alert.label ? ` · ${alert.label}` : ""}</span>}
+            {issue && <span className="text-[11px] px-1.5 py-0.5 rounded bg-red-500/10 text-red-300 flex items-center gap-1"><AlertTriangle className="w-3 h-3" />Problem</span>}
+          </div>
+        )}
+        <div className="flex items-center justify-between mt-2 gap-2">
+          <span className="text-[11px] px-2 py-0.5 rounded bg-stone-800 text-stone-300 shrink-0">{STATUS_LABEL[r.status] || r.status}</span>
+          {drv ? (
+            <span className="text-xs text-stone-300 flex items-center gap-1.5 truncate">
+              <span className="truncate">{drv.firstName} {drv.lastName[0]}. · {drv.vehicleType === "Van" ? "Van" : "Car"}</span>
+              {drv.phone && <a href={`tel:${drv.phone}`} className="text-emerald-400 shrink-0"><Navigation className="w-3.5 h-3.5 rotate-90" /></a>}
+            </span>
+          ) : (
+            <button onClick={() => setAssignRide(r)} className="text-xs bg-orange-600 hover:bg-orange-500 text-white px-2.5 py-1.5 rounded-lg shrink-0">Fahrer zuteilen</button>
+          )}
+        </div>
+      </div>
+    );
+  };
+
+  const FILTER_CHIPS = [
+    ["all", "Alle", "text-stone-300"],
+    ["open", "Nicht zugeteilt", "text-amber-400"],
+    ["active", "Aktiv", "text-blue-400"],
+    ["critical", "Kritisch", "text-red-400"],
+  ];
+
+  const DAY_START = 720, DAY_END = 1800; // 12:00 – 06:00 nächster Tag, deckt sortMin/dayNowMin ab
+  // Bekannter enger Randfall: sortMin() zählt Zeiten NUR bei < 06:00 als "Nacht"
+  // (+1440), exakt 06:00:00 fällt raus und würde hier fälschlich ganz oben statt
+  // unten landen. Bei Festival-Fahrzeiten (nie exakt 06:00) praktisch irrelevant,
+  // mit eigenständigem Test (test_mobile_timeline.mjs) abgesichert.
+  const posPct = (min) => Math.min(100, Math.max(0, ((min - DAY_START) / (DAY_END - DAY_START)) * 100));
+  const nowMin = dayNowMin(day);
+  const showNow = nowMin >= DAY_START && nowMin <= DAY_END;
+
+  return (
+    <div className="h-screen bg-stone-950 text-stone-100 flex flex-col overflow-hidden">
+      <header className="shrink-0 bg-stone-950/95 backdrop-blur border-b border-stone-800 px-4 py-2.5 flex items-center gap-2.5" style={{ paddingTop: "max(0.625rem, env(safe-area-inset-top))" }}>
+        <span className="ob-pulse inline-block w-2 h-2 rounded-full bg-orange-500 shrink-0" />
+        <span className="text-orange-400 text-[10px] font-mono tracking-[0.15em]">DISPO</span>
+        <span className="ml-auto text-stone-500 text-xs font-mono flex items-center gap-1"><Clock className="w-3.5 h-3.5" />{clock}</span>
+        {push.status !== "unconfigured" && (
+          <button onClick={push.enable} title={push.status === "active" ? `${PUSH_STATUS_LABEL[push.status]} · antippen zum erneuten Synchronisieren` : PUSH_STATUS_LABEL[push.status]} className="p-1">
+            <span className={`w-2 h-2 rounded-full block ${push.status === "active" ? "bg-emerald-400" : push.status === "denied" || push.status === "error" ? "bg-red-400" : "bg-stone-600"}`} />
+          </button>
+        )}
+        <button onClick={onSwitchToDesktop} title="Zur vollen Desktop-Ansicht wechseln" className="text-stone-500 hover:text-stone-300 p-1"><LayoutGrid className="w-4 h-4" /></button>
+        <button onClick={onLogout} className="text-stone-500 hover:text-stone-300 p-1"><LogOut className="w-4 h-4" /></button>
+      </header>
+
+      {tab === "rides" && (
+        <>
+          <div className="shrink-0 px-4 pt-2.5">
+            <div className="flex items-center gap-2 bg-stone-900 border border-stone-800 rounded-lg px-2.5 py-2">
+              <Search className="w-3.5 h-3.5 text-stone-500 shrink-0" />
+              <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Artist, Fahrer suchen…"
+                className="bg-transparent text-sm text-stone-200 placeholder-stone-600 flex-1 outline-none min-w-0" />
+            </div>
+          </div>
+          <div className="shrink-0 flex gap-1.5 px-4 py-2.5 overflow-x-auto">
+            {days.map((d) => (
+              <button key={d.key} onClick={() => setDay(d.key)}
+                className={`shrink-0 text-xs px-2.5 py-1.5 rounded-lg ${day === d.key ? "bg-stone-100 text-stone-950 font-medium" : "bg-stone-900 text-stone-400"}`}>{d.label}</button>
+            ))}
+          </div>
+          <div className="shrink-0 flex gap-1.5 px-4 pb-2.5 overflow-x-auto">
+            {FILTER_CHIPS.map(([k, l, c]) => (
+              <button key={k} onClick={() => setFilter(k)}
+                className={`shrink-0 text-xs px-2.5 py-1.5 rounded-full ${filter === k ? "bg-stone-100 text-stone-950 font-medium" : `bg-stone-900 ${c}`}`}>
+                {l} · {kpi[k]}
+              </button>
+            ))}
+          </div>
+          <div className="flex-1 min-h-0 overflow-y-auto px-4 pb-4 space-y-2">
+            {visibleRides.length === 0 && <div className="text-center text-stone-500 text-sm py-10">Keine Fahrten gefunden.</div>}
+            {visibleRides.map((r) => <RideCard key={r.id} r={r} />)}
+          </div>
+        </>
+      )}
+
+      {tab === "timeline" && (
+        <div className="flex-1 min-h-0 overflow-y-auto px-4 py-3">
+          {visibleRides.length === 0 && <div className="text-center text-stone-500 text-sm py-10">Keine Fahrten an diesem Tag.</div>}
+          {visibleRides.length > 0 && (
+            <div className="relative pl-11" style={{ height: Math.max(360, visibleRides.length * 68) }}>
+              <div className="absolute left-8 top-0 bottom-0 w-px bg-stone-800" />
+              {showNow && (
+                <div className="absolute left-0 right-0 flex items-center gap-1.5 z-10" style={{ top: `${posPct(nowMin)}%` }}>
+                  <span className="text-[9px] text-orange-400 font-mono w-8 shrink-0">{clock}</span>
+                  <div className="flex-1 h-px bg-orange-500" />
+                </div>
+              )}
+              {visibleRides.map((r) => {
+                const top = posPct(sortMin(r.time));
+                const drv = setup.drivers.find((d) => d.id === r.assignedDriverId);
+                return (
+                  <div key={r.id} className="absolute left-0 right-0" style={{ top: `${top}%` }}>
+                    <span className="absolute left-0 text-[10px] text-stone-500 font-mono -translate-y-1/2 w-8">{r.time}</span>
+                    <span className={`absolute left-7 w-2 h-2 rounded-full -translate-y-1/2 ${r.assignedDriverId ? "bg-blue-500" : "bg-amber-500"}`} />
+                    <button onClick={() => setAssignRide(r)} className="block w-full text-left ml-4 bg-stone-900 rounded-lg px-2.5 py-1.5 -translate-y-1/2">
+                      <div className="text-xs text-orange-300 font-medium truncate">{r.djName || "Fahrt"}</div>
+                      <div className="text-[10px] text-stone-500 truncate">{locName(r.fromId, r.fromCustom)} → {locName(r.toId, r.toCustom)}{drv ? ` · ${drv.firstName}` : ""}</div>
+                    </button>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      )}
+
+      {tab === "map" && <MobileMapPane setup={setup} dyn={dyn} day={day} />}
+
+      {tab === "returns" && (
+        <div className="flex-1 min-h-0 overflow-y-auto px-4 py-3 space-y-2">
+          {visibleReturns.length === 0 && <div className="text-center text-stone-500 text-sm py-10">Keine Rückfahrten an diesem Tag.</div>}
+          {visibleReturns.map((r) => <RideCard key={r.id} r={r} />)}
+        </div>
+      )}
+
+      <nav className="shrink-0 bg-stone-950/95 backdrop-blur border-t border-stone-800 flex" style={{ paddingBottom: "env(safe-area-inset-bottom)" }}>
+        {[["rides", "Fahrten", Route], ["timeline", "Timeline", Gauge], ["map", "Karte", MapIcon], ["returns", "Rückfahrten", Moon]].map(([k, l, I]) => (
+          <button key={k} onClick={() => setTab(k)} className="flex-1 flex flex-col items-center gap-0.5 py-2">
+            <I className={`w-[18px] h-[18px] ${tab === k ? "text-stone-100" : "text-stone-600"}`} />
+            <span className={`text-[9px] ${tab === k ? "text-stone-100" : "text-stone-600"}`}>{l}</span>
+          </button>
+        ))}
+      </nav>
+
+      {assignRide && (
+        <AssignModal setup={setup} dyn={dyn} ride={assignRide}
+          onClose={() => setAssignRide(null)}
+          onAssign={(driverId) => doAssign(assignRide.id, driverId)} />
+      )}
+      <ChatPanel setup={setup} dyn={dyn} day={day} updateDyn={updateDyn} by={meBy} liftOffset="calc(56px + env(safe-area-inset-bottom))" />
+    </div>
+  );
+}
+
+// Live-Karte fürs Handy: keine eigene Zeichenlogik, nutzt exakt dieselben
+// Daten-Funktionen und dieselbe (bereits responsive, viewBox-basierte)
+// SchematicMap-Komponente wie Desktop-Dashboard/BoardMiniMap.
+function MobileMapPane({ setup, dyn, day }) {
+  const isToday = dayNowMin(day) >= 0 && dayNowMin(day) < 90000;
+  const [, setTick] = useState(0);
+  useEffect(() => { if (!isToday) return; const t = setInterval(() => setTick((x) => x + 1), 15000); return () => clearInterval(t); }, [isToday]);
+  const [selected, setSelected] = useState(null);
+  const nowMin = isToday ? dayNowMin(day) : 1080;
+  const nodes = useMemo(() => buildMapNodes(setup, dyn, day), [setup, dyn.rides, day]);
+  const positions = useMemo(() => computeMapPositions(setup, dyn, day, nowMin, isToday ? "live" : "sim", nodes), [setup, dyn, day, nodes, isToday, nowMin]);
+  const openRides = useMemo(() => computeOpenRides(setup, dyn, day, nodes), [dyn.rides, day, nodes]);
+  const sel = positions.find((p) => p.driver.id === selected);
+  return (
+    <div className="flex-1 min-h-0 overflow-y-auto px-4 py-3">
+      {!isToday && <div className="text-xs text-stone-500 mb-2">Zeigt den Fahrplan-Stand (kein anderer Tag als heute), keine Live-Positionen.</div>}
+      <div className="bg-stone-900 border border-stone-800 rounded-xl p-2">
+        <SchematicMap nodes={nodes} positions={positions} openRides={openRides}
+          selected={selected} hovered={null} onSelect={setSelected} onHover={() => {}}
+          activeOpen={null} onOpenClick={() => {}} />
+      </div>
+      {sel && (
+        <div className="mt-2 bg-stone-900 border border-stone-800 rounded-xl p-2.5 text-xs text-stone-300">
+          {sel.driver.vehicleType === "Van" ? "Van" : "Car"} · {sel.driver.firstName} {sel.driver.lastName} · {STATUS_STYLE[sel.mode]?.label || sel.mode}
+        </div>
+      )}
     </div>
   );
 }
