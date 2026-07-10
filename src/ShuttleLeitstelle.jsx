@@ -5214,7 +5214,7 @@ function TimelinePage({ setup, dyn, day, onEdit, onAssign, updateDyn, by, onUndo
     const rowTone = isDropTarget ? "bg-orange-500/20" : !selectedRide ? "" : clickable ? (ev.feasible ? "bg-emerald-500/10" : "bg-amber-500/10") : "opacity-40";
     return (
       <div data-row-driver={driverId || "unassigned"} onClick={() => clickable && quickAssign(driverId)}
-        className={`flex items-stretch border-b border-stone-800/60 transition ${rowTone} ${clickable ? "cursor-pointer hover:bg-emerald-500/20" : ""}`}>
+        className={`flex items-stretch border-b border-stone-800/60 transition bg-stone-900 ${rowTone} ${clickable ? "cursor-pointer hover:bg-emerald-500/20" : ""}`}>
         <div className="w-40 shrink-0 px-3 py-2.5 sticky left-0 z-10 bg-stone-900">
           <div className={`text-sm font-medium truncate ${warn ? "text-orange-400" : "text-stone-100"}`}>{label}</div>
           {sub && <div className="text-[10px] font-mono text-stone-500 truncate mt-0.5">{sub}</div>}
@@ -5333,7 +5333,7 @@ function TimelinePage({ setup, dyn, day, onEdit, onAssign, updateDyn, by, onUndo
           {/* Eigener scrollbarer Bereich (statt der ganzen Seite): so bleiben
               Kopfzeile (oben) UND Fahrer-Namen (links) beim Scrollen stehen,
               ohne mit dem Dashboard-Header oben in der Seite zu kollidieren. */}
-          <div ref={scrollRef} className="overflow-auto max-h-[65vh]">
+          <div ref={scrollRef} className="overflow-auto max-h-[65vh] bg-stone-900">
             <div className="flex border-b border-stone-800 bg-stone-950/95 sticky top-0 z-20">
               <div className="w-40 shrink-0 sticky left-0 z-30 bg-stone-950/95" />
               <div className="relative shrink-0 h-6" style={{ width: contentW }}>
