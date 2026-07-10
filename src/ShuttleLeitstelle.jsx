@@ -182,16 +182,27 @@ async function sget(key) {
 // (window.storage) gibt es kein serverseitiges CAS, dort bleibt es beim
 // bisherigen Best-Effort-Schreiben (ok:true, value: val), unverändert
 // dokumentiert als "last write wins" in der Storage-API.
+// WICHTIG: Für Supabase NICHT try/catch um sbSetSetup/sbSetDyn legen. Beide
+// werfen bei einem ECHTEN Fehler (RPC-Problem, Netzwerk, Berechtigung) schon
+// selbst ("if (error) throw error"), das muss hier durchgereicht werden statt
+// in {ok:false} umgewandelt zu werden — sonst sieht das für updateDyn/
+// updateSetup IDENTISCH aus wie ein normaler, erwarteter Kollisionsfall
+// (jemand anderes hat gerade geschrieben). Die Folge wäre: bis zu 6 sinnlose
+// Wiederholversuche, dann stilles Aufgeben, ohne dass die aufrufende Stelle
+// (z. B. "Push aktivieren") je erfährt, dass der Schreibvorgang nie geklappt
+// hat — genau das hat einen echten Bug verursacht (Push zeigte "aktiv", war
+// aber nie in der DB gespeichert). Im Chat-Artifact (window.storage) bleibt
+// es beim bisherigen Best-Effort, dort gibt es diese Unterscheidung nicht.
 async function sset(key, val, baseRev) {
+  if (hasSupabase()) {
+    return key === SETUP_KEY ? await sbSetSetup(val, baseRev) : await sbSetDyn(val, baseRev);
+  }
   try {
-    if (hasSupabase()) {
-      return key === SETUP_KEY ? await sbSetSetup(val, baseRev) : await sbSetDyn(val, baseRev);
-    }
     const s = JSON.stringify(val);
     if (!hasStore) { mem[key] = s; return { ok: true, value: val }; }
     await window.storage.set(key, s, SHARED);
     return { ok: true, value: val };
-  } catch (e) { console.error("storage.set", e); return { ok: false, value: null }; }
+  } catch (e) { console.error("storage.set (window.storage)", e); return { ok: false, value: null }; }
 }
 
 // Login-Status pro Gerät (NICHT geteilt) — bewusst echtes localStorage statt des
@@ -1418,7 +1429,13 @@ async function triggerPush(driverId, title, body, tag) {
     // fetch() wirft NUR bei echten Netzwerkfehlern, nicht bei 4xx/5xx-Antworten —
     // ohne diese Prüfung sehen wir serverseitige Fehler (Auth-Check, fehlendes
     // Abo, RPC-Fehler) nirgends, weder in der Konsole noch sonstwo.
-    if (!res.ok) { const t = await res.text().catch(() => ""); console.error("triggerPush fehlgeschlagen:", res.status, t); }
+    if (!res.ok) { const t = await res.text().catch(() => ""); console.error("triggerPush fehlgeschlagen:", res.status, t); return; }
+    // WICHTIG: api/send-push.js liefert bei einem gescheiterten Zustellversuch
+    // (falsche VAPID-Keys, abgelaufenes Abo o.ä.) trotzdem HTTP 200 — der
+    // eigentliche Fehler steckt nur im JSON-Body (ok:false, reason:"..."),
+    // res.ok allein reicht hier also nicht.
+    const data = await res.json().catch(() => null);
+    if (data && !data.ok) console.warn("triggerPush: nicht zugestellt —", data.reason || "unbekannter Grund");
   } catch (e) { console.error("triggerPush Netzwerkfehler (evtl. kein Deployment):", e); }
 }
 // Nachtrag 4: an ALLE Leitstellen-Nutzer pushen, die Push aktiviert haben —
