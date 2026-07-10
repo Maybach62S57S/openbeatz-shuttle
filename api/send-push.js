@@ -71,7 +71,7 @@ export default async function handler(req, res) {
   const payload = JSON.stringify({ title, body: body || "", tag: tag || "shuttle-update", url: url || "/" });
 
   const { data: row, error: readError } = await supabase.from("settings").select("dyn_data").eq("id", 1).single();
-  if (readError || !row) return res.status(502).json({ error: "Konnte Push-Abos nicht laden" });
+  if (readError || !row) return res.status(502).json({ error: "Konnte Push-Abos nicht laden", detail: readError ? { message: readError.message, code: readError.code, hint: readError.hint } : "keine Zeile gefunden" });
   const dynData = row.dyn_data || {};
 
   const send = async (role, id, sub) => {
