@@ -1463,7 +1463,7 @@ function DriverApp({ setup, dyn, session, updateDyn, onLogout }) {
               <div className="text-lg font-semibold leading-tight truncate">{driver.firstName} {driver.lastName}</div>
               <div className="flex items-center gap-2 mt-0.5 flex-wrap">
                 <span className={`text-xs font-mono px-1.5 py-0.5 rounded ${driver.vehicleType === "Van" ? "bg-orange-500/20 text-orange-300" : "bg-sky-500/20 text-sky-300"}`}>
-                  {driver.vehicleType === "Van" ? "Van" : "Car"} · {driver.vehicleId}
+                  {driver.vehicleType === "Van" ? "Van" : "Car"}
                 </span>
                 <span className="text-xs text-stone-500">{driver.seats} Plätze</span>
                 <span className={`text-xs px-1.5 py-0.5 rounded ${stats.active ? "bg-blue-500/20 text-blue-300" : "bg-emerald-500/20 text-emerald-300"}`}>
@@ -1710,7 +1710,7 @@ function waStageText(setup, ride, stageLabel) {
     `Artist: ${ride.djName || "—"}`,
     `Geplante Ankunft: ${ride.time} (${loc(ride.fromId, ride.fromCustom)} → ${loc(ride.toId, ride.toCustom)})`,
     `Status: ${STATUS_LABEL[ride.status] || ride.status}`,
-    drv ? `Fahrer: ${drv.firstName} (${drv.vehicleId})` : "Fahrer: noch nicht zugeteilt",
+    drv ? `Fahrer: ${drv.firstName} (${drv.vehicleType === "Van" ? "Van" : "Car"})` : "Fahrer: noch nicht zugeteilt",
   ].filter(Boolean).join("\n");
 }
 
@@ -1900,7 +1900,7 @@ function StageTile({ setup, x, onReport, onContact, compact }) {
           {!compact && r.status !== "done" && (
             <div className="text-xs text-stone-500 mt-0.5 flex items-center gap-1.5">
               <Clock className="w-3 h-3" />ETA {eta.label}
-              {drv && <span className="text-stone-600">· {drv.firstName} ({drv.vehicleId})</span>}
+              {drv && <span className="text-stone-600">· {drv.firstName} ({drv.vehicleType === "Van" ? "Van" : "Car"})</span>}
             </div>
           )}
           {late && (
@@ -2327,7 +2327,7 @@ function buildChatContext(setup, dyn, day) {
         rideId: r.id, time: r.time, from: ln(r.fromId, r.fromCustom), to: ln(r.toId, r.toCustom),
         zone: r.zone || undefined, artist: r.djName || undefined, passengers: r.passengerCount,
         status: STATUS_LABEL[r.status] || r.status,
-        driver: drv ? `${drv.firstName} ${drv.lastName} (${drv.vehicleId})` : null,
+        driver: drv ? `${drv.firstName} ${drv.lastName} (${drv.vehicleType === "Van" ? "Van" : "Car"})` : null,
         driverId: drv ? drv.id : null,
         flight: r.flightNo ? `${r.flightNo} ${r.flightStatus || ""}`.trim() : undefined,
         issues: openIssues.length ? openIssues : undefined,
@@ -2647,7 +2647,7 @@ function Dashboard({ setup, dyn, session, updateDyn, updateSetup, onLogout, onPr
                   return (
                     <div key={r.id} className={`flex items-center flex-wrap gap-x-3 gap-y-1 text-sm rounded-lg px-3 py-2 ${isCrit ? "bg-red-500/15 border border-red-500/30" : "bg-stone-950/40"}`}>
                       <span className="font-mono text-stone-300">{r.time}</span>
-                      <span className="text-stone-300">{drv ? `${drv.firstName} ${drv.lastName[0]}. (${drv.vehicleId})` : "kein Fahrer"}</span>
+                      <span className="text-stone-300">{drv ? `${drv.firstName} ${drv.lastName[0]}. (${drv.vehicleType === "Van" ? "Van" : "Car"})` : "kein Fahrer"}</span>
                       <span className="text-orange-300 font-medium truncate max-w-[140px]">{r.djName || locName(r.fromId, r.fromCustom)}</span>
                       <span className="text-red-300 truncate flex items-center gap-1.5">
                         {isCrit && <span className="text-[9px] bg-red-500 text-white px-1 rounded uppercase">!</span>}
@@ -2729,7 +2729,7 @@ function Dashboard({ setup, dyn, session, updateDyn, updateSetup, onLogout, onPr
                               <span className={`w-2 h-2 rounded-full ${drv.vehicleType === "Van" ? "bg-orange-400" : "bg-sky-400"}`} />
                               {drv.firstName} {drv.lastName[0]}.
                             </div>
-                            <div className="text-[10px] text-stone-500 font-mono">{drv.vehicleId}</div>
+                            <div className="text-[10px] text-stone-500 font-mono">{drv.vehicleType === "Van" ? "Van" : "Car"}</div>
                           </button>
                         ) : (
                           <button onClick={() => setAssignRide(r)}
@@ -2792,7 +2792,7 @@ function Dashboard({ setup, dyn, session, updateDyn, updateSetup, onLogout, onPr
               const r = d.rides.find((x) => x.id === assignRide.id);
               if (r) {
                 const changed = r.assignedDriverId !== driverId;
-                const drvName = (id) => { const dr = setup.drivers.find((x) => x.id === id); return dr ? `${dr.firstName} ${dr.lastName[0]}. (${dr.vehicleId})` : "—"; };
+                const drvName = (id) => { const dr = setup.drivers.find((x) => x.id === id); return dr ? `${dr.firstName} ${dr.lastName[0]}. (${dr.vehicleType === "Van" ? "Van" : "Car"})` : "—"; };
                 if (changed) logRide(r, r.assignedDriverId ? "reassigned" : "assigned", meBy, driverId ? `→ ${drvName(driverId)}` : "Zuteilung entfernt");
                 r.assignedDriverId = driverId;
                 // Punkt 7: neuer/kein Fahrer -> laufende Status verwerfen, zurück auf planned (mit Verlauf)
@@ -2889,7 +2889,7 @@ function DriverRow({ setup, driver, stats }) {
       <div className="min-w-0 flex-1">
         <div className="text-sm text-stone-200 truncate flex items-center gap-1.5">
           {driver.firstName} {driver.lastName}
-          <span className={`text-[10px] font-mono px-1 rounded ${driver.vehicleType === "Van" ? "bg-orange-500/20 text-orange-300" : "bg-sky-500/20 text-sky-300"}`}>{driver.vehicleId}</span>
+          <span className={`text-[10px] font-mono px-1 rounded ${driver.vehicleType === "Van" ? "bg-orange-500/20 text-orange-300" : "bg-sky-500/20 text-sky-300"}`}>{driver.vehicleType === "Van" ? "Van" : "Car"}</span>
         </div>
         <div className="text-[11px] text-stone-500 truncate">
           {busyRide ? <>unterwegs → {setup.locations.find((l) => l.id === busyRide.toId)?.short || "Ziel"}</>
@@ -2926,7 +2926,7 @@ function AssignModal({ setup, dyn, ride, onClose, onAssign }) {
       </div>
 
       {current && (
-        <div className="text-xs text-stone-500 mb-2">Aktuell zugeteilt: <span className="text-stone-300">{current.firstName} {current.lastName} ({current.vehicleId})</span></div>
+        <div className="text-xs text-stone-500 mb-2">Aktuell zugeteilt: <span className="text-stone-300">{current.firstName} {current.lastName} ({current.vehicleType === "Van" ? "Van" : "Car"})</span></div>
       )}
 
       <div className="text-xs text-stone-500 mb-2 flex items-center gap-1.5"><Gauge className="w-3.5 h-3.5" />Vorschläge – Nähe &amp; Verfügbarkeit zuerst, Reisezeiten &amp; Fairness berücksichtigt</div>
@@ -2937,7 +2937,7 @@ function AssignModal({ setup, dyn, ride, onClose, onAssign }) {
           return (
             <button key={x.driver.id} onClick={() => onAssign(x.driver.id)}
               className={`w-full text-left rounded-xl px-3 py-2.5 border transition flex items-center gap-3 ${best ? "border-orange-500/60 bg-orange-500/10 hover:bg-orange-500/15" : x.feasible ? "border-stone-800 bg-stone-900 hover:border-stone-700" : "border-orange-500/30 bg-orange-500/5 hover:border-orange-500/50"}`}>
-              <span className={`w-8 h-8 rounded-lg flex items-center justify-center text-xs font-mono shrink-0 ${x.driver.vehicleType === "Van" ? "bg-orange-500/20 text-orange-300" : "bg-sky-500/20 text-sky-300"}`}>{x.driver.vehicleId}</span>
+              <span className={`w-8 h-8 rounded-lg flex items-center justify-center text-xs font-mono shrink-0 ${x.driver.vehicleType === "Van" ? "bg-orange-500/20 text-orange-300" : "bg-sky-500/20 text-sky-300"}`}>{x.driver.vehicleType === "Van" ? "Van" : "Car"}</span>
               <div className="min-w-0 flex-1">
                 <div className="text-sm text-stone-100 flex items-center gap-2">
                   {x.driver.firstName} {x.driver.lastName}
@@ -2960,7 +2960,7 @@ function AssignModal({ setup, dyn, ride, onClose, onAssign }) {
             const ev = evaluateInsertion(setup, dyn, d, ride);
             const assignManual = () => {
               if (!ev.feasible) {
-                const ok = window.confirm(`${d.firstName} ${d.lastName} (${d.vehicleId}) hat einen Konflikt:\n\n• ${ev.problems.join("\n• ")}\n\nTrotzdem zuweisen?`);
+                const ok = window.confirm(`${d.firstName} ${d.lastName} (${d.vehicleType === "Van" ? "Van" : "Car"}) hat einen Konflikt:\n\n• ${ev.problems.join("\n• ")}\n\nTrotzdem zuweisen?`);
                 if (!ok) return;
               }
               onAssign(d.id);
@@ -2970,7 +2970,7 @@ function AssignModal({ setup, dyn, ride, onClose, onAssign }) {
                 className={`text-xs rounded-lg px-2 py-1.5 text-left border ${!ev.eligible ? "bg-red-500/5 border-red-500/30" : !ev.feasible ? "bg-orange-500/5 border-orange-500/30" : "bg-stone-900 border-stone-800 hover:border-stone-600"}`}>
                 <div className="text-stone-200 truncate">{d.firstName} {d.lastName[0]}.</div>
                 <div className="flex items-center gap-1">
-                  <span className="text-stone-500 font-mono text-[10px]">{d.vehicleId}</span>
+                  <span className="text-stone-500 font-mono text-[10px]">{d.vehicleType === "Van" ? "Van" : "Car"}</span>
                   {!ev.eligible ? <span className="text-[9px] text-red-400">zu klein</span>
                     : ev.overlap ? <span className="text-[9px] text-orange-400">Überschneidung</span>
                       : !ev.feasible ? <span className="text-[9px] text-orange-400">knapp</span> : null}
@@ -3243,7 +3243,7 @@ function DriversTab({ setup, dyn, day }) {
       <div className="space-y-1.5 2xl:space-y-0 2xl:grid 2xl:grid-cols-2 2xl:gap-1.5">
         {rows.sort((a, b) => b.s.drivingMin - a.s.drivingMin).map(({ d, s }) => (
           <div key={d.id} className="bg-stone-900 border border-stone-800 rounded-lg px-4 py-2.5 flex items-center gap-4">
-            <span className={`text-xs font-mono px-1.5 py-0.5 rounded shrink-0 ${d.vehicleType === "Van" ? "bg-orange-500/20 text-orange-300" : "bg-sky-500/20 text-sky-300"}`}>{d.vehicleId}</span>
+            <span className={`text-xs font-mono px-1.5 py-0.5 rounded shrink-0 ${d.vehicleType === "Van" ? "bg-orange-500/20 text-orange-300" : "bg-sky-500/20 text-sky-300"}`}>{d.vehicleType === "Van" ? "Van" : "Car"}</span>
             <div className="w-40 shrink-0 text-sm text-stone-200 truncate">{d.firstName} {d.lastName}</div>
             <div className="flex-1">
               <div className="h-2 bg-stone-800 rounded-full overflow-hidden">
@@ -3274,7 +3274,7 @@ function waDriverText(setup, ride) {
     ride.meetingPoint ? `Treffpunkt: ${ride.meetingPoint}` : null,
     ride.flightNo ? `Flug: ${ride.flightNo}${ride.flightStatus ? ` (${flightStyle(ride.flightStatus).l})` : ""}` : null,
     ride.notes ? `Notiz: ${ride.notes}` : null,
-    drv ? `Fahrzeug: ${drv.vehicleId} (${drv.vehicleType === "Van" ? "Van" : "Car"})` : null,
+    drv ? `Fahrzeug: ${drv.vehicleType === "Van" ? "Van" : "Car"}` : null,
     "Bitte bestätigen.",
   ].filter(Boolean).join("\n");
 }
@@ -3346,7 +3346,7 @@ function DriverPhones({ setup, updateSetup }) {
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-4 gap-y-1.5 max-h-72 overflow-y-auto pr-1">
         {setup.drivers.map((d) => (
           <div key={d.id} className="flex items-center gap-1.5 text-sm">
-            <span className={`text-[10px] font-mono px-1.5 py-0.5 rounded shrink-0 w-12 text-center ${d.vehicleType === "Van" ? "bg-orange-500/20 text-orange-300" : "bg-sky-500/20 text-sky-300"}`}>{d.vehicleId}</span>
+            <span className={`text-[10px] font-mono px-1.5 py-0.5 rounded shrink-0 w-12 text-center ${d.vehicleType === "Van" ? "bg-orange-500/20 text-orange-300" : "bg-sky-500/20 text-sky-300"}`}>{d.vehicleType === "Van" ? "Van" : "Car"}</span>
             <span className="text-stone-400 w-20 truncate shrink-0">{d.firstName} {d.lastName[0]}.</span>
             <input type="tel" className="flex-1 min-w-0 bg-stone-950 border border-stone-800 rounded px-2 py-1 text-sm text-stone-200 placeholder-stone-600 focus:outline-none focus:border-orange-500"
               value={phones[d.id] || ""} onChange={(e) => setPhones((p) => ({ ...p, [d.id]: e.target.value }))} placeholder="+49 …" />
@@ -3693,7 +3693,7 @@ function ReturnsTab({ setup, dyn, day, updateDyn, onAssign, onWhatsApp, onEdit, 
         <div className="flex items-center flex-wrap gap-2 mt-3">
           {drv ? (
             <span className="text-sm text-stone-200 flex items-center gap-1.5">
-              <span className={`w-2.5 h-2.5 rounded-full ${drv.vehicleType === "Van" ? "bg-orange-400" : "bg-sky-400"}`} />{drv.vehicleId} · {drv.firstName}
+              <span className={`w-2.5 h-2.5 rounded-full ${drv.vehicleType === "Van" ? "bg-orange-400" : "bg-sky-400"}`} />{drv.vehicleType === "Van" ? "Van" : "Car"} · {drv.firstName}
               {drv.phone && <a href={`tel:${drv.phone}`} className="text-stone-500 hover:text-emerald-400"><Navigation className="w-3.5 h-3.5 rotate-90" /></a>}
             </span>
           ) : (
@@ -3791,7 +3791,7 @@ function ReturnsTab({ setup, dyn, day, updateDyn, onAssign, onWhatsApp, onEdit, 
               {atFestival.map(({ d, s }) => (
                 <div key={d.id} className="flex items-center gap-2 text-sm bg-stone-950/50 rounded-lg px-2.5 py-2">
                   <span className={`w-2 h-2 rounded-full shrink-0 bg-emerald-400`} />
-                  <span className="text-stone-300 font-mono text-xs">{d.vehicleId}</span>
+                  <span className="text-stone-300 font-mono text-xs">{d.vehicleType === "Van" ? "Van" : "Car"}</span>
                   <span className="text-stone-400 truncate">{d.firstName} {d.lastName[0]}.</span>
                   <span className="text-stone-600 ml-auto text-xs">{s.count}×</span>
                   {d.phone && <a href={`tel:${d.phone}`} className="text-stone-500 hover:text-emerald-400 shrink-0"><Navigation className="w-3.5 h-3.5 rotate-90" /></a>}
@@ -3926,7 +3926,7 @@ function FlightTab({ setup, dyn, day, updateDyn, by, onEdit }) {
                 </select>
 
                 <div className="text-xs w-28 shrink-0">
-                  <div className="text-stone-300 truncate">{drv ? `${drv.vehicleId} · ${drv.firstName}` : <span className="text-orange-400">kein Fahrer</span>}</div>
+                  <div className="text-stone-300 truncate">{drv ? `${drv.vehicleType === "Van" ? "Van" : "Car"} · ${drv.firstName}` : <span className="text-orange-400">kein Fahrer</span>}</div>
                   <div className="text-[10px] text-stone-500">Pickup {r.time}</div>
                 </div>
 
@@ -4038,7 +4038,7 @@ function EmergencyTab({ setup, dyn, day, updateDyn, by, onAssign, onWhatsApp, on
                     {r.djName && <div className="text-sm font-semibold text-orange-300 truncate mt-0.5">{r.djName}</div>}
                     <div className={`text-sm mt-0.5 font-medium ${crit ? "text-red-300" : "text-amber-300"}`}>{c.label}</div>
                     <div className="text-xs text-stone-500 mt-0.5">
-                      {drv ? `Fahrer: ${drv.firstName} ${drv.lastName} (${drv.vehicleId})${drv.phone ? " · " + drv.phone : ""}` : "kein Fahrer zugeteilt"}
+                      {drv ? `Fahrer: ${drv.firstName} ${drv.lastName} (${drv.vehicleType === "Van" ? "Van" : "Car"})${drv.phone ? " · " + drv.phone : ""}` : "kein Fahrer zugeteilt"}
                     </div>
 
                     {/* nächste passende Fahrer */}
@@ -4047,7 +4047,7 @@ function EmergencyTab({ setup, dyn, day, updateDyn, by, onAssign, onWhatsApp, on
                         <span className="text-stone-500">Passende Fahrer: </span>
                         {sugg.map((x, k) => (
                           <span key={x.driver.id} className={`inline-flex items-center gap-1 mr-2 ${x.feasible ? "text-emerald-300" : "text-amber-300"}`}>
-                            {x.driver.vehicleId} {x.driver.firstName}{x.deadKnown ? ` (${x.deadMin}′)` : ""}{k < sugg.length - 1 ? "," : ""}
+                            {x.driver.vehicleType === "Van" ? "Van" : "Car"} {x.driver.firstName}{x.deadKnown ? ` (${x.deadMin}′)` : ""}{k < sugg.length - 1 ? "," : ""}
                           </span>
                         ))}
                       </div>
@@ -4080,7 +4080,7 @@ function EmergencyTab({ setup, dyn, day, updateDyn, by, onAssign, onWhatsApp, on
                 return (
                   <div key={d.id} className="flex items-center gap-2 text-xs bg-stone-950/50 rounded px-2 py-1.5">
                     <span className={`w-2 h-2 rounded-full shrink-0 bg-emerald-400`} />
-                    <span className="text-stone-300">{d.vehicleId}</span>
+                    <span className="text-stone-300">{d.vehicleType === "Van" ? "Van" : "Car"}</span>
                     <span className="text-stone-400 truncate">{d.firstName} {d.lastName[0]}.</span>
                     <span className="text-stone-600 ml-auto truncate">{loc ? loc.short : "—"} · {s.count}×</span>
                     {d.phone && <a href={`tel:${d.phone}`} className="text-stone-500 hover:text-emerald-400 shrink-0"><Navigation className="w-3.5 h-3.5 rotate-90" /></a>}
@@ -4191,7 +4191,7 @@ function OverviewTab({ setup, dyn, day, setTab, onEdit, onAssign }) {
                 <button key={r.id} onClick={() => onEdit(r)} className="w-full text-left flex items-center gap-1.5 text-xs bg-stone-950/50 hover:bg-stone-800 rounded-lg px-2 py-1.5">
                   <span className="font-mono text-stone-300">{r.time}</span>
                   <span className="text-stone-400 truncate">{ln(r.toId, r.toCustom)}</span>
-                  {drv && <span className="text-[9px] font-mono text-stone-600 ml-auto shrink-0">{drv.vehicleId}</span>}
+                  {drv && <span className="text-[9px] font-mono text-stone-600 ml-auto shrink-0">{drv.vehicleType === "Van" ? "Van" : "Car"}</span>}
                 </button>
               );
             }} />
@@ -4265,7 +4265,7 @@ function ReportSection({ setup, dyn, day }) {
             {rep.perDriver.slice(0, 20).map((x, i) => (
               <div key={x.d.id} className="flex items-center gap-2 text-xs">
                 <span className="text-stone-600 w-4">{i + 1}.</span>
-                <span className="font-mono text-stone-400">{x.d.vehicleId}</span>
+                <span className="font-mono text-stone-400">{x.d.vehicleType === "Van" ? "Van" : "Car"}</span>
                 <span className="text-stone-300 truncate">{x.d.firstName} {x.d.lastName[0]}.</span>
                 <div className="flex-1 h-1.5 bg-stone-800 rounded-full overflow-hidden mx-1"><div className="h-full bg-orange-500" style={{ width: `${(x.n / (rep.perDriver[0]?.n || 1)) * 100}%` }} /></div>
                 <span className="font-mono text-stone-300 shrink-0">{x.n}</span>
@@ -4646,7 +4646,7 @@ function TimelinePage({ setup, dyn, day, onEdit, onAssign, updateDyn, by, onUndo
           </div>
           <div>
             {unassigned.length > 0 && <Row label="Ohne Fahrer" sub={`${unassigned.length} Fahrt(en)`} rs={unassigned} warn />}
-            {withDriver.map(({ d, rs }) => <Row key={d.id} driverId={d.id} label={`${d.firstName} ${d.lastName}`} sub={d.vehicleId} rs={rs} conflictCheck />)}
+            {withDriver.map(({ d, rs }) => <Row key={d.id} driverId={d.id} label={`${d.firstName} ${d.lastName}`} sub={d.vehicleType === "Van" ? "Van" : "Car"} rs={rs} conflictCheck />)}
           </div>
         </div>
       )}
@@ -4731,7 +4731,7 @@ function TimelineView({ setup, dyn, day, onEdit }) {
       </div>
       <div className="max-h-[22rem] overflow-y-auto">
         {unassigned.length > 0 && <Row label="ohne Fahrer" sub={`${unassigned.length} Fahrt(en)`} rs={unassigned} warn />}
-        {withDriver.map(({ d, rs }) => <Row key={d.id} label={`${d.firstName} ${d.lastName}`} sub={d.vehicleId} rs={rs} conflictCheck />)}
+        {withDriver.map(({ d, rs }) => <Row key={d.id} label={`${d.firstName} ${d.lastName}`} sub={d.vehicleType === "Van" ? "Van" : "Car"} rs={rs} conflictCheck />)}
       </div>
     </div>
   );
@@ -4805,7 +4805,7 @@ function MapTooltip({ pos, setup, nodes }) {
   if (!pos || !pos.xy) return null;
   const stl = STATUS_STYLE[pos.mode] || STATUS_STYLE.free;
   const nn = (id) => nodes[id]?.short || "?";
-  const lines = [`${pos.driver.firstName} ${pos.driver.lastName} · ${pos.driver.vehicleId}`, stl.label];
+  const lines = [`${pos.driver.firstName} ${pos.driver.lastName} · ${pos.driver.vehicleType === "Van" ? "Van" : "Car"}`, stl.label];
   if (pos.ride) lines.push(`${nn(pos.fromId)} → ${nn(pos.toId)} · ${pos.ride.time}`);
   if (pos.etaMin != null) lines.push(`ETA ${pos.etaMin} min${pos.uncertain ? " (unsicher)" : ""}`);
   if (pos.lateMin > 0) lines.push(`⚠ ${pos.lateMin} min Verspätung`);
@@ -4864,7 +4864,7 @@ function DriverDetailsPanel({ pos, setup, nodes, onClose }) {
     <div className="bg-stone-900 border border-orange-500/40 rounded-xl p-3">
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-2">
-          <span className={`text-xs font-mono px-1.5 py-0.5 rounded ${pos.driver.vehicleType === "Van" ? "bg-orange-500/20 text-orange-300" : "bg-sky-500/20 text-sky-300"}`}>{pos.driver.vehicleId}</span>
+          <span className={`text-xs font-mono px-1.5 py-0.5 rounded ${pos.driver.vehicleType === "Van" ? "bg-orange-500/20 text-orange-300" : "bg-sky-500/20 text-sky-300"}`}>{pos.driver.vehicleType === "Van" ? "Van" : "Car"}</span>
           <span className="text-sm text-stone-100 font-medium">{pos.driver.firstName} {pos.driver.lastName}</span>
         </div>
         <button onClick={onClose} className="text-stone-500 hover:text-stone-300"><X className="w-4 h-4" /></button>
@@ -5029,7 +5029,7 @@ function BoardMiniMap({ setup, dyn, day, onEdit }) {
       </div>
       {sel && (
         <button onClick={() => onEdit && sel.ride && onEdit(sel.ride)} className="w-full text-left mt-1.5 px-2 py-1.5 rounded-lg bg-stone-950/60 hover:bg-stone-800 text-xs">
-          <span className="font-mono text-stone-300">{sel.driver.vehicleId}</span>
+          <span className="font-mono text-stone-300">{sel.driver.vehicleType === "Van" ? "Van" : "Car"}</span>
           <span className="text-stone-400"> · {sel.driver.firstName} {sel.driver.lastName} · {STATUS_STYLE[sel.mode]?.label}</span>
           {sel.ride && <span className="text-stone-500"> · {nodes[sel.fromId]?.short} → {nodes[sel.toId]?.short}</span>}
         </button>
@@ -5130,7 +5130,7 @@ function MapTab({ setup, dyn, day, onEdit }) {
               {positions.filter((p) => p.mode === "onboard" || p.mode === "toPickup").sort((a, b) => a.driver.vehicleId.localeCompare(b.driver.vehicleId)).map((p) => (
                 <button key={p.driver.id} onClick={() => setSelected(p.driver.id)} className="w-full flex items-center gap-2 text-left text-xs hover:bg-stone-800 rounded px-1.5 py-1">
                   <span className="w-2 h-2 rounded-full shrink-0" style={{ background: (STATUS_STYLE[p.mode] || {}).fill }} />
-                  <span className="text-stone-300 truncate">{p.driver.vehicleId} · {p.driver.firstName}</span>
+                  <span className="text-stone-300 truncate">{p.driver.vehicleType === "Van" ? "Van" : "Car"} · {p.driver.firstName}</span>
                   <span className="text-stone-500 ml-auto shrink-0">→ {nodes[p.toId]?.short || "?"}</span>
                 </button>
               ))}
@@ -5332,7 +5332,7 @@ function SettingsTab({ setup, dyn, day, updateSetup, updateDyn, onPreviewGuest }
             <div key={d.id} className="bg-stone-950 border border-stone-800 rounded-lg px-3 py-2">
               <div className="text-sm text-stone-200 truncate">{d.firstName} {d.lastName}</div>
               <div className="flex items-center gap-1.5 mt-0.5">
-                <span className={`text-[10px] font-mono px-1 rounded ${d.vehicleType === "Van" ? "bg-orange-500/20 text-orange-300" : "bg-sky-500/20 text-sky-300"}`}>{d.vehicleId}</span>
+                <span className={`text-[10px] font-mono px-1 rounded ${d.vehicleType === "Van" ? "bg-orange-500/20 text-orange-300" : "bg-sky-500/20 text-sky-300"}`}>{d.vehicleType === "Van" ? "Van" : "Car"}</span>
                 <span className="text-[10px] text-stone-500">{d.vehicleType === "Van" ? "Van · 7" : "Car · 4"}</span>
               </div>
             </div>
@@ -5549,7 +5549,7 @@ function exportReport(setup, dyn, day, fmt) {
       ["Fahrten gesamt", rep.total], ["Erledigt", rep.done], ["Offen", rep.open],
       ["Ohne Fahrer", rep.unassigned], ["Abgesagt", rep.cancelled], ["Mit Problem", rep.issues],
       ["Verspätete Flüge", rep.delayed], ["Offene Rückfahrten", rep.openReturns],
-      ["Fahrer mit den meisten Fahrten", rep.topDriver ? `${rep.topDriver.d.vehicleId} ${rep.topDriver.d.firstName} (${rep.topDriver.n})` : "—"],
+      ["Fahrer mit den meisten Fahrten", rep.topDriver ? `${rep.topDriver.d.vehicleType === "Van" ? "Van" : "Car"} ${rep.topDriver.d.firstName} (${rep.topDriver.n})` : "—"],
     ];
     const drv = rep.perDriver.map((x) => ({ Fahrzeug: x.d.vehicleId, Fahrer: `${x.d.firstName} ${x.d.lastName}`, Fahrten: x.n, "Fahrzeit(min)": x.min }));
     const rt = rep.perRoute.map(([route, n]) => ({ Route: route, Fahrten: n }));
