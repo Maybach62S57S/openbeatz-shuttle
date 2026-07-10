@@ -1,16 +1,25 @@
 # Open Beatz Shuttle-Leitstelle – Projekt-Kontext
 
-VIP-Shuttle-Dispositions-App für das Open Beatz Festival (23.–27. Juli 2026, Herzogenaurach bei Nürnberg). Single-File React-Artifact + Backend-Vorbereitung für den echten Deploy. Jordan (Betreiber) organisiert die Fahrten für Artists/Manager mit 20 Fahrern (6 Mercedes V-Klasse, 14 Luxus-SUV).
+VIP-Shuttle-Dispositions-App für das Open Beatz Festival (Juli 2026, Herzogenaurach bei Nürnberg). Läuft produktiv auf Vercel + Supabase (nicht mehr nur Chat-Artifact-Stand). Jordan (Betreiber) organisiert die Fahrten für Artists/Manager mit 20 Fahrern.
 
-## Wichtigste Datei
-`shuttle-leitstelle.jsx` — die komplette App, ein einziges React-Artifact (~5.300 Zeilen). Immer diese Datei laden/lesen, bevor du etwas Neues baust, um Konventionen und bereits gebaute Features nicht zu duplizieren.
+## Übergabe-Stand für einen neuen Chat (10.07.2026, Ende dieser Sitzung)
+Diese Sitzung ist sehr lang geworden, ab hier bitte in einem neuen Chat weiter (selbes Projekt, Doku ist aktuell).
+- **Läuft und ist bestätigt getestet:** Sicherheits-Härtung (Nachtrag 3), echte Push-Benachrichtigungen (Fahrer + Leitstelle), mobile Leitstellen-Ansicht, Timeline mit Zoom, Fahrer-Zurück-Button bei Statuskorrektur.
+- **Drei Team-Anleitungen erstellt** (`.docx`, Stand 10.07.2026, an Jordan übergeben): Leitstelle, Fahrer, Stage Manager — bei größeren UI-Änderungen daran denken, dass diese ggf. veralten.
+- **Noch offen, vor dem Event angehen:** `verify_driver_pin`-RPC (Fahrer-PINs/Telefonnummern derzeit noch über anon-Key auslesbar, siehe Abschnitt weiter unten), echter Fahrer-Testdurchlauf gegen die Produktivdatenbank, Stammdaten (Fahrer/Orte/Matrix) final einspielen, Test mit mehreren gleichzeitigen Dispo-Nutzern.
+- **Wichtigste Datei:** `src/ShuttleLeitstelle.jsx` (~6.300 Zeilen, wächst weiter) — immer zuerst laden/durchsuchen, bevor etwas Neues gebaut wird, um Konventionen und bestehende Features nicht zu duplizieren. `supabaseStore.js` ist weiterhin unbenutzt/veraltet, nicht referenzieren.
+- **Arbeitsweise, die sich bewährt hat:** vor jeder Änderung kurz die betroffene Stelle im Code suchen und lesen (nicht aus dem Gedächtnis annehmen), nach jeder Änderung esbuild + Duplikat-Check + eigenständiger Node-Test für neue reine Logik, ausführliche Commit-Nachrichten (dienen als Langzeit-Doku).
 
-Begleitdateien (Backend-Vorbereitung fürs echte Deployment, noch nicht live):
-- `supabase-schema.sql`, `supabaseStore.js`, `BACKEND-README.md` — Supabase-Backend (Realtime, atomare RPCs, RLS)
+## Wichtigste Dateien
+`src/ShuttleLeitstelle.jsx` — die komplette App in einer Datei (alle vier Rollen: Fahrer, Leitstelle Desktop, Leitstelle mobil, Stage Manager, plus Gast-Link).
+
+Begleitdateien:
+- `supabase-schema.sql`, `BACKEND-README.md` — Supabase-Backend (Realtime-Vorbereitung, atomare RPCs, RLS)
 - `api/flight.js`, `FLIGHT-README.md` — Flug-Live-Tracking (AeroDataBox)
-- `sw.js`, `api/send-push.js` — echte Push-Benachrichtigungen (Web Push/VAPID)
+- `public/sw.js`, `api/send-push.js` — echte Push-Benachrichtigungen (Web Push/VAPID), bestätigt funktionsfähig
+- `public/manifest.webmanifest` + Icons — Web-App-Installation (u. a. Voraussetzung für iOS-Push)
 - `.env.example` — alle benötigten Umgebungsvariablen fürs Deployment
-- `Shuttle-Leitstelle-Kurzanleitung.docx` — Team-Bedienungsanleitung
+- `Leitstelle-Anleitung.docx`, `Fahrer-Anleitung.docx`, `Stage-Manager-Anleitung.docx` — Team-Bedienungsanleitungen (neu, 10.07.2026)
 
 ## Architektur-Kurzüberblick
 - **Speicher im Artifact:** `window.storage` (shared), Keys `obf:setup:v5`/`obf:dyn:v5`, Polling alle 3s. `updateDyn`/`updateSetup` nutzen Read-Check-Write mit Retry (optimistische Nebenläufigkeit über einen `rev`-Zähler) — Mutatoren beschreiben IMMER eine Operation auf frischen Daten, nie einen kompletten Objekt-Überschrieb. Im Artifact bleibt das Best-Effort (window.storage kennt kein echtes Compare-and-Swap, "last write wins" laut Storage-API).
