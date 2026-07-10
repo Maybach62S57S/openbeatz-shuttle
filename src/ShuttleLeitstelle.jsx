@@ -61,6 +61,37 @@ function apiHeaders() {
   return h;
 }
 
+/* ------------------------------ Google Maps ------------------------------ *
+ * Optionale echte Kartenansicht (Live-Fahrer-GPS) zusätzlich zur kostenlosen
+ * Schema-Karte, siehe LiveGoogleMap weiter unten. Bewusst NICHT automatisch
+ * geladen: das Google-Skript wird erst angefordert, wenn die Leitstelle aktiv
+ * auf die Google-Maps-Ansicht wechselt (Toggle in MapTab/MobileMapPane), und
+ * danach nur EIN EINZIGES Mal pro Browser-Sitzung (google.maps.Map wird nicht
+ * bei jedem 3s-Poll neu erzeugt, nur die Marker-Positionen werden aktualisiert).
+ * Das hält den Verbrauch weit im kostenlosen Google-Kontingent (aktuell rund
+ * 10.000 "Map Loads"/Monat pro SKU, Stand 2026 nach Wegfall des früheren
+ * $200-Pauschalguthabens). Der Key ist ein Browser-Key (in der Google Cloud
+ * Console per HTTP-Referrer auf die eigene Domain eingeschränkt), kein
+ * Server-Secret wie der Supabase-Service-Role-Key.
+ */
+const hasGoogleMaps = () => typeof import.meta !== "undefined" && !!import.meta.env?.VITE_GOOGLE_MAPS_API_KEY;
+let googleMapsLoadPromise = null;
+function loadGoogleMapsApi() {
+  if (typeof window !== "undefined" && window.google?.maps) return Promise.resolve(window.google.maps);
+  if (googleMapsLoadPromise) return googleMapsLoadPromise;
+  googleMapsLoadPromise = new Promise((resolve, reject) => {
+    const key = typeof import.meta !== "undefined" ? import.meta.env?.VITE_GOOGLE_MAPS_API_KEY : undefined;
+    if (!key) { googleMapsLoadPromise = null; reject(new Error("Kein Google-Maps-Key hinterlegt (VITE_GOOGLE_MAPS_API_KEY).")); return; }
+    const script = document.createElement("script");
+    script.src = `https://maps.googleapis.com/maps/api/js?key=${encodeURIComponent(key)}&v=weekly&loading=async`;
+    script.async = true;
+    script.onerror = () => { googleMapsLoadPromise = null; reject(new Error("Google Maps konnte nicht geladen werden (Netzwerk/Key prüfen).")); };
+    script.onload = () => resolve(window.google.maps);
+    document.head.appendChild(script);
+  });
+  return googleMapsLoadPromise;
+}
+
 const fromDbDriver = (d) => ({
   id: d.id, firstName: d.first_name, lastName: d.last_name, vehicleType: d.vehicle_type,
   vehicleId: d.vehicle_id, seats: d.seats, active: d.active,
@@ -3594,6 +3625,7 @@ function MobileMapPane({ setup, dyn, day }) {
   const [, setTick] = useState(0);
   useEffect(() => { if (!isToday) return; const t = setInterval(() => setTick((x) => x + 1), 15000); return () => clearInterval(t); }, [isToday]);
   const [selected, setSelected] = useState(null);
+  const [mapView, setMapView] = useState("schema"); // 'schema' | 'google', siehe LiveGoogleMap
   const nowMin = isToday ? dayNowMin(day) : 1080;
   const nodes = useMemo(() => buildMapNodes(setup, dyn, day), [setup, dyn.rides, day]);
   const positions = useMemo(() => computeMapPositions(setup, dyn, day, nowMin, isToday ? "live" : "sim", nodes), [setup, dyn, day, nodes, isToday, nowMin]);
@@ -3602,10 +3634,20 @@ function MobileMapPane({ setup, dyn, day }) {
   return (
     <div className="flex-1 min-h-0 overflow-y-auto px-4 pt-3 pb-20">
       {!isToday && <div className="text-xs text-stone-500 mb-2">Zeigt den Fahrplan-Stand (kein anderer Tag als heute), keine Live-Positionen.</div>}
+      <div className="flex items-center gap-1 bg-stone-900 border border-stone-800 rounded-lg p-0.5 mb-2 w-fit">
+        <button onClick={() => setMapView("schema")}
+          className={`text-xs px-2.5 py-1 rounded ${mapView === "schema" ? "bg-stone-700 text-white" : "text-stone-400"}`}>Schema-Karte</button>
+        <button onClick={() => setMapView("google")}
+          className={`text-xs px-2.5 py-1 rounded ${mapView === "google" ? "bg-stone-700 text-white" : "text-stone-400"}`}>Google Maps</button>
+      </div>
       <div className="bg-stone-900 border border-stone-800 rounded-xl p-2">
-        <SchematicMap nodes={nodes} positions={positions} openRides={openRides}
-          selected={selected} hovered={null} onSelect={setSelected} onHover={() => {}}
-          activeOpen={null} onOpenClick={() => {}} />
+        {mapView === "google" ? (
+          <LiveGoogleMap setup={setup} dyn={dyn} />
+        ) : (
+          <SchematicMap nodes={nodes} positions={positions} openRides={openRides}
+            selected={selected} hovered={null} onSelect={setSelected} onHover={() => {}}
+            activeOpen={null} onOpenClick={() => {}} />
+        )}
       </div>
       {sel && (
         <div className="mt-2 bg-stone-900 border border-stone-800 rounded-xl p-2.5 text-xs text-stone-300">
@@ -5906,6 +5948,86 @@ function BoardMiniMap({ setup, dyn, day, onEdit }) {
   );
 }
 
+// Echte Google-Maps-Ansicht mit den Live-GPS-Positionen der Fahrer
+// (driverState[driverId].gps, siehe useDriverLocationSharing weiter oben).
+// WICHTIG fürs Kontingent: google.maps.Map wird nur EINMAL erzeugt (mapRef),
+// danach nur noch Marker-Positionen aktualisiert (setPosition) statt die
+// Karte neu zu laden — ein "Map Load" zählt beim Erzeugen, nicht bei
+// Marker-Updates. Zeigt nur Fahrer mit einer GPS-Position, die jünger als
+// GPS_MAX_AGE_MS ist; ältere/keine Position -> kein Marker (statt eine
+// falsche/veraltete Position zu zeigen, siehe gpsOverrideF oben).
+function LiveGoogleMap({ setup, dyn }) {
+  const containerRef = useRef(null);
+  const mapRef = useRef(null);
+  const markersRef = useRef({}); // driverId -> google.maps.Marker
+  const [status, setStatus] = useState(hasGoogleMaps() ? "loading" : "no-key"); // loading|ready|error|no-key
+  const [errorMsg, setErrorMsg] = useState("");
+
+  useEffect(() => {
+    if (!hasGoogleMaps()) { setStatus("no-key"); return; }
+    let cancelled = false;
+    loadGoogleMapsApi().then((maps) => {
+      if (cancelled || !containerRef.current) return;
+      const locs = (setup.locations || []).filter((l) => l.lat != null && l.lng != null);
+      const center = locs.length
+        ? { lat: locs.reduce((s, l) => s + l.lat, 0) / locs.length, lng: locs.reduce((s, l) => s + l.lng, 0) / locs.length }
+        : { lat: 49.55, lng: 10.95 }; // Großraum Nürnberg/Herzogenaurach als Fallback
+      mapRef.current = new maps.Map(containerRef.current, {
+        center, zoom: 11, streetViewControl: false, mapTypeControl: false, fullscreenControl: false,
+      });
+      locs.forEach((l) => {
+        new maps.Marker({
+          position: { lat: l.lat, lng: l.lng }, map: mapRef.current, title: l.name,
+          icon: { path: maps.SymbolPath.CIRCLE, scale: 6, fillColor: "#78716c", fillOpacity: 1, strokeColor: "#1c1917", strokeWeight: 1.5 },
+        });
+      });
+      setStatus("ready");
+    }).catch((e) => { if (!cancelled) { setStatus("error"); setErrorMsg(e?.message || "Fehler beim Laden von Google Maps."); } });
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []); // bewusst nur beim ersten Mount: die Karte selbst soll nicht neu erzeugt werden
+
+  useEffect(() => {
+    if (status !== "ready" || !window.google?.maps || !mapRef.current) return;
+    const maps = window.google.maps;
+    const seen = new Set();
+    (setup.drivers || []).forEach((d) => {
+      const fix = dyn.driverState?.[d.id]?.gps;
+      const fresh = fix && fix.lat != null && fix.lng != null && fix.at && (Date.now() - fix.at) <= GPS_MAX_AGE_MS;
+      if (!fresh) return;
+      seen.add(d.id);
+      const pos = { lat: fix.lat, lng: fix.lng };
+      const label = `${d.vehicleType === "Van" ? "Van" : "Car"} · ${d.firstName} ${d.lastName}`;
+      if (markersRef.current[d.id]) {
+        markersRef.current[d.id].setPosition(pos);
+      } else {
+        markersRef.current[d.id] = new maps.Marker({
+          position: pos, map: mapRef.current, title: label,
+          icon: { path: maps.SymbolPath.CIRCLE, scale: 8, fillColor: d.vehicleType === "Van" ? "#fb923c" : "#38bdf8", fillOpacity: 1, strokeColor: "#0c0a09", strokeWeight: 2 },
+        });
+      }
+    });
+    // Marker für Fahrer ohne (mehr) frische GPS-Position entfernen
+    Object.keys(markersRef.current).forEach((id) => {
+      if (!seen.has(id)) { markersRef.current[id].setMap(null); delete markersRef.current[id]; }
+    });
+  }, [status, setup.drivers, dyn.driverState]);
+
+  if (status === "no-key") {
+    return <div className="p-4 text-xs text-stone-500">Kein Google-Maps-Key hinterlegt (Env-Variable <code>VITE_GOOGLE_MAPS_API_KEY</code>). Schema-Karte bleibt kostenlos nutzbar.</div>;
+  }
+  if (status === "error") {
+    return <div className="p-4 text-xs text-red-300">{errorMsg}</div>;
+  }
+  return (
+    <div>
+      <div ref={containerRef} style={{ width: "100%", height: 420, borderRadius: 12, overflow: "hidden" }} />
+      {status === "loading" && <div className="text-xs text-stone-500 px-1 pt-1.5 flex items-center gap-1.5"><RefreshCw className="w-3 h-3 animate-spin" />Google Maps wird geladen…</div>}
+      <div className="text-[11px] text-stone-600 px-1 pt-1.5">Zeigt nur Fahrer mit aktueller GPS-Freigabe (jünger als {Math.round(GPS_MAX_AGE_MS / 60000)} Min).</div>
+    </div>
+  );
+}
+
 function MapTab({ setup, dyn, day, onEdit }) {
   const isToday = dayNowMin(day) >= 0 && dayNowMin(day) < 90000;
   const [mode, setMode] = useState(isToday ? "live" : "sim");   // 'live' | 'sim' (Punkt 8)
@@ -5915,6 +6037,9 @@ function MapTab({ setup, dyn, day, onEdit }) {
   const [hovered, setHovered] = useState(null);
   const [filter, setFilter] = useState("all");
   const [activeOpen, setActiveOpen] = useState(null);
+  // 'schema' = kostenlose eigene Karte (Standard), 'google' = echte Google-Maps-Ansicht
+  // mit Live-GPS — bewusst nicht automatisch aktiv, siehe LiveGoogleMap oben.
+  const [mapView, setMapView] = useState("schema");
 
   useEffect(() => { setMode(isToday ? "live" : "sim"); if (isToday) setSimMin(dayNowMin(day)); }, [day, isToday]);
   useEffect(() => { if (mode !== "live") return; const t = setInterval(() => setTick((x) => x + 1), 15000); return () => clearInterval(t); }, [mode]);
@@ -5954,7 +6079,15 @@ function MapTab({ setup, dyn, day, onEdit }) {
         </div>
       </div>
 
-      <div className="mb-3"><MapFilters value={filter} onChange={setFilter} counts={counts} /></div>
+      <div className="mb-3 flex flex-wrap items-center gap-3">
+        <MapFilters value={filter} onChange={setFilter} counts={counts} />
+        <div className="flex items-center gap-1 bg-stone-900 border border-stone-800 rounded-lg p-0.5">
+          <button onClick={() => setMapView("schema")}
+            className={`text-xs px-2.5 py-1 rounded ${mapView === "schema" ? "bg-stone-700 text-white" : "text-stone-400"}`}>Schema-Karte</button>
+          <button onClick={() => setMapView("google")} title="Lädt Google Maps (externe Verbindung, siehe BACKEND-README)"
+            className={`text-xs px-2.5 py-1 rounded ${mapView === "google" ? "bg-stone-700 text-white" : "text-stone-400"}`}>Google Maps</button>
+        </div>
+      </div>
 
       {mode === "live" && !isToday && (
         <div className="text-xs text-orange-300/80 mb-2">Live-Modus zeigt den echten Status – am gewählten (zukünftigen) Tag noch nichts unterwegs. Für „wer ist wann wo" auf Simulation wechseln.</div>
@@ -5965,10 +6098,16 @@ function MapTab({ setup, dyn, day, onEdit }) {
 
       <div className="grid grid-cols-1 lg:grid-cols-4 gap-4">
         <div className="lg:col-span-3 bg-stone-900 border border-stone-800 rounded-xl p-2">
-          <SchematicMap nodes={nodes} positions={shown} openRides={openRides}
-            selected={selected} hovered={hovered} onSelect={setSelected} onHover={setHovered}
-            activeOpen={activeOpen} onOpenClick={setActiveOpen} />
-          <MapLegend counts={counts} />
+          {mapView === "google" ? (
+            <LiveGoogleMap setup={setup} dyn={dyn} />
+          ) : (
+            <>
+              <SchematicMap nodes={nodes} positions={shown} openRides={openRides}
+                selected={selected} hovered={hovered} onSelect={setSelected} onHover={setHovered}
+                activeOpen={activeOpen} onOpenClick={setActiveOpen} />
+              <MapLegend counts={counts} />
+            </>
+          )}
         </div>
 
         <div className="space-y-3">
@@ -6006,7 +6145,7 @@ function MapTab({ setup, dyn, day, onEdit }) {
             </div>
           </div>
 
-          <div className="text-[11px] text-stone-600 px-1">Positionen sind Schätzungen aus Fahrplan &amp; Status (GPS-fähig vorbereitet), keine echten GPS-Daten.</div>
+          <div className="text-[11px] text-stone-600 px-1">Positionen nutzen echtes Fahrer-GPS wo verfügbar (sonst Fahrplan-Schätzung). Für die Ansicht mit echter Straßenkarte oben auf „Google Maps" wechseln.</div>
         </div>
       </div>
 
