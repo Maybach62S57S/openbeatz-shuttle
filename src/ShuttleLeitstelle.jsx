@@ -1277,6 +1277,34 @@ function flightAlert(r) {
 }
 const ALERT_ROW = { critical: "border-l-2 border-red-500", warn: "border-l-2 border-amber-500", info: "", none: "" };
 
+// Kritischer Flugstatus alarmiert die Leitstelle nur bei Fahrten, die der
+// Shuttle wirklich vom Flughafen abholt (direkt zum Sheraton oder Festival).
+// Mövenpick liegt direkt am Flughafen (eigene Adresse "Flughafenstraße 100",
+// selbes Gelände) — diese Artists gehen selbst rüber, kein Abholstress bei
+// Verspätung/Landung, daher hier bewusst ausgenommen.
+function needsDispatcherFlightAlert(r) {
+  return flightAlert(r).level === "critical" && ["sheraton", "festival"].includes(r.toId);
+}
+
+// Abklingzeit für Flugstatus-Abfragen: RapidAPI/AeroDataBox-Kontingente sind
+// begrenzt (Free-Tier typischerweise wenige hundert Abfragen), "Alle
+// aktualisieren" würde sonst pro Klick eine Abfrage PRO Flug auslösen, ganz
+// ohne Bremse. Flugstatus ändert sich nicht schneller als das, ein erneuter
+// Klick innerhalb der Abklingzeit zeigt nur den zuletzt bekannten Stand statt
+// eine neue Abfrage zu verbrauchen. Eigenes Feld lastFlightCheck statt dem
+// bestehenden lastFlightUpdate, weil Letzteres nur gesetzt wird, wenn sich
+// der Status wirklich ändert (unverändertes Ergebnis würde die Bremse sonst
+// nie aktivieren, gerade bei "noch pünktlich" der Normalfall).
+const FLIGHT_REFRESH_COOLDOWN_MIN = 15;
+function flightRefreshOnCooldown(r) {
+  if (!r?.lastFlightCheck) return false;
+  return Date.now() - r.lastFlightCheck < FLIGHT_REFRESH_COOLDOWN_MIN * 60000;
+}
+function flightCooldownRemainingMin(r) {
+  if (!r?.lastFlightCheck) return 0;
+  return Math.max(0, Math.ceil((FLIGHT_REFRESH_COOLDOWN_MIN * 60000 - (Date.now() - r.lastFlightCheck)) / 60000));
+}
+
 // Fahrer-Standort erfassen (Vordergrund, solange die App offen ist). Läuft im
 // Browser des Fahrer-Handys, schreibt gedrosselt (Zeit + Distanz) nach
 // driverState[driverId].gps. Bricht die Positions-Freigabe der Fahrer ab
@@ -3193,8 +3221,18 @@ function RideForm({ setup, ride, onClose, onSave, onDelete }) {
   const contacts = useMemo(() => extractContactPhones(f.passengers), [f.passengers]);
 
   // Punkt 6: Flugstatus über Provider (serverseitig) abrufen; im Artifact -> Fallback.
-  const fetchFlight = async () => {
+  // Abklingzeit (FLIGHT_REFRESH_COOLDOWN_MIN) gegen das begrenzte API-Kontingent,
+  // siehe Hinweis bei der Konstante. Prüft gegen f.lastFlightCheck (falls in
+  // dieser Sitzung schon einmal abgefragt) ODER ride.lastFlightCheck (falls
+  // beim Öffnen des Formulars schon aktuell) — je nachdem, was neuer ist.
+  // "force" überspringt sie bewusst (Link unten).
+  const fetchFlight = async (force) => {
     if (!f.flightNo) return;
+    const baseline = { lastFlightCheck: Math.max(f.lastFlightCheck || 0, ride.lastFlightCheck || 0) };
+    if (!force && flightRefreshOnCooldown(baseline)) {
+      setFlightMsg({ ok: true, cooldown: true, text: `vor ${FLIGHT_REFRESH_COOLDOWN_MIN - flightCooldownRemainingMin(baseline)} Min. abgefragt · noch ${flightCooldownRemainingMin(baseline)} Min. Abklingzeit` });
+      return;
+    }
     setFlightBusy(true); setFlightMsg(null);
     const res = await getFlightStatus(f.flightNo, f.date);
     setFlightBusy(false);
@@ -3207,6 +3245,7 @@ function RideForm({ setup, ride, onClose, onSave, onDelete }) {
       estimatedArrival: res.estimatedArrival || p.estimatedArrival,
       actualArrival: res.actualArrival || p.actualArrival,
       flightStatus: res.flightStatus || p.flightStatus,
+      lastFlightCheck: Date.now(),
     }));
     setFlightMsg({ ok: true, text: `aktualisiert (${res.source || FLIGHT_PROVIDER})` });
   };
@@ -3280,11 +3319,18 @@ function RideForm({ setup, ride, onClose, onSave, onDelete }) {
               </Field>
             </div>
             <div className="flex items-center gap-2 mt-2.5">
-              <button type="button" onClick={fetchFlight} disabled={flightBusy || !f.flightNo}
+              <button type="button" onClick={() => fetchFlight(false)} disabled={flightBusy || !f.flightNo}
                 className="text-xs bg-sky-600 hover:bg-sky-500 disabled:opacity-40 text-white px-2.5 py-1.5 rounded-lg flex items-center gap-1.5">
                 <RefreshCw className={`w-3.5 h-3.5 ${flightBusy ? "animate-spin" : ""}`} />Flugstatus aktualisieren
               </button>
-              {flightMsg && <span className={`text-[11px] ${flightMsg.ok ? "text-emerald-400" : "text-amber-400"}`}>{flightMsg.text}</span>}
+              {flightMsg && (
+                <span className={`text-[11px] ${flightMsg.ok ? "text-emerald-400" : "text-amber-400"}`}>
+                  {flightMsg.text}
+                  {flightMsg.cooldown && (
+                    <> · <button type="button" onClick={() => fetchFlight(true)} className="underline hover:text-emerald-300">trotzdem abfragen</button></>
+                  )}
+                </span>
+              )}
             </div>
           </div>
         )}
@@ -4046,21 +4092,26 @@ function FlightTab({ setup, dyn, day, updateDyn, by, onEdit }) {
     r.flightStatus = res.flightStatus || r.flightStatus;
     r.delayMinutes = res.delayMinutes ?? r.delayMinutes ?? 0;
     r.lastFlightUpdate = Date.now();
+    r.lastFlightCheck = Date.now(); // für die Abfrage-Abklingzeit, unabhängig davon ob sich der Status geändert hat
     r.flightUpdateSource = res.source || FLIGHT_PROVIDER;
     if (before !== r.flightStatus) {
       logRide(r, "flight", "auto", `Flug: ${flightStyle(r.flightStatus).l}`);
       if (r.assignedDriverId && ["verspätet", "gelandet", "annulliert"].includes(r.flightStatus)) {
         triggerPush(r.assignedDriverId, `Flug jetzt ${flightStyle(r.flightStatus).l}`, `${r.flightNo || ""} · ${r.djName || "Fahrt"}`, `ride-${r.id}`);
       }
-      if (flightAlert(r).level === "critical") {
+      if (needsDispatcherFlightAlert(r)) {
         triggerDispatcherPush(`Flug kritisch: ${flightAlert(r).label}`, `${r.flightNo || ""} · ${r.djName || "Fahrt"}`, `ride-${r.id}`);
       }
     }
     return d;
   });
 
-  const updateOne = async (r) => {
+  const updateOne = async (r, force) => {
     if (r.manualOverride) { setNote({ id: r.id, ok: false, text: "manuell überschrieben – Auto übersprungen" }); return; }
+    if (!force && flightRefreshOnCooldown(r)) {
+      setNote({ id: r.id, ok: true, cooldown: true, text: `vor ${FLIGHT_REFRESH_COOLDOWN_MIN - flightCooldownRemainingMin(r)} Min. abgefragt · noch ${flightCooldownRemainingMin(r)} Min.` });
+      return;
+    }
     setBusy(r.id); setNote(null);
     const res = await getFlightStatus(r.flightNo, r.dayKey);
     setBusy(null);
@@ -4070,13 +4121,16 @@ function FlightTab({ setup, dyn, day, updateDyn, by, onEdit }) {
   };
   const updateAll = async () => {
     setBusy("all"); setNote(null);
+    const due = rides.filter((x) => x.flightNo && !x.manualOverride && !flightRefreshOnCooldown(x));
+    const onCooldown = rides.filter((x) => x.flightNo && !x.manualOverride && flightRefreshOnCooldown(x)).length;
     let ok = 0, fail = 0;
-    for (const r of rides.filter((x) => x.flightNo && !x.manualOverride)) {
+    for (const r of due) {
       const res = await getFlightStatus(r.flightNo, r.dayKey);
       if (res.ok) { applyResult(r.id, res); ok++; } else fail++;
     }
     setBusy(null);
-    setNote({ id: "all", ok: ok > 0, text: ok > 0 ? `${ok} aktualisiert` : "Automatik nicht verfügbar – bitte manuell pflegen" });
+    const skipNote = onCooldown > 0 ? ` · ${onCooldown} noch frisch übersprungen` : "";
+    setNote({ id: "all", ok: ok > 0 || (due.length === 0 && onCooldown > 0), text: due.length === 0 ? `Alle Flüge noch frisch (Abklingzeit ${FLIGHT_REFRESH_COOLDOWN_MIN} Min.), nichts abgefragt` : (ok > 0 ? `${ok} aktualisiert${skipNote}` : `Automatik nicht verfügbar – bitte manuell pflegen${skipNote}`) });
   };
 
   // schnelle manuelle Korrektur
@@ -4090,7 +4144,7 @@ function FlightTab({ setup, dyn, day, updateDyn, by, onEdit }) {
         if (r.assignedDriverId && ["verspätet", "gelandet", "annulliert"].includes(patch.flightStatus)) {
           triggerPush(r.assignedDriverId, `Flug jetzt ${flightStyle(patch.flightStatus).l}`, `${r.flightNo || ""} · ${r.djName || "Fahrt"}`, `ride-${r.id}`);
         }
-        if (flightAlert(r).level === "critical") {
+        if (needsDispatcherFlightAlert(r)) {
           triggerDispatcherPush(`Flug kritisch: ${flightAlert(r).label}`, `${r.flightNo || ""} · ${r.djName || "Fahrt"}`, `ride-${r.id}`);
         }
       }
@@ -4153,7 +4207,7 @@ function FlightTab({ setup, dyn, day, updateDyn, by, onEdit }) {
                 <div className="ml-auto flex items-center gap-2 shrink-0">
                   {r.manualOverride && <span className="text-[10px] bg-amber-500/20 text-amber-300 px-1.5 py-0.5 rounded">manuell</span>}
                   {note && note.id === r.id && <span className={`text-[11px] ${note.ok ? "text-emerald-400" : "text-amber-400"}`}>{note.text}</span>}
-                  <button onClick={() => updateOne(r)} disabled={busy === r.id} title="Flugstatus aktualisieren" className="text-stone-500 hover:text-sky-400 p-1"><RefreshCw className={`w-4 h-4 ${busy === r.id ? "animate-spin" : ""}`} /></button>
+                  <button onClick={() => updateOne(r, note && note.id === r.id && note.cooldown)} disabled={busy === r.id} title="Flugstatus aktualisieren" className="text-stone-500 hover:text-sky-400 p-1"><RefreshCw className={`w-4 h-4 ${busy === r.id ? "animate-spin" : ""}`} /></button>
                   {r.manualOverride && <button onClick={() => quickSet(r.id, { manualOverride: false })} title="Auto-Update wieder erlauben" className="text-[10px] text-stone-500 hover:text-stone-300">auto</button>}
                   <button onClick={() => onEdit(r)} className="text-stone-600 hover:text-stone-300"><ChevronRight className="w-4 h-4" /></button>
                 </div>
