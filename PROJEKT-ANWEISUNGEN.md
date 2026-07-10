@@ -39,3 +39,9 @@ GPS-Hintergrund-Tracking, echte Push-Benachrichtigungen und der Chat-Assistent b
 
 ## Offener Punkt aus dem Security-Review (bewusst zurückgestellt, nicht vergessen)
 Fahrer-PINs und -Telefonnummern sind nach dem Supabase-Deploy über den anon-Key technisch weiterhin auslesbar (`select * from drivers`), weil Login/PIN-Prüfung komplett clientseitig läuft und es keine serverseitige Rollen-Unterscheidung gibt (siehe BACKEND-README, Abschnitt „Ehrliche Einordnung"). Sauberer nächster Schritt: eine `verify_driver_pin(driver_id, pin)`-RPC, die nur ja/nein zurückgibt statt die PINs auszuliefern, plus Login-Formular darauf umstellen. Auf Jordans Wunsch bewusst nicht Teil des Nachtrag-3-Umbaus, sollte aber vor dem Event noch angegangen werden.
+
+## Offener Punkt: Leitstelle vom Handy aus bedienbar (zurückgestellt)
+Das Dashboard ist bisher komplett für PC gebaut (siehe Architektur-Kurzüberblick), auf schmalen Handy-Bildschirmen bricht das Layout (Reiter abgeschnitten, feste Nebeneinander-Anordnung statt Umbruch). Jordan hat das per Screenshot gemeldet und möchte die Leitstelle unterwegs vom Handy aus bedienen können.
+- **Umfang bewusst eingegrenzt** (Jordans Entscheidung): NICHT alle 9 Reiter mobil-tauglich machen, sondern gezielt nur Übersicht, Fahrer zuteilen und Status sehen. Große Planung/Timeline bleibt am PC.
+- **Zeitpunkt** (Jordans Entscheidung): erst nachdem Push-Benachrichtigungen und der Fahrer-Testdurchlauf abgeschlossen sind, nicht vorher.
+- Bei Aufnahme der Arbeit: erst ein eigenes, kurzes Scoping (welche Aktionen genau, welcher Reiter wird die mobile Startseite) vor dem Bauen, wie bei jeder Architektur-Entscheidung.
