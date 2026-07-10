@@ -4,6 +4,22 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
     <title>Open Beatz · Shuttle-Leitstelle</title>
+
+    <!-- Web-App-Manifest: Voraussetzung dafür, dass "Zum Home-Bildschirm
+         hinzufügen" eine echte installierte Web-App ergibt (Name/Icon/
+         Standalone-Fenster) statt nur ein Lesezeichen. Auf iOS ist das
+         außerdem zwingende Voraussetzung für Push-Benachrichtigungen: Safari
+         gewährt der Push-API nur installierten Home-Bildschirm-Apps Zugriff,
+         ein normaler Browser-Tab bekommt sie auf iOS nie, unabhängig von
+         allen anderen Einstellungen (VAPID-Keys usw.). -->
+    <link rel="manifest" href="/manifest.webmanifest" />
+    <meta name="theme-color" content="#ea580c" />
+
+    <!-- iOS liest ältere/eigene Tags teils zusätzlich zum Manifest -->
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="apple-mobile-web-app-title" content="OB Shuttle" />
+    <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
   </head>
   <body>
     <div id="root"></div>
