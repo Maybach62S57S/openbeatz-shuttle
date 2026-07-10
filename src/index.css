@@ -1,3 +1,13 @@
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
+
+/* Sicherheitsnetz gegen weißes Aufblitzen: bisher hatte nur jede einzelne
+   Ansicht (Dashboard, Fahrer-App, ...) selbst eine dunkle Hintergrundfarbe
+   gesetzt, die Seite (html/body) an sich nicht. Wird die Seite durch ein
+   breites Element (z. B. viele nebeneinander stehende Reiter, die nicht
+   umbrechen) schmaler zusammengeschoben als der Inhalt eigentlich braucht,
+   entsteht seitliches Überlaufen — der überlaufende Bereich zeigte bisher
+   die weiße Browser-Standardfarbe statt dunkel zu bleiben. Betrifft Handy
+   UND Desktop gleichermaßen, unabhängig vom genauen Auslöser. */
+html, body, #root { background-color: #0c0a09; }

@@ -2901,10 +2901,16 @@ function Dashboard({ setup, dyn, session, updateDyn, updateSetup, onLogout, onPr
           </div>
           <div className="ml-2 flex items-center gap-1 text-stone-500 text-sm font-mono"><Clock className="w-4 h-4" />{clock}</div>
           <div className="flex-1" />
-          <nav className="flex gap-1">
+          <nav className="flex gap-1 overflow-x-auto min-w-0">
+            {/* overflow-x-auto: bei schmaleren Fenstern (aber noch breit genug
+                für die Desktop-Ansicht) passen die 9 Reiter nicht immer alle
+                nebeneinander. Vorher lief das ohne Begrenzung, hat dadurch
+                die GANZE Seite seitlich überlaufen lassen (sichtbar als
+                weißer Rand, siehe index.css). Jetzt bleibt der Überlauf auf
+                diese eine Zeile begrenzt, scrollt bei Bedarf für sich. */}
             {[["overview", "Überblick", LayoutGrid], ["board", "Board", Route], ["timeline", "Timeline", Gauge], ["emergency", "Notfall", Siren], ["returns", "Rückfahrten", Moon], ["flights", "Flughafen", Plane], ["map", "Karte", MapIcon], ["drivers", "Fahrer", Users], ["settings", "Einstellungen", Settings]].map(([t, l, I]) => (
               <button key={t} onClick={() => setTab(t)}
-                className={`px-3 py-1.5 rounded-lg text-sm flex items-center gap-1.5 ${tab === t ? "bg-stone-800 text-stone-100" : "text-stone-400 hover:text-stone-200"}`}>
+                className={`shrink-0 px-3 py-1.5 rounded-lg text-sm flex items-center gap-1.5 ${tab === t ? "bg-stone-800 text-stone-100" : "text-stone-400 hover:text-stone-200"}`}>
                 <I className="w-4 h-4" />{l}
               </button>
             ))}
