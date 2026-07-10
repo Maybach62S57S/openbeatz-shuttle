@@ -699,7 +699,7 @@ export default function App() {
 
   if (session.role === "driver") {
     return <><BrandStyles /><DriverApp setup={setup} dyn={dyn} session={session}
-      updateDyn={updateDyn} onLogout={() => setSession(null)} /></>;
+      updateDyn={updateDyn} onLogout={() => { unsubscribePush(session.driverId, "driverState", updateDyn); setSession(null); }} /></>;
   }
   if (session.role === "stage") {
     return <><BrandStyles /><StageApp setup={setup} dyn={dyn}
@@ -707,11 +707,11 @@ export default function App() {
   }
   if (useMobileView) {
     return <><BrandStyles /><MobileDispatcherView setup={setup} dyn={dyn} session={session}
-      updateDyn={updateDyn} onLogout={() => setSession(null)}
+      updateDyn={updateDyn} onLogout={() => { unsubscribePush(session.dispatcherId, "dispatcherState", updateDyn); setSession(null); }}
       onSwitchToDesktop={() => setViewMode("desktop")} /></>;
   }
   return <><BrandStyles /><Dashboard setup={setup} dyn={dyn} session={session}
-    updateDyn={updateDyn} updateSetup={updateSetup} onLogout={() => setSession(null)}
+    updateDyn={updateDyn} updateSetup={updateSetup} onLogout={() => { unsubscribePush(session.dispatcherId, "dispatcherState", updateDyn); setSession(null); }}
     onPreviewGuest={setPreviewGuestToken} onUndo={undo} undoCount={undoCount}
     onSwitchToMobile={() => setViewMode("mobile")} /></>;
 }
@@ -1446,6 +1446,32 @@ const PUSH_STATUS_LABEL = {
 // Server-Push auslösen (Leitstelle/Gast-Aktionen). Läuft nur nach echtem Deployment
 // mit api/send-push.js — im Artifact schlägt der Fetch fehl und wird still ignoriert,
 // der Vordergrund-Toast beim Fahrer greift dann trotzdem, falls die App offen ist.
+// Beim Ausloggen (Fahrer oder Leitstelle): Push-Abo wirklich beenden, nicht nur
+// die App-Anmeldung. Sonst bleibt ein einmal erstelltes Abo auf DIESEM Gerät
+// unter der ALTEN Identität in der Datenbank stehen — meldet sich später
+// jemand anderes auf demselben Gerät als andere Person an, kämen Pushes für
+// die alte Identität weiterhin hier an (genau das ist Jordan passiert, als er
+// kurz zum Testen als Fahrer eingeloggt war und danach wieder zur Leitstelle
+// wechselte). Browser-Abo UND Datenbank-Eintrag werden beide aufgeräumt,
+// unabhängig voneinander (das eine kann klappen, auch wenn das andere
+// fehlschlägt, z. B. kein Netz gerade).
+async function unsubscribePush(id, stateKey, updateDyn) {
+  if (!id) return;
+  try {
+    if ("serviceWorker" in navigator) {
+      const reg = await navigator.serviceWorker.getRegistration();
+      const sub = reg ? await reg.pushManager.getSubscription().catch(() => null) : null;
+      if (sub) await sub.unsubscribe().catch(() => {});
+    }
+  } catch (e) { console.error("unsubscribePush (Browser-Abo)", e); }
+  try {
+    await updateDyn((d) => {
+      if (d[stateKey]?.[id]) delete d[stateKey][id].pushSubscription;
+      return d;
+    });
+  } catch (e) { console.error("unsubscribePush (Datenbank)", e); }
+}
+
 async function triggerPush(driverId, title, body, tag) {
   if (!driverId) return;
   try {
