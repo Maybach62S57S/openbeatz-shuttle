@@ -3241,7 +3241,7 @@ function MobileDispatcherView({ setup, dyn, session, updateDyn, onLogout, onSwit
   const showNow = nowMin >= DAY_START && nowMin <= DAY_END;
 
   return (
-    <div className="h-screen bg-stone-950 text-stone-100 flex flex-col overflow-hidden">
+    <div className="h-[100dvh] bg-stone-950 text-stone-100 flex flex-col overflow-hidden">
       <header className="shrink-0 bg-stone-950/95 backdrop-blur border-b border-stone-800 px-4 py-2.5 flex items-center gap-2.5" style={{ paddingTop: "max(0.625rem, env(safe-area-inset-top))" }}>
         <span className="ob-pulse inline-block w-2 h-2 rounded-full bg-orange-500 shrink-0" />
         <span className="text-orange-400 text-[10px] font-mono tracking-[0.15em]">DISPO</span>
@@ -3278,7 +3278,7 @@ function MobileDispatcherView({ setup, dyn, session, updateDyn, onLogout, onSwit
               </button>
             ))}
           </div>
-          <div className="flex-1 min-h-0 overflow-y-auto px-4 pb-4 space-y-2">
+          <div className="flex-1 min-h-0 overflow-y-auto px-4 pb-20 space-y-2">
             {visibleRides.length === 0 && <div className="text-center text-stone-500 text-sm py-10">Keine Fahrten gefunden.</div>}
             {visibleRides.map((r) => <RideCard key={r.id} r={r} />)}
           </div>
@@ -3286,40 +3286,55 @@ function MobileDispatcherView({ setup, dyn, session, updateDyn, onLogout, onSwit
       )}
 
       {tab === "timeline" && (
-        <div className="flex-1 min-h-0 overflow-y-auto px-4 py-3">
+        <div className="flex-1 min-h-0 overflow-y-auto px-4 pt-3 pb-20">
           {visibleRides.length === 0 && <div className="text-center text-stone-500 text-sm py-10">Keine Fahrten an diesem Tag.</div>}
-          {visibleRides.length > 0 && (
-            <div className="relative pl-11" style={{ height: Math.max(360, visibleRides.length * 68) }}>
-              <div className="absolute left-8 top-0 bottom-0 w-px bg-stone-800" />
-              {showNow && (
-                <div className="absolute left-0 right-0 flex items-center gap-1.5 z-10" style={{ top: `${posPct(nowMin)}%` }}>
-                  <span className="text-[9px] text-orange-400 font-mono w-8 shrink-0">{clock}</span>
-                  <div className="flex-1 h-px bg-orange-500" />
-                </div>
-              )}
-              {visibleRides.map((r) => {
-                const top = posPct(sortMin(r.time));
-                const drv = setup.drivers.find((d) => d.id === r.assignedDriverId);
-                return (
-                  <div key={r.id} className="absolute left-0 right-0" style={{ top: `${top}%` }}>
-                    <span className="absolute left-0 text-[10px] text-stone-500 font-mono -translate-y-1/2 w-8">{r.time}</span>
-                    <span className={`absolute left-7 w-2 h-2 rounded-full -translate-y-1/2 ${r.assignedDriverId ? "bg-blue-500" : "bg-amber-500"}`} />
-                    <button onClick={() => setAssignRide(r)} className="block w-full text-left ml-4 bg-stone-900 rounded-lg px-2.5 py-1.5 -translate-y-1/2">
-                      <div className="text-xs text-orange-300 font-medium truncate">{r.djName || "Fahrt"}</div>
-                      <div className="text-[10px] text-stone-500 truncate">{locName(r.fromId, r.fromCustom)} → {locName(r.toId, r.toCustom)}{drv ? ` · ${drv.firstName}` : ""}</div>
-                    </button>
+          {visibleRides.length > 0 && (() => {
+            // Positionen sind proportional zur Uhrzeit, ABER: liegen zwei Fahrten
+            // zeitlich zu dicht beieinander, um beide lesbar Platz zu haben,
+            // wird die spätere so weit nach unten geschoben, bis der Mindest-
+            // abstand (ROW_H) wieder stimmt — verhindert Überlappung, der
+            // Container wächst dafür bei Bedarf über die Basishöhe hinaus.
+            const BASE_H = 560, ROW_H = 60;
+            let lastTop = -Infinity;
+            const placed = visibleRides.map((r) => {
+              const ideal = (posPct(sortMin(r.time)) / 100) * BASE_H;
+              const top = Math.max(ideal, lastTop + ROW_H);
+              lastTop = top;
+              return { r, top };
+            });
+            const totalH = Math.max(BASE_H, lastTop + ROW_H);
+            return (
+              <div className="relative pl-12" style={{ height: totalH }}>
+                <div className="absolute left-9 top-0 bottom-0 w-px bg-stone-800" />
+                {showNow && (
+                  <div className="absolute left-0 right-0 flex items-center gap-1.5 z-10" style={{ top: (posPct(nowMin) / 100) * totalH }}>
+                    <span className="text-[9px] text-orange-400 font-mono w-9 shrink-0 whitespace-nowrap">{clock}</span>
+                    <div className="flex-1 h-px bg-orange-500" />
                   </div>
-                );
-              })}
-            </div>
-          )}
+                )}
+                {placed.map(({ r, top }) => {
+                  const drv = setup.drivers.find((d) => d.id === r.assignedDriverId);
+                  return (
+                    <div key={r.id} className="absolute left-0 right-0" style={{ top }}>
+                      <span className="absolute left-0 text-[10px] text-stone-500 font-mono -translate-y-1/2 w-9 whitespace-nowrap">{r.time}</span>
+                      <span className={`absolute left-8 w-2 h-2 rounded-full -translate-y-1/2 ${r.assignedDriverId ? "bg-blue-500" : "bg-amber-500"}`} />
+                      <button onClick={() => setAssignRide(r)} className="block w-full text-left ml-5 bg-stone-900 rounded-lg px-2.5 py-1.5 -translate-y-1/2">
+                        <div className="text-xs text-orange-300 font-medium truncate">{r.djName || "Fahrt"}</div>
+                        <div className="text-[10px] text-stone-500 truncate">{locName(r.fromId, r.fromCustom)} → {locName(r.toId, r.toCustom)}{drv ? ` · ${drv.firstName}` : ""}</div>
+                      </button>
+                    </div>
+                  );
+                })}
+              </div>
+            );
+          })()}
         </div>
       )}
 
       {tab === "map" && <MobileMapPane setup={setup} dyn={dyn} day={day} />}
 
       {tab === "returns" && (
-        <div className="flex-1 min-h-0 overflow-y-auto px-4 py-3 space-y-2">
+        <div className="flex-1 min-h-0 overflow-y-auto px-4 pt-3 pb-20 space-y-2">
           {visibleReturns.length === 0 && <div className="text-center text-stone-500 text-sm py-10">Keine Rückfahrten an diesem Tag.</div>}
           {visibleReturns.map((r) => <RideCard key={r.id} r={r} />)}
         </div>
@@ -3358,7 +3373,7 @@ function MobileMapPane({ setup, dyn, day }) {
   const openRides = useMemo(() => computeOpenRides(setup, dyn, day, nodes), [dyn.rides, day, nodes]);
   const sel = positions.find((p) => p.driver.id === selected);
   return (
-    <div className="flex-1 min-h-0 overflow-y-auto px-4 py-3">
+    <div className="flex-1 min-h-0 overflow-y-auto px-4 pt-3 pb-20">
       {!isToday && <div className="text-xs text-stone-500 mb-2">Zeigt den Fahrplan-Stand (kein anderer Tag als heute), keine Live-Positionen.</div>}
       <div className="bg-stone-900 border border-stone-800 rounded-xl p-2">
         <SchematicMap nodes={nodes} positions={positions} openRides={openRides}
