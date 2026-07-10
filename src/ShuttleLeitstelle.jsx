@@ -48,6 +48,17 @@ const hasStore = typeof window !== "undefined" && window.storage;
 // würde also immer "nicht verbunden" einfrieren, selbst wenn Supabase kurz danach
 // bereitsteht. Bei jedem Aufruf frisch prüfen behebt das zuverlässig.
 const hasSupabase = () => typeof window !== "undefined" && !!window.__obfSupabase;
+// Optionaler Shared-Secret-Header für api/chat.js und api/send-push.js
+// (siehe Nachtrag 3 in supabase-schema.sql / BACKEND-README). Kein echtes
+// Geheimnis, landet zwangsläufig im ausgelieferten JS-Bundle — soll nur
+// automatisiertes/versehentliches Fremdnutzen der Endpunkte erschweren,
+// nicht einen gezielten Angreifer aufhalten.
+function apiHeaders() {
+  const h = { "Content-Type": "application/json" };
+  const secret = typeof import.meta !== "undefined" ? import.meta.env?.VITE_INTERNAL_API_SECRET : undefined;
+  if (secret) h["x-app-secret"] = secret;
+  return h;
+}
 
 const fromDbDriver = (d) => ({
   id: d.id, firstName: d.first_name, lastName: d.last_name, vehicleType: d.vehicle_type,
@@ -62,10 +73,9 @@ const toDbDriver = (d) => ({
 
 async function sbGetSetup() {
   const sb = window.__obfSupabase;
-  const [{ data: row }, { data: drivers }, { data: guestTokens }] = await Promise.all([
+  const [{ data: row }, { data: drivers }] = await Promise.all([
     sb.from("settings").select("*").eq("id", 1).single(),
     sb.from("drivers").select("*"),
-    sb.from("guest_tokens").select("*"),
   ]);
   if (!row) return null;
   return {
@@ -75,24 +85,61 @@ async function sbGetSetup() {
     matrix: row.matrix || {},
     zones: row.zones || ZONES,
     config: row.config || {},
-    guestTokens: (guestTokens || []).map((t) => ({ token: t.token, djName: t.dj_name, createdAt: new Date(t.created_at).getTime() })),
+    // Wird nicht mehr generell mitgeladen (ging vorher an jede Rolle raus,
+    // Fahrer/Stage inklusive) — siehe loadGuestTokens() für die Leitstelle
+    // und guest_session()-RPC für den Gast-Link selbst.
+    guestTokens: [],
     rev: row.setup_rev || 0,
   };
 }
-async function sbSetSetup(val) {
+// Schreibt settings/drivers nur noch über geprüfte RPCs (siehe
+// supabase-schema.sql, Nachtrag 3), nicht mehr per offenem Tabellenzugriff.
+// baseRev wird für ein atomares Compare-and-Swap in der DB gebraucht:
+// schlägt es fehl (jemand anders hat zwischenzeitlich geschrieben), kommt
+// { ok:false, value: <aktueller Serverstand> } zurück statt zu überschreiben.
+async function sbSetSetup(val, baseRev) {
   const sb = window.__obfSupabase;
-  await sb.from("settings").update({
-    dispatchers: val.dispatchers || [], locations: val.locations || [], matrix: val.matrix || {},
-    zones: val.zones || [], config: val.config || {}, setup_rev: val.rev || 0,
-  }).eq("id", 1);
-  if (val.drivers && val.drivers.length) await sb.from("drivers").upsert(val.drivers.map(toDbDriver), { onConflict: "id" });
-  const keep = (val.guestTokens || []).map((t) => t.token);
-  if (val.guestTokens && val.guestTokens.length) {
-    await sb.from("guest_tokens").upsert(val.guestTokens.map((t) => ({ token: t.token, dj_name: t.djName })), { onConflict: "token" });
-  }
-  const { data: existing } = await sb.from("guest_tokens").select("token");
-  const toDelete = (existing || []).map((t) => t.token).filter((t) => !keep.includes(t));
-  if (toDelete.length) await sb.from("guest_tokens").delete().in("token", toDelete);
+  const [{ data, error }] = await Promise.all([
+    sb.rpc("write_setup_if_unchanged", {
+      p_expected_rev: baseRev ?? 0,
+      p_dispatchers: val.dispatchers || [],
+      p_locations: val.locations || [],
+      p_matrix: val.matrix || {},
+      p_zones: val.zones || [],
+      p_config: val.config || {},
+    }),
+    val.drivers && val.drivers.length
+      ? sb.rpc("dispatcher_save_drivers", { p_drivers: val.drivers.map(toDbDriver) })
+      : Promise.resolve(),
+  ]);
+  if (error) throw error;
+  const row = Array.isArray(data) ? data[0] : data;
+  if (!row) return { ok: false, value: null };
+  const { data: drivers } = await sb.from("drivers").select("*");
+  return {
+    ok: row.ok,
+    value: {
+      dispatchers: row.dispatchers || [], locations: row.locations || [], matrix: row.matrix || {},
+      zones: row.zones || [], config: row.config || {}, rev: row.rev,
+      drivers: (drivers || []).map(fromDbDriver), guestTokens: [],
+    },
+  };
+}
+// Für die Leitstellen-Ansicht (Gast-/Artist-Links-Settings): läuft separat
+// von updateSetup, weil Gast-Token nicht mehr Teil des generellen setup-
+// Objekts sind (siehe sbGetSetup oben).
+async function loadGuestTokens() {
+  const sb = window.__obfSupabase;
+  const { data, error } = await sb.rpc("dispatcher_list_guest_tokens");
+  if (error) throw error;
+  return (data || []).map((t) => ({ token: t.token, djName: t.dj_name, createdAt: new Date(t.created_at).getTime() }));
+}
+async function saveGuestTokens(tokens) {
+  const sb = window.__obfSupabase;
+  const { error } = await sb.rpc("dispatcher_save_guest_tokens", {
+    p_tokens: tokens.map((t) => ({ token: t.token, dj_name: t.djName })),
+  });
+  if (error) throw error;
 }
 async function sbGetDyn() {
   const sb = window.__obfSupabase;
@@ -101,11 +148,22 @@ async function sbGetDyn() {
   const d = row.dyn_data || {};
   return { rides: d.rides || [], driverState: d.driverState || {}, rev: row.dyn_rev || 0 };
 }
-async function sbSetDyn(val) {
+// Atomares Compare-and-Swap statt blindem Überschreiben (siehe
+// write_dyn_if_unchanged in supabase-schema.sql, Nachtrag 3). baseRev ist
+// die Revision, auf der die App ihre Änderung berechnet hat; weicht sie in
+// der DB inzwischen ab, kommt der aktuelle Serverstand zurück statt dass
+// die Änderung durchgeschrieben wird.
+async function sbSetDyn(val, baseRev) {
   const sb = window.__obfSupabase;
-  await sb.from("settings").update({
-    dyn_data: { rides: val.rides || [], driverState: val.driverState || {} }, dyn_rev: val.rev || 0,
-  }).eq("id", 1);
+  const { data, error } = await sb.rpc("write_dyn_if_unchanged", {
+    p_expected_rev: baseRev ?? 0,
+    p_rides: val.rides || [],
+    p_driver_state: val.driverState || {},
+  });
+  if (error) throw error;
+  const row = Array.isArray(data) ? data[0] : data;
+  if (!row) return { ok: false, value: null };
+  return { ok: row.ok, value: { rides: row.rides || [], driverState: row.driver_state || {}, rev: row.rev } };
 }
 
 async function sget(key) {
@@ -116,14 +174,23 @@ async function sget(key) {
     return r ? JSON.parse(r.value) : null;
   } catch { return null; }
 }
-async function sset(key, val) {
+// Rückgabe jetzt { ok, value } statt boolean: bei Supabase ist "ok" das
+// Ergebnis eines echten atomaren Compare-and-Swap in der DB (siehe
+// sbSetDyn/sbSetSetup), "value" bei ok:false der aktuelle Serverstand, auf
+// den die App ihre Änderung erneut anwenden kann. Im Chat-Artifact
+// (window.storage) gibt es kein serverseitiges CAS, dort bleibt es beim
+// bisherigen Best-Effort-Schreiben (ok:true, value: val), unverändert
+// dokumentiert als "last write wins" in der Storage-API.
+async function sset(key, val, baseRev) {
   try {
-    if (hasSupabase()) { key === SETUP_KEY ? await sbSetSetup(val) : await sbSetDyn(val); return true; }
+    if (hasSupabase()) {
+      return key === SETUP_KEY ? await sbSetSetup(val, baseRev) : await sbSetDyn(val, baseRev);
+    }
     const s = JSON.stringify(val);
-    if (!hasStore) { mem[key] = s; return true; }
+    if (!hasStore) { mem[key] = s; return { ok: true, value: val }; }
     await window.storage.set(key, s, SHARED);
-    return true;
-  } catch (e) { console.error("storage.set", e); return false; }
+    return { ok: true, value: val };
+  } catch (e) { console.error("storage.set", e); return { ok: false, value: null }; }
 }
 
 // Login-Status pro Gerät (NICHT geteilt) — bewusst echtes localStorage statt des
@@ -525,29 +592,31 @@ export default function App() {
   }, []);
 
   const updateDyn = useCallback(async (mutator) => {
-    for (let attempt = 0; attempt < 4; attempt++) {
+    let last = null;
+    for (let attempt = 0; attempt < 6; attempt++) {
       const cur = (await sget(DYN_KEY)) || { rides: [], driverState: {}, rev: 0 };
       const baseRev = cur.rev || 0;
       const next = mutator(structuredClone(cur));
       next.rev = baseRev + 1;
-      // kurz vor dem Schreiben erneut prüfen, ob niemand dazwischengefunkt hat
-      const check = await sget(DYN_KEY);
-      if ((check?.rev || 0) === baseRev) {
-        pushUndoEntry(cur.rides, next.rides);
-        setDyn(next);
-        await sset(DYN_KEY, next);
-        return next;
+      const result = await sset(DYN_KEY, next, baseRev);
+      if (result.ok) {
+        const applied = result.value || next;
+        pushUndoEntry(cur.rides, applied.rides);
+        setDyn(applied);
+        return applied;
       }
-      // Konflikt erkannt -> mit frischen Daten erneut versuchen
+      // Konflikt (baseRev stimmt in der DB nicht mehr) -> mit dem
+      // zurückgegebenen, aktuellen Serverstand erneut versuchen
+      last = result.value;
     }
-    // letzter Versuch ohne Prüfung (sehr seltener Fall)
-    const cur = (await sget(DYN_KEY)) || { rides: [], driverState: {}, rev: 0 };
-    const next = mutator(structuredClone(cur));
-    next.rev = (cur.rev || 0) + 1;
-    pushUndoEntry(cur.rides, next.rides);
-    setDyn(next);
-    await sset(DYN_KEY, next);
-    return next;
+    // Nach wiederholten Kollisionen (bei wenigen gleichzeitigen Nutzern sehr
+    // unwahrscheinlich): NICHT blind überschreiben, das würde genau die
+    // Race Condition zurückbringen, die dieses CAS verhindern soll. Statt-
+    // dessen den aktuellen Serverstand übernehmen, die Änderung selbst geht
+    // verloren und muss erneut ausgelöst werden (z. B. nochmal klicken).
+    console.error("updateDyn: mehrfacher Schreibkonflikt, Änderung nicht angewendet");
+    if (last) setDyn(last);
+    return last;
   }, [pushUndoEntry]);
 
   // Nimmt gezielt nur die Fahrten zurück, die die letzte Änderung betraf — nicht
@@ -572,24 +641,23 @@ export default function App() {
   }, [updateDyn]);
 
   const updateSetup = useCallback(async (mutator) => {
-    for (let attempt = 0; attempt < 4; attempt++) {
+    let last = null;
+    for (let attempt = 0; attempt < 6; attempt++) {
       const cur = (await sget(SETUP_KEY)) || setup;
       const baseRev = cur.rev || 0;
       const next = mutator(structuredClone(cur));
       next.rev = baseRev + 1;
-      const check = await sget(SETUP_KEY);
-      if ((check?.rev || 0) === baseRev) {
-        setSetup(next);
-        await sset(SETUP_KEY, next);
-        return next;
+      const result = await sset(SETUP_KEY, next, baseRev);
+      if (result.ok) {
+        const applied = result.value || next;
+        setSetup(applied);
+        return applied;
       }
+      last = result.value;
     }
-    const cur = (await sget(SETUP_KEY)) || setup;
-    const next = mutator(structuredClone(cur));
-    next.rev = (cur.rev || 0) + 1;
-    setSetup(next);
-    await sset(SETUP_KEY, next);
-    return next;
+    console.error("updateSetup: mehrfacher Schreibkonflikt, Änderung nicht angewendet");
+    if (last) setSetup(last);
+    return last;
   }, [setup]);
 
   if (loading) return <><BrandStyles /><Splash /></>;
@@ -1311,7 +1379,7 @@ async function triggerPush(driverId, title, body, tag) {
   if (!driverId) return;
   try {
     await fetch("/api/send-push", {
-      method: "POST", headers: { "Content-Type": "application/json" },
+      method: "POST", headers: apiHeaders(),
       body: JSON.stringify({ driverId, title, body, tag }),
     });
   } catch { /* kein Deployment / kein Abo — bewusst stiller Fallback */ }
@@ -1969,10 +2037,19 @@ function StageContactModal({ ride, setup, stageLabel, onClose }) {
 /* =========================================================================
    GAST-/ARTIST-MANAGER-MODUS — reine Info-Seite über einen persönlichen Link.
    Kein Login, keine Dispo-Funktionen. Zeigt nur Fahrten desselben Künstlernamens.
-   Sicherheits-Hinweis: Der Token blendet im Artifact nur die Oberfläche für
-   andere Daten aus — er ist KEINE echte serverseitige Zugriffskontrolle, solange
-   kein echtes Backend (Supabase, siehe BACKEND-README) angebunden ist. Nach dem
-   Deploy mit Row-Level-Security wird daraus eine echte Sicherheitsgrenze.
+   Sicherheits-Hinweis: Im Chat-Artifact (kein Supabase-Client) blendet der
+   Token nur die Oberfläche für andere Daten aus — keine echte Zugriffs-
+   kontrolle, weil window.storage dafür keine Grundlage bietet. Nach dem
+   Supabase-Deploy läuft GuestApp ausschließlich über token-beschränkte RPCs
+   (guest_session/guest_confirm_pickup/guest_at_pickup/guest_report_issue,
+   siehe supabase-schema.sql Nachtrag 3) und bekommt serverseitig nur noch
+   die eigenen Fahrten, nicht mehr die volle Fahrten- oder Token-Liste.
+   Offen bleibt (siehe Nachtrag 3): read_settings/read_drivers sind weiterhin
+   für jeden mit dem anon-Key lesbar, weil Dashboard/Fahrer-App ohne echtes
+   Login denselben Key nutzen — ein technisch versierter Angreifer könnte
+   also trotzdem per direktem REST-Call an settings.dyn_data alle Fahrten
+   sehen. Das ist eine bewusste, dokumentierte Grenze dieser Runde, kein
+   Versehen; volle Isolation braucht echte Rollen-Auth (Supabase Auth/JWT).
 ========================================================================= */
 function genGuestToken() {
   const bytes = new Uint8Array(16);
@@ -2045,16 +2122,45 @@ function guestInfoText(setup, ride) {
   ].filter(Boolean).join("\n");
 }
 
+// Punkt Nachtrag 3 (Security-Review): im Supabase-Betrieb läuft die Gast-
+// Seite jetzt ausschließlich über die guest_*-RPCs (guest_session,
+// guest_confirm_pickup, guest_at_pickup, guest_report_issue) — die App
+// bekommt serverseitig nur noch die Fahrten des eigenen Tokens, nie die
+// vollständige Fahrten- oder Token-Liste. Im Chat-Artifact (kein Supabase-
+// Client vorhanden) bleibt es beim bisherigen Verhalten über updateDyn,
+// das ist dort weiterhin nur UI-Filterung, keine echte Zugriffssperre
+// (siehe Hinweis oben bei genGuestToken).
 function GuestApp({ setup, dyn, token, updateDyn, onExitPreview }) {
-  const [, setTick] = useState(0);
-  useEffect(() => { const t = setInterval(() => setTick((x) => x + 1), 20000); return () => clearInterval(t); }, []);
+  const [session, setSession] = useState(null); // null=lädt, {valid:false}, {valid:true, djName, rides}
   const [issueFor, setIssueFor] = useState(null);
   const [copiedId, setCopiedId] = useState(null);
 
-  if (!setup || !dyn) return <><BrandStyles /><Splash /></>;
+  const loadSupabase = useCallback(async () => {
+    try {
+      const sb = window.__obfSupabase;
+      const { data, error } = await sb.rpc("guest_session", { p_token: token });
+      setSession(error || !data ? { valid: false } : data);
+    } catch { setSession({ valid: false }); }
+  }, [token]);
 
-  const entry = (setup.guestTokens || []).find((t) => t.token === token);
-  if (!entry) {
+  useEffect(() => {
+    if (!hasSupabase()) return; // Artifact-Pfad leitet sich unten direkt aus setup/dyn ab
+    loadSupabase();
+    const t = setInterval(loadSupabase, POLL_MS);
+    return () => clearInterval(t);
+  }, [loadSupabase]);
+
+  // Artifact-Fallback: wie bisher aus dem geteilten setup/dyn ableiten.
+  const fallback = !hasSupabase();
+  const fallbackEntry = fallback ? (setup?.guestTokens || []).find((t) => t.token === token) : null;
+  const effective = fallback
+    ? (fallbackEntry ? { valid: true, djName: fallbackEntry.djName, rides: guestRidesFor(dyn, fallbackEntry.djName) } : { valid: false })
+    : session;
+
+  if (fallback && (!setup || !dyn)) return <><BrandStyles /><Splash /></>;
+  if (!fallback && effective === null) return <><BrandStyles /><Splash /></>;
+
+  if (!effective || !effective.valid) {
     return (
       <div className="min-h-screen bg-stone-950 text-stone-200 flex items-center justify-center p-6 text-center">
         <div>
@@ -2066,38 +2172,64 @@ function GuestApp({ setup, dyn, token, updateDyn, onExitPreview }) {
     );
   }
 
-  const rides = guestRidesFor(dyn, entry.djName);
+  const djName = effective.djName;
+  const rides = effective.rides || [];
   const coordPhone = setup.config.coordinationPhone || "";
 
-  const reportIssue = (ride, type, note) => {
-    updateDyn((d) => {
-      const r = d.rides.find((x) => x.id === ride.id);
-      if (r) {
-        r.issues = r.issues || [];
-        r.issues.push({ id: "i" + Date.now(), type, note: note || "", at: Date.now(), by: `guest:${entry.djName}`, state: "open" });
-        logRide(r, "problem", `guest:${entry.djName}`, `${type}${note ? ": " + note : ""}`);
-        if (r.assignedDriverId) triggerPush(r.assignedDriverId, "Problem gemeldet", `${entry.djName} · ${type}`, `ride-${r.id}`);
-      }
-      return d;
-    });
+  const reportIssue = async (ride, type, note) => {
+    if (fallback) {
+      updateDyn((d) => {
+        const r = d.rides.find((x) => x.id === ride.id);
+        if (r) {
+          r.issues = r.issues || [];
+          r.issues.push({ id: "i" + Date.now(), type, note: note || "", at: Date.now(), by: `guest:${djName}`, state: "open" });
+          logRide(r, "problem", `guest:${djName}`, `${type}${note ? ": " + note : ""}`);
+          if (r.assignedDriverId) triggerPush(r.assignedDriverId, "Problem gemeldet", `${djName} · ${type}`, `ride-${r.id}`);
+        }
+        return d;
+      });
+    } else {
+      const sb = window.__obfSupabase;
+      const { data: ok } = await sb.rpc("guest_report_issue", { p_token: token, p_ride: ride.id, p_type: type, p_note: note || "" });
+      if (ok && ride.assignedDriverId) triggerPush(ride.assignedDriverId, "Problem gemeldet", `${djName} · ${type}`, `ride-${ride.id}`);
+      await loadSupabase();
+    }
     setIssueFor(null);
   };
-  const confirmPickup = (ride) => updateDyn((d) => {
-    const r = d.rides.find((x) => x.id === ride.id);
-    if (r) {
-      r.guestConfirmedAt = Date.now(); logRide(r, "guest_confirm", `guest:${entry.djName}`, "Confirmed pickup info");
-      if (r.assignedDriverId) triggerPush(r.assignedDriverId, "Gast hat bestätigt", `${entry.djName} · ${r.time}`, `ride-${r.id}`);
+  const confirmPickup = async (ride) => {
+    if (fallback) {
+      updateDyn((d) => {
+        const r = d.rides.find((x) => x.id === ride.id);
+        if (r) {
+          r.guestConfirmedAt = Date.now(); logRide(r, "guest_confirm", `guest:${djName}`, "Confirmed pickup info");
+          if (r.assignedDriverId) triggerPush(r.assignedDriverId, "Gast hat bestätigt", `${djName} · ${r.time}`, `ride-${r.id}`);
+        }
+        return d;
+      });
+    } else {
+      const sb = window.__obfSupabase;
+      const { data: ok } = await sb.rpc("guest_confirm_pickup", { p_token: token, p_ride: ride.id });
+      if (ok && ride.assignedDriverId) triggerPush(ride.assignedDriverId, "Gast hat bestätigt", `${djName} · ${ride.time}`, `ride-${ride.id}`);
+      await loadSupabase();
     }
-    return d;
-  });
-  const atPickup = (ride) => updateDyn((d) => {
-    const r = d.rides.find((x) => x.id === ride.id);
-    if (r) {
-      r.guestAtPickupAt = Date.now(); logRide(r, "guest_at_pickup", `guest:${entry.djName}`, "At the pickup point");
-      if (r.assignedDriverId) triggerPush(r.assignedDriverId, "Gast wartet am Treffpunkt", `${entry.djName} · ${r.time}`, `ride-${r.id}`);
+  };
+  const atPickup = async (ride) => {
+    if (fallback) {
+      updateDyn((d) => {
+        const r = d.rides.find((x) => x.id === ride.id);
+        if (r) {
+          r.guestAtPickupAt = Date.now(); logRide(r, "guest_at_pickup", `guest:${djName}`, "At the pickup point");
+          if (r.assignedDriverId) triggerPush(r.assignedDriverId, "Gast wartet am Treffpunkt", `${djName} · ${r.time}`, `ride-${r.id}`);
+        }
+        return d;
+      });
+    } else {
+      const sb = window.__obfSupabase;
+      const { data: ok } = await sb.rpc("guest_at_pickup", { p_token: token, p_ride: ride.id });
+      if (ok && ride.assignedDriverId) triggerPush(ride.assignedDriverId, "Gast wartet am Treffpunkt", `${djName} · ${ride.time}`, `ride-${ride.id}`);
+      await loadSupabase();
     }
-    return d;
-  });
+  };
   const doCopy = async (ride) => {
     const ok = await copyText(guestInfoText(setup, ride));
     if (ok) { setCopiedId(ride.id); setTimeout(() => setCopiedId(null), 1800); }
@@ -2113,7 +2245,7 @@ function GuestApp({ setup, dyn, token, updateDyn, onExitPreview }) {
       <header className="px-5 pt-6 pb-4 flex items-center gap-3" style={{ paddingTop: "max(1.5rem, env(safe-area-inset-top))" }}>
         <img src={OB_ICON} alt="" style={obInvert} className="h-8 w-8 shrink-0" />
         <div className="min-w-0">
-          <div className="text-lg font-semibold truncate">{entry.djName}</div>
+          <div className="text-lg font-semibold truncate">{djName}</div>
           <div className="text-xs text-stone-500">Your shuttle information</div>
         </div>
       </header>
@@ -2366,7 +2498,7 @@ async function askChatAssistant(setup, dyn, day, history, userText) {
   if (hasSupabase()) {
     const res = await fetch("/api/chat", {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: apiHeaders(),
       body: JSON.stringify({ system: CHAT_SYSTEM_PROMPT, messages }),
     });
     if (!res.ok) throw new Error(`API antwortete ${res.status}`);
@@ -3439,6 +3571,18 @@ function GuestLinksSection({ setup, dyn, updateSetup, onPreviewGuest }) {
   const [savedPhone, setSavedPhone] = useState(false);
   const [newArtist, setNewArtist] = useState("");
   const [copiedTok, setCopiedTok] = useState(null);
+  // Token-Liste ist seit Nachtrag 3 nicht mehr Teil des generellen setup-
+  // Objekts (das ging vorher an jede Rolle raus, Fahrer/Stage inklusive).
+  // Hier separat laden: im Supabase-Betrieb über die dispatcher-RPC, im
+  // Chat-Artifact weiterhin aus setup.guestTokens (dort unverändert).
+  const [tokens, setTokens] = useState(hasSupabase() ? null : (setup.guestTokens || []));
+
+  useEffect(() => {
+    if (!hasSupabase()) return;
+    let stop = false;
+    loadGuestTokens().then((t) => { if (!stop) setTokens(t); }).catch(() => { if (!stop) setTokens([]); });
+    return () => { stop = true; };
+  }, []);
 
   const savePhone = async () => {
     await updateSetup((s) => { s.config.coordinationPhone = coordPhone.trim(); return s; });
@@ -3449,18 +3593,24 @@ function GuestLinksSection({ setup, dyn, updateSetup, onPreviewGuest }) {
     (dyn.rides || []).forEach((r) => { if (r.djName && r.status !== "cancelled") set.add(r.djName.trim()); });
     return [...set].sort();
   }, [dyn.rides]);
-  const existingNames = new Set((setup.guestTokens || []).map((t) => t.djName.toLowerCase()));
+  const list = tokens || [];
+  const existingNames = new Set(list.map((t) => t.djName.toLowerCase()));
 
+  const persist = async (next) => {
+    setTokens(next); // optimistisch, damit die Liste sofort reagiert
+    if (hasSupabase()) await saveGuestTokens(next);
+    else await updateSetup((s) => { s.guestTokens = next; return s; });
+  };
   const genFor = async (name) => {
     const n = (name || "").trim();
     if (!n) return;
     const token = genGuestToken();
-    await updateSetup((s) => { s.guestTokens = [...(s.guestTokens || []), { token, djName: n, createdAt: Date.now() }]; return s; });
+    await persist([...list, { token, djName: n, createdAt: Date.now() }]);
     setNewArtist("");
   };
   const revoke = async (token) => {
     if (!window.confirm("Diesen Gast-Link wirklich löschen? Er funktioniert danach nicht mehr.")) return;
-    await updateSetup((s) => { s.guestTokens = (s.guestTokens || []).filter((t) => t.token !== token); return s; });
+    await persist(list.filter((t) => t.token !== token));
   };
   const linkFor = (token) => `${window.location.origin}${window.location.pathname}?guest=${token}`;
   const copyLink = async (token) => { const ok = await copyText(linkFor(token)); if (ok) { setCopiedTok(token); setTimeout(() => setCopiedTok(null), 1800); } };
@@ -3470,7 +3620,7 @@ function GuestLinksSection({ setup, dyn, updateSetup, onPreviewGuest }) {
       <h3 className="font-medium text-stone-200 mb-1 flex items-center gap-2"><Link2 className="w-4 h-4" />Gast-/Artist-Links</h3>
       <p className="text-xs text-stone-500 mb-3">
         Persönliche Info-Seite für Artist/Manager — nur Ansicht, keine Dispo-Funktionen, standardmäßig Englisch.
-        <b className="text-orange-300/90"> Sicherheitshinweis:</b> Der Link blendet im Chat-Artifact nur die Oberfläche aus, ist aber noch keine echte Zugriffssperre — das wird er erst nach dem Deploy mit echtem Backend (siehe BACKEND-README).
+        <b className="text-orange-300/90"> Sicherheitshinweis:</b> Im Chat-Artifact blendet der Link nur die Oberfläche aus, ist keine echte Zugriffssperre. Nach dem Supabase-Deploy ist der Link echt auf die eigenen Fahrten beschränkt (RPC-basiert); die vollständige Liste hier ist trotzdem nur für die Leitstelle gedacht, nicht zum Weitergeben.
       </p>
 
       <div className="mb-4 pb-4 border-b border-stone-800">
@@ -3497,8 +3647,9 @@ function GuestLinksSection({ setup, dyn, updateSetup, onPreviewGuest }) {
       </div>
 
       <div className="space-y-1.5 max-h-72 overflow-y-auto">
-        {(setup.guestTokens || []).length === 0 && <div className="text-xs text-stone-600">Noch keine Gast-Links erzeugt.</div>}
-        {(setup.guestTokens || []).slice().sort((a, b) => b.createdAt - a.createdAt).map((t) => (
+        {tokens === null && <div className="text-xs text-stone-600">Lädt…</div>}
+        {tokens !== null && list.length === 0 && <div className="text-xs text-stone-600">Noch keine Gast-Links erzeugt.</div>}
+        {list.slice().sort((a, b) => b.createdAt - a.createdAt).map((t) => (
           <div key={t.token} className="flex items-center gap-2 text-sm bg-stone-950/50 rounded-lg px-2.5 py-2">
             <span className="text-stone-200 truncate">{t.djName}</span>
             <span className="text-[10px] font-mono text-stone-600 truncate">{t.token.slice(0, 8)}…</span>

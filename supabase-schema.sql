@@ -219,3 +219,334 @@ update drivers set vehicle_type = 'Van' where vehicle_type = 'V';
 update drivers set vehicle_type = 'Car' where vehicle_type = 'SUV';
 alter table drivers drop constraint if exists drivers_vehicle_type_check;
 alter table drivers add constraint drivers_vehicle_type_check check (vehicle_type in ('Van','Car'));
+
+-- ============================================================================
+-- Nachtrag 3: Sicherheitshärtung (Review vom 10.07.2026)
+--
+-- Vorher konnte JEDER mit dem (zwangsläufig öffentlichen) anon-Key über die
+-- normale REST-API direkt auf die Tabellen zugreifen: alle Fahrten aller
+-- Artists lesen/schreiben, die komplette guest_tokens-Tabelle auflisten (und
+-- damit jeden Gast-Link erraten/nutzen, ohne ihn zu kennen), Fahrer-PINs und
+-- -Telefonnummern abgreifen, Fahrer per DELETE komplett aus dem System
+-- entfernen. Das lag an "using (true)"-Policies, die keinen Unterschied
+-- zwischen Leitstelle/Fahrer/Gast/Fremden machen konnten.
+--
+-- Diese Sektion schließt die Lücken, die OHNE ein echtes Login-System
+-- (Supabase Auth/JWT je Rolle) lösbar sind:
+--   - Gast-Link ist jetzt ECHT auf den eigenen dj_name beschränkt (RPC statt
+--     Ganzobjekt-Zugriff), nicht mehr nur UI-Filterung.
+--   - guest_tokens ist nicht mehr als komplette Liste abrufbar.
+--   - Schreibzugriffe auf settings/drivers laufen nur noch über geprüfte
+--     Funktionen (SECURITY DEFINER) statt offener Tabellen-Policies.
+--   - dyn_rev/setup_rev werden jetzt ATOMAR in der DB geprüft (compare-and-
+--     swap in einem einzigen UPDATE), nicht mehr per Lese-Vergleich aus der
+--     App heraus mit Lücke zwischen Prüfung und Schreiben.
+--
+-- Was das NICHT löst (braucht echtes Login, bewusst nicht Teil dieser Runde):
+--   - read_settings/read_drivers bleiben "using (true)", weil Dashboard und
+--     Fahrer-App weiterhin denselben anon-Key nutzen und beide einen breiten
+--     Lesezugriff brauchen, ohne dass die DB serverseitig unterscheiden kann,
+--     wer wirklich Dispo/Fahrer ist. drivers.pin/phone bleiben also über den
+--     anon-Key technisch auslesbar (select * from drivers). Fahrer-PIN-
+--     Verifikation ist dafür der richtige nächste Schritt (eigene RPC statt
+--     Klartext-Vergleich im Client), aber bewusst nicht Teil dieser Runde.
+--   - driver_state bleibt offen (GPS/Push-Abo), weil auch das an einer
+--     echten Fahrer-Identität hängen würde. Geringeres Risiko als PII/Rides.
+-- ============================================================================
+
+-- ---------- Gast-Zugriff: nur noch über Token-scoped Funktionen -----------
+-- Die echten Fahrtdaten liegen inzwischen in settings.dyn_data (siehe
+-- Nachtrag oben), nicht mehr in der separaten rides-Tabelle. Die alten
+-- guest_rides/guest_confirm_pickup-Funktionen von weiter oben griffen noch
+-- auf die (ungenutzte) rides-Tabelle zu und liefern in der Praxis nichts
+-- mehr zurück. Hier durch Versionen ersetzt, die auf dyn_data arbeiten.
+drop function if exists guest_rides(text);
+drop function if exists guest_confirm_pickup(text, uuid);
+
+-- Ein Aufruf liefert alles, was die Gast-Seite braucht: ob der Token gültig
+-- ist, der Künstlername und ausschließlich die eigenen Fahrten. Kein
+-- separater Client-seitiger Abgleich mit einer vollständigen Token-/Fahrten-
+-- Liste mehr nötig.
+create or replace function guest_session(p_token text)
+returns jsonb
+language plpgsql
+stable
+security definer
+set search_path = public
+as $$
+declare
+  v_dj text;
+  v_rides jsonb;
+begin
+  select dj_name into v_dj from guest_tokens where token = p_token;
+  if v_dj is null then
+    return jsonb_build_object('valid', false);
+  end if;
+
+  select coalesce(jsonb_agg(elem order by (elem->>'date'), (elem->>'time')), '[]'::jsonb)
+    into v_rides
+  from settings s
+  cross join lateral jsonb_array_elements(coalesce(s.dyn_data->'rides', '[]'::jsonb)) as elem
+  where s.id = 1
+    and lower(trim(coalesce(elem->>'djName',''))) = lower(trim(v_dj))
+    and coalesce(elem->>'status','') <> 'cancelled';
+
+  return jsonb_build_object('valid', true, 'djName', v_dj, 'rides', coalesce(v_rides, '[]'::jsonb));
+end $$;
+
+-- Gemeinsame Basis für die drei Gast-Aktionen: findet die Fahrt anhand von
+-- id UND passendem dj_name (kein Zugriff auf fremde Fahrten möglich, selbst
+-- mit frei erfundener ride-id), wendet den übergebenen Patch in EINEM
+-- atomaren UPDATE an (kein Lese-Ändere-Schreibe-Zyklus, also auch keine
+-- Kollisionsmöglichkeit mit gleichzeitigen Dispo-Änderungen).
+create or replace function _guest_patch_ride(p_token text, p_ride text, p_patch jsonb, p_log_event text, p_log_detail text)
+returns boolean
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_dj text;
+  v_rows int;
+  v_now bigint := (extract(epoch from now()) * 1000)::bigint;
+begin
+  select dj_name into v_dj from guest_tokens where token = p_token;
+  if v_dj is null then
+    return false;
+  end if;
+
+  update settings s
+  set dyn_data = jsonb_set(
+        s.dyn_data,
+        '{rides}',
+        (
+          select jsonb_agg(
+            case
+              when elem->>'id' = p_ride and lower(trim(coalesce(elem->>'djName',''))) = lower(trim(v_dj))
+                then (elem || p_patch || jsonb_build_object('updatedAt', v_now))
+                     || jsonb_build_object('log', coalesce(elem->'log', '[]'::jsonb) || jsonb_build_array(
+                          jsonb_build_object('event', p_log_event, 'at', v_now, 'by', 'guest:' || v_dj, 'detail', p_log_detail)
+                        ))
+              else elem
+            end
+          )
+          from jsonb_array_elements(coalesce(s.dyn_data->'rides', '[]'::jsonb)) as elem
+        )
+      ),
+      dyn_rev = dyn_rev + 1,
+      updated_at = now()
+  where s.id = 1
+    and exists (
+      select 1 from jsonb_array_elements(coalesce(s.dyn_data->'rides', '[]'::jsonb)) as e
+      where e->>'id' = p_ride and lower(trim(coalesce(e->>'djName',''))) = lower(trim(v_dj))
+    );
+
+  get diagnostics v_rows = row_count;
+  return v_rows > 0;
+end $$;
+
+create or replace function guest_confirm_pickup(p_token text, p_ride text)
+returns boolean language sql security definer set search_path = public as $$
+  select _guest_patch_ride(p_token, p_ride,
+    jsonb_build_object('guestConfirmedAt', (extract(epoch from now()) * 1000)::bigint),
+    'guest_confirm', 'Confirmed pickup info');
+$$;
+
+create or replace function guest_at_pickup(p_token text, p_ride text)
+returns boolean language sql security definer set search_path = public as $$
+  select _guest_patch_ride(p_token, p_ride,
+    jsonb_build_object('guestAtPickupAt', (extract(epoch from now()) * 1000)::bigint),
+    'guest_at_pickup', 'At the pickup point');
+$$;
+
+-- Eigene Funktion statt _guest_patch_ride, weil hier an ein Array (issues)
+-- angehängt wird statt ein Skalarfeld zu ersetzen.
+create or replace function guest_report_issue(p_token text, p_ride text, p_type text, p_note text)
+returns boolean
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_dj text;
+  v_rows int;
+  v_now bigint := (extract(epoch from now()) * 1000)::bigint;
+  v_issue jsonb;
+  v_detail text;
+begin
+  select dj_name into v_dj from guest_tokens where token = p_token;
+  if v_dj is null then
+    return false;
+  end if;
+
+  v_issue := jsonb_build_object(
+    'id', 'i' || v_now, 'type', p_type, 'note', coalesce(p_note, ''),
+    'at', v_now, 'by', 'guest:' || v_dj, 'state', 'open'
+  );
+  v_detail := p_type || case when p_note is not null and p_note <> '' then ': ' || p_note else '' end;
+
+  update settings s
+  set dyn_data = jsonb_set(
+        s.dyn_data,
+        '{rides}',
+        (
+          select jsonb_agg(
+            case
+              when elem->>'id' = p_ride and lower(trim(coalesce(elem->>'djName',''))) = lower(trim(v_dj))
+                then elem
+                     || jsonb_build_object('issues', coalesce(elem->'issues', '[]'::jsonb) || jsonb_build_array(v_issue))
+                     || jsonb_build_object('log', coalesce(elem->'log', '[]'::jsonb) || jsonb_build_array(
+                          jsonb_build_object('event', 'problem', 'at', v_now, 'by', 'guest:' || v_dj, 'detail', v_detail)
+                        ))
+                     || jsonb_build_object('updatedAt', v_now)
+              else elem
+            end
+          )
+          from jsonb_array_elements(coalesce(s.dyn_data->'rides', '[]'::jsonb)) as elem
+        )
+      ),
+      dyn_rev = dyn_rev + 1,
+      updated_at = now()
+  where s.id = 1
+    and exists (
+      select 1 from jsonb_array_elements(coalesce(s.dyn_data->'rides', '[]'::jsonb)) as e
+      where e->>'id' = p_ride and lower(trim(coalesce(e->>'djName',''))) = lower(trim(v_dj))
+    );
+
+  get diagnostics v_rows = row_count;
+  return v_rows > 0;
+end $$;
+
+-- ---------- Dispo: settings/rides atomar schreiben (Lost-Update-Fix) ------
+-- Ersetzt das bisherige Muster "lesen -> vergleichen -> schreiben" aus der
+-- App (Lücke zwischen Vergleich und Schreiben) durch ein einziges atomares
+-- UPDATE mit Bedingung auf die erwartete Revision. Schlägt es fehl (weil
+-- zwischenzeitlich jemand anders geschrieben hat), bekommt die App den
+-- aktuellen Serverstand zurück und wiederholt ihre Änderung darauf statt
+-- ihn zu überschreiben.
+create or replace function write_dyn_if_unchanged(p_expected_rev int, p_rides jsonb, p_driver_state jsonb)
+returns table(ok boolean, rev int, rides jsonb, driver_state jsonb)
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_rows int;
+begin
+  update settings
+  set dyn_data = jsonb_build_object('rides', p_rides, 'driverState', p_driver_state),
+      dyn_rev = p_expected_rev + 1,
+      updated_at = now()
+  where id = 1 and dyn_rev = p_expected_rev;
+
+  get diagnostics v_rows = row_count;
+
+  if v_rows > 0 then
+    return query select true, p_expected_rev + 1, p_rides, p_driver_state;
+  else
+    return query
+      select false, s.dyn_rev, coalesce(s.dyn_data->'rides', '[]'::jsonb), coalesce(s.dyn_data->'driverState', '{}'::jsonb)
+      from settings s where s.id = 1;
+  end if;
+end $$;
+
+create or replace function write_setup_if_unchanged(
+  p_expected_rev int, p_dispatchers jsonb, p_locations jsonb, p_matrix jsonb, p_zones jsonb, p_config jsonb
+)
+returns table(ok boolean, rev int, dispatchers jsonb, locations jsonb, matrix jsonb, zones jsonb, config jsonb)
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_rows int;
+begin
+  update settings
+  set dispatchers = p_dispatchers, locations = p_locations, matrix = p_matrix,
+      zones = p_zones, config = p_config, setup_rev = p_expected_rev + 1,
+      updated_at = now()
+  where id = 1 and setup_rev = p_expected_rev;
+
+  get diagnostics v_rows = row_count;
+
+  if v_rows > 0 then
+    return query select true, p_expected_rev + 1, p_dispatchers, p_locations, p_matrix, p_zones, p_config;
+  else
+    return query
+      select false, s.setup_rev, s.dispatchers, s.locations, s.matrix, s.zones, s.config
+      from settings s where s.id = 1;
+  end if;
+end $$;
+
+-- ---------- Dispo: Fahrer & Gast-Links nur noch über Funktionen ----------
+create or replace function dispatcher_save_drivers(p_drivers jsonb)
+returns void
+language sql
+security definer
+set search_path = public
+as $$
+  insert into drivers (id, first_name, last_name, vehicle_type, vehicle_id, seats, active, phone, plate, pin)
+  select
+    d->>'id', d->>'first_name', d->>'last_name', d->>'vehicle_type', d->>'vehicle_id',
+    coalesce((d->>'seats')::int, 4), coalesce((d->>'active')::boolean, true),
+    coalesce(d->>'phone', ''), coalesce(d->>'plate', ''), coalesce(d->>'pin', '')
+  from jsonb_array_elements(p_drivers) as d
+  on conflict (id) do update set
+    first_name = excluded.first_name, last_name = excluded.last_name,
+    vehicle_type = excluded.vehicle_type, vehicle_id = excluded.vehicle_id,
+    seats = excluded.seats, active = excluded.active,
+    phone = excluded.phone, plate = excluded.plate, pin = excluded.pin;
+$$;
+
+create or replace function dispatcher_list_guest_tokens()
+returns jsonb
+language sql
+stable
+security definer
+set search_path = public
+as $$
+  select coalesce(jsonb_agg(jsonb_build_object('token', token, 'dj_name', dj_name, 'created_at', created_at) order by created_at desc), '[]'::jsonb)
+  from guest_tokens;
+$$;
+
+create or replace function dispatcher_save_guest_tokens(p_tokens jsonb)
+returns void
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_keep text[];
+begin
+  select array_agg(t->>'token') into v_keep from jsonb_array_elements(p_tokens) as t;
+
+  insert into guest_tokens (token, dj_name)
+  select t->>'token', t->>'dj_name' from jsonb_array_elements(p_tokens) as t
+  on conflict (token) do update set dj_name = excluded.dj_name;
+
+  delete from guest_tokens where token <> all (coalesce(v_keep, array[]::text[]));
+end $$;
+
+grant execute on function guest_session(text) to anon, authenticated;
+grant execute on function guest_confirm_pickup(text, text) to anon, authenticated;
+grant execute on function guest_at_pickup(text, text) to anon, authenticated;
+grant execute on function guest_report_issue(text, text, text, text) to anon, authenticated;
+grant execute on function write_dyn_if_unchanged(int, jsonb, jsonb) to anon, authenticated;
+grant execute on function write_setup_if_unchanged(int, jsonb, jsonb, jsonb, jsonb, jsonb) to anon, authenticated;
+grant execute on function dispatcher_save_drivers(jsonb) to anon, authenticated;
+grant execute on function dispatcher_list_guest_tokens() to anon, authenticated;
+grant execute on function dispatcher_save_guest_tokens(jsonb) to anon, authenticated;
+
+-- ---------- RLS verschärfen: guest_tokens/settings/drivers nur noch RPC ---
+-- guest_tokens bekommt gar keine Policy mehr -> mit RLS an, aber ohne
+-- Policy ist die Tabelle für anon/authenticated komplett dicht. Die
+-- SECURITY DEFINER-Funktionen oben umgehen RLS für ihre eigene, eng
+-- begrenzte Aufgabe weiterhin (das ist ihr Zweck), ein direktes
+-- "select * from guest_tokens" über die REST-API liefert ab jetzt nichts.
+drop policy if exists read_guest_tokens on guest_tokens;
+drop policy if exists write_guest_tokens on guest_tokens;
+
+-- settings/drivers: Lesen bleibt offen (siehe Hinweis oben, hängt an echtem
+-- Login), aber Schreiben nur noch über die Funktionen oben.
+drop policy if exists write_settings on settings;
+drop policy if exists write_drivers on drivers;
