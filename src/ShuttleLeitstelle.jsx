@@ -1250,6 +1250,12 @@ const STATUS_FLOW = {
   onboard: { next: "done", label: "Gast abgesetzt · abschließen", btn: "bg-emerald-500 hover:bg-emerald-400" },
   done: { next: null, label: "Abgeschlossen", btn: "bg-stone-600" },
 };
+// Umkehrung von STATUS_FLOW (jeweils "next" -> "davor"), für den Zurück-Button
+// bei Fahrern: falls aus Versehen der falsche Status angetippt wurde (z. B.
+// "Gast eingestiegen" bevor der Gast wirklich da ist), kann der Fahrer selbst
+// einen Schritt zurück, ohne die Leitstelle anzurufen. "planned" hat bewusst
+// keinen Eintrag (ganz am Anfang, nichts davor).
+const STATUS_PREV = { accepted: "planned", enroute_pickup: "accepted", onboard: "enroute_pickup", done: "onboard" };
 const STATUS_LABEL = {
   planned: "Geplant", accepted: "Angenommen", enroute_pickup: "Auf Anfahrt",
   onboard: "Gast an Bord", done: "Abgeschlossen", cancelled: "Storniert",
@@ -1571,6 +1577,20 @@ function DriverApp({ setup, dyn, session, updateDyn, onLogout }) {
     });
   };
 
+  // Korrektur bei Versehen (z. B. "Gast eingestiegen" fälschlich angetippt,
+  // Gast ist noch gar nicht da): ein Schritt zurück, über dieselbe geprüfte
+  // setRideStatus()-Funktion wie beim Vorwärtsgehen, landet also genauso im
+  // Protokoll (sichtbar für die Leitstelle, nicht heimlich).
+  const goBack = (ride) => {
+    const prev = STATUS_PREV[ride.status];
+    if (!prev) return;
+    updateDyn((d) => {
+      const r = d.rides.find((x) => x.id === ride.id);
+      if (r) setRideStatus(r, prev, `driver:${driver.id}`);
+      return d;
+    });
+  };
+
   const reportIssue = (ride, type, note) => {
     updateDyn((d) => {
       const r = d.rides.find((x) => x.id === ride.id);
@@ -1694,6 +1714,11 @@ function DriverApp({ setup, dyn, session, updateDyn, onLogout }) {
                 {STATUS_FLOW[nextRide.status].label}
               </button>
             )}
+            {STATUS_PREV[nextRide.status] && (
+              <button onClick={() => goBack(nextRide)} className="w-full mt-1.5 py-1.5 text-xs text-stone-500 hover:text-stone-300">
+                aus Versehen? zurück zu „{STATUS_LABEL[STATUS_PREV[nextRide.status]]}"
+              </button>
+            )}
           </div>
         </div>
       )}
@@ -1775,6 +1800,11 @@ function DriverApp({ setup, dyn, session, updateDyn, onLogout }) {
                   </button>
                 )}
               </div>
+              {STATUS_PREV[r.status] && (
+                <button onClick={() => goBack(r)} className="w-full mt-1.5 py-1 text-xs text-stone-500 hover:text-stone-300">
+                  aus Versehen? zurück zu „{STATUS_LABEL[STATUS_PREV[r.status]]}"
+                </button>
+              )}
               {done && <div className="mt-2 text-center text-emerald-400 text-sm flex items-center justify-center gap-1.5"><CheckCircle2 className="w-4 h-4" />Erledigt</div>}
             </div>
           );
