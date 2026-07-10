@@ -1618,10 +1618,10 @@ function DriverApp({ setup, dyn, session, updateDyn, onLogout }) {
                 {LOCATION_STATUS_LABEL[locStatus]}{!shareLocation ? " (aus)" : ""}
               </button>
               {push.status !== "unconfigured" && (
-                <button onClick={push.status === "active" ? undefined : push.enable}
+                <button onClick={push.enable}
                   className="flex items-center gap-1.5 mt-1 text-[11px] text-stone-500 hover:text-stone-300">
                   <span className={`w-2 h-2 rounded-full shrink-0 ${push.status === "active" ? "bg-emerald-400" : push.status === "denied" || push.status === "error" ? "bg-red-400" : "bg-stone-600"}`} />
-                  {PUSH_STATUS_LABEL[push.status]}{push.status === "idle" ? " · antippen zum Aktivieren" : ""}
+                  {PUSH_STATUS_LABEL[push.status]}{push.status === "idle" ? " · antippen zum Aktivieren" : ""}{push.status === "active" ? " · antippen zum erneuten Synchronisieren" : ""}
                 </button>
               )}
             </div>
@@ -2818,7 +2818,7 @@ function Dashboard({ setup, dyn, session, updateDyn, updateSetup, onLogout, onPr
           </button>
           {me && <span className="hidden sm:inline text-xs text-stone-500 ml-1">{me.name}</span>}
           {push.status !== "unconfigured" && (
-            <button onClick={push.status === "active" ? undefined : push.enable} title={PUSH_STATUS_LABEL[push.status]}
+            <button onClick={push.enable} title={push.status === "active" ? `${PUSH_STATUS_LABEL[push.status]} · antippen zum erneuten Synchronisieren` : PUSH_STATUS_LABEL[push.status]}
               className="hidden sm:flex items-center gap-1.5 text-[11px] text-stone-500 hover:text-stone-300 px-1.5">
               <span className={`w-2 h-2 rounded-full shrink-0 ${push.status === "active" ? "bg-emerald-400" : push.status === "denied" || push.status === "error" ? "bg-red-400" : "bg-stone-600"}`} />
               Push{push.status === "idle" ? " · antippen" : ""}
