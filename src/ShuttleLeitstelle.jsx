@@ -2169,6 +2169,12 @@ const STAGE_ISSUE_TYPES = [
   "Fahrer/Artist nicht erreichbar", "Info unklar", "Sonstiges",
 ];
 const NO_STAGE = "__none__"; // Bucket „Sonstige / Ohne Stage" (Fahrten ohne zone)
+// Stage-Filter jetzt pro GERÄT gemerkt (localStorage, wie obf:viewMode) statt bei
+// jedem Neuladen auf "Alle Stages" zurückzuspringen. Grund: mehrere Stage Manager
+// teilen sich einen PIN, sollen aber auf ihrem eigenen Handy dauerhaft bei ihrer
+// Bühne bleiben — sonst landen Problemmeldungen/Nachrichten unter dem generischen
+// Label "Stage" statt der richtigen Zone, wenn jemand das Umschalten vergisst.
+const STAGE_FILTER_KEY = "obf:stageFilter";
 
 // Grober, verständlicher Fahrerstatus-Text — keine vorgetäuschte GPS-Genauigkeit.
 function stageDriverStatusText(ride, nowMin, live) {
@@ -2254,7 +2260,13 @@ function StageApp({ setup, dyn, updateDyn, onLogout }) {
   const [, setTick] = useState(0);
   useEffect(() => { const t = setInterval(() => setTick((x) => x + 1), 20000); return () => clearInterval(t); }, []);
 
-  const [stageFilter, setStageFilter] = useState("all"); // "all" | zoneName | NO_STAGE
+  const [stageFilter, setStageFilterRaw] = useState(() => {
+    try { return localStorage.getItem(STAGE_FILTER_KEY) || "all"; } catch { return "all"; }
+  }); // "all" | zoneName | NO_STAGE — persistiert pro Gerät, siehe STAGE_FILTER_KEY
+  const setStageFilter = (val) => {
+    setStageFilterRaw(val);
+    try { localStorage.setItem(STAGE_FILTER_KEY, val); } catch {}
+  };
   const [statusFilter, setStatusFilter] = useState("all"); // all|soon|enroute|delayed|problem|done
   const [issueFor, setIssueFor] = useState(null);
   const [waFor, setWaFor] = useState(null);
@@ -2262,6 +2274,10 @@ function StageApp({ setup, dyn, updateDyn, onLogout }) {
   const now = dayNowMin(day);
   const live = now >= 0 && now < 90000;
   const stages = setup.zones || []; // dynamisch aus vorhandenen Daten — keine hardcodierten Namen
+  useEffect(() => {
+    if (stageFilter === "all" || stageFilter === NO_STAGE) return;
+    if (stages.length > 0 && !stages.includes(stageFilter)) setStageFilter("all");
+  }, [stages, stageFilter]);
 
   // Nur Fahrten, die zum Festival hin- oder vom Festival wegführen — reine
   // Anreise-Etappen (z. B. Flughafen → Hotel) betreffen die Stage noch nicht.
