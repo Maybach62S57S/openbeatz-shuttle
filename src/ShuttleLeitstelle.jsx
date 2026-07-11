@@ -211,7 +211,7 @@ async function sbGetDyn() {
   }
   if (!row) return null;
   const d = row.dyn_data || {};
-  return { rides: d.rides || [], driverState: d.driverState || {}, dispatcherState: d.dispatcherState || {}, artistPresence: d.artistPresence || {}, rev: row.dyn_rev || 0 };
+  return { rides: d.rides || [], driverState: d.driverState || {}, dispatcherState: d.dispatcherState || {}, artistPresence: d.artistPresence || {}, messages: d.messages || [], rev: row.dyn_rev || 0 };
 }
 // Atomares Compare-and-Swap statt blindem Überschreiben (siehe
 // write_dyn_if_unchanged in supabase-schema.sql, Nachtrag 3). baseRev ist
@@ -226,11 +226,12 @@ async function sbSetDyn(val, baseRev) {
     p_driver_state: val.driverState || {},
     p_dispatcher_state: val.dispatcherState || {},
     p_artist_presence: val.artistPresence || {},
+    p_messages: val.messages || [],
   });
   if (error) throw error;
   const row = Array.isArray(data) ? data[0] : data;
   if (!row) return { ok: false, value: null };
-  return { ok: row.ok, value: { rides: row.rides || [], driverState: row.driver_state || {}, dispatcherState: row.dispatcher_state || {}, artistPresence: row.artist_presence || {}, rev: row.rev } };
+  return { ok: row.ok, value: { rides: row.rides || [], driverState: row.driver_state || {}, dispatcherState: row.dispatcher_state || {}, artistPresence: row.artist_presence || {}, messages: row.messages || [], rev: row.rev } };
 }
 
 async function sget(key) {
@@ -671,7 +672,7 @@ export default function App() {
       let d = await sget(DYN_KEY);
       if (!d) {
         // Gleiche Begründung wie oben bei setup: bei Supabase nie automatisch schreiben.
-        d = hasSupabase() ? { rides: [], driverState: {}, dispatcherState: {}, artistPresence: {}, rev: 0 } : { rides: seedExampleRides(s), driverState: {}, dispatcherState: {}, artistPresence: {}, rev: 0 };
+        d = hasSupabase() ? { rides: [], driverState: {}, dispatcherState: {}, artistPresence: {}, messages: [], rev: 0 } : { rides: seedExampleRides(s), driverState: {}, dispatcherState: {}, artistPresence: {}, messages: [], rev: 0 };
         if (!hasSupabase()) await sset(DYN_KEY, d);
       }
       setSetup(s); setDyn(d); setLoading(false);
@@ -767,7 +768,7 @@ export default function App() {
     let last = null;
     try {
       for (let attempt = 0; attempt < 6; attempt++) {
-        const cur = (await sget(DYN_KEY)) || { rides: [], driverState: {}, dispatcherState: {}, artistPresence: {}, rev: 0 };
+        const cur = (await sget(DYN_KEY)) || { rides: [], driverState: {}, dispatcherState: {}, artistPresence: {}, messages: [], rev: 0 };
         const baseRev = cur.rev || 0;
         const next = mutator(structuredClone(cur));
         next.rev = baseRev + 1;
@@ -1743,6 +1744,85 @@ function ContactReveal({ passengers }) {
   );
 }
 
+// Nachricht an die Leitstelle schicken — von Fahrer ODER Stage genutzt.
+// artistOptions: optionale Namensliste zum schnellen Zuordnen (Stage: Artists
+// der eigenen Stage). Freitext bleibt immer möglich. Sendet über updateDyn
+// (CAS-gesichert) und stösst einen Push-Hinweis an die Leitstelle an.
+function MessageComposer({ from, fromLabel, updateDyn, artistOptions, placeholder }) {
+  const [text, setText] = useState("");
+  const [artist, setArtist] = useState("");
+  const [sent, setSent] = useState(false);
+  const [sending, setSending] = useState(false);
+  const send = async () => {
+    if (!text.trim() || sending) return;
+    setSending(true);
+    const msg = makeMessage(from, fromLabel, text, artist);
+    const res = await updateDyn((d) => { d.messages = d.messages || []; d.messages.push(msg); return d; });
+    setSending(false);
+    if (res && res.ok === false) return; // updateDyn meldet Fehler bereits über die übliche UI
+    triggerDispatcherPush("Neue Nachricht", `${fromLabel}${artist.trim() ? ` · ${artist.trim()}` : ""}: ${text.trim().slice(0, 80)}`, "message");
+    setText(""); setArtist(""); setSent(true); setTimeout(() => setSent(false), 2500);
+  };
+  return (
+    <div className="bg-stone-900 border border-stone-800 rounded-xl p-3">
+      <div className="text-xs uppercase tracking-wide text-stone-400 mb-2 flex items-center gap-1.5"><MessageSquare className="w-3.5 h-3.5 text-orange-400" />Nachricht an die Leitstelle</div>
+      {artistOptions && artistOptions.length > 0 && (
+        <div className="flex flex-wrap gap-1.5 mb-2">
+          {artistOptions.map((a) => (
+            <button key={a} onClick={() => setArtist((cur) => cur === a ? "" : a)}
+              className={`text-xs px-2 py-1 rounded-lg border ${artist === a ? "bg-orange-600 border-orange-500 text-white" : "bg-stone-950 border-stone-800 text-stone-400"}`}>{a}</button>
+          ))}
+        </div>
+      )}
+      <input value={artist} onChange={(e) => setArtist(e.target.value)} placeholder="Artist/Bezug (optional)"
+        className="w-full mb-2 bg-stone-950 border border-stone-800 rounded-lg px-2.5 py-1.5 text-sm text-stone-200 placeholder-stone-600 focus:outline-none focus:border-orange-500" />
+      <textarea value={text} onChange={(e) => setText(e.target.value)} rows={2}
+        placeholder={placeholder || "Was soll die Leitstelle wissen?"}
+        className="w-full bg-stone-950 border border-stone-800 rounded-lg px-2.5 py-2 text-sm text-stone-200 placeholder-stone-600 focus:outline-none focus:border-orange-500 resize-none" />
+      <div className="flex items-center gap-2 mt-2">
+        <button onClick={send} disabled={!text.trim() || sending}
+          className="bg-orange-600 hover:bg-orange-500 disabled:opacity-40 text-white text-sm px-3 py-2 rounded-lg flex items-center gap-1.5">
+          <MessageSquare className="w-4 h-4" />{sending ? "sendet…" : "Senden"}
+        </button>
+        {sent && <span className="text-xs text-emerald-400 flex items-center gap-1"><Check className="w-3.5 h-3.5" />gesendet</span>}
+      </div>
+    </div>
+  );
+}
+
+// "Meine Nachrichten" — zeigt dem Absender (Fahrer/Stage) seine gesendeten
+// Meldungen und die Antwort der Leitstelle (falls schon da). Nur Ansicht.
+function MyMessages({ dyn, fromKey }) {
+  const mine = messagesFrom(dyn, fromKey);
+  if (mine.length === 0) return null;
+  const replyStyle = { confirmed: "text-emerald-300 border-emerald-500/40 bg-emerald-500/10", declined: "text-red-300 border-red-500/40 bg-red-500/10", info: "text-sky-300 border-sky-500/40 bg-sky-500/10" };
+  const replyLabel = { confirmed: "Bestätigt", declined: "Nicht bestätigt", info: "Info" };
+  return (
+    <div className="bg-stone-900 border border-stone-800 rounded-xl p-3">
+      <div className="text-xs uppercase tracking-wide text-stone-400 mb-2 flex items-center gap-1.5"><MessageSquare className="w-3.5 h-3.5" />Meine Nachrichten</div>
+      <div className="space-y-2 max-h-72 overflow-y-auto">
+        {mine.map((m) => (
+          <div key={m.id} className="bg-stone-950/50 border border-stone-800 rounded-lg p-2.5">
+            <div className="flex items-center gap-2 text-[11px] text-stone-500 mb-1">
+              <span className="font-mono">{new Date(m.at).toLocaleTimeString("de-DE", { hour: "2-digit", minute: "2-digit" })}</span>
+              {m.artist && <span className="text-orange-300/80">· {m.artist}</span>}
+            </div>
+            <div className="text-sm text-stone-200">{m.text}</div>
+            {m.reply ? (
+              <div className={`mt-2 text-xs border rounded-lg px-2.5 py-1.5 ${replyStyle[m.reply.status] || replyStyle.info}`}>
+                <span className="font-medium">{replyLabel[m.reply.status] || "Antwort"}</span>
+                {m.reply.text ? `: ${m.reply.text}` : ""}
+              </div>
+            ) : (
+              <div className="mt-1.5 text-[11px] text-stone-600 flex items-center gap-1"><Clock className="w-3 h-3" />wartet auf Antwort der Leitstelle</div>
+            )}
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 function DriverApp({ setup, dyn, session, updateDyn, onLogout }) {
   const driver = setup.drivers.find((d) => d.id === session.driverId);
   const days = dayTabs(setup, dyn);
@@ -2061,6 +2141,13 @@ function DriverApp({ setup, dyn, session, updateDyn, onLogout }) {
         })}
       </div>
 
+      {/* Nachrichten an die Leitstelle (Nachtrag 6) */}
+      <div className="px-4 pb-24 space-y-3" style={{ paddingBottom: "max(6rem, calc(env(safe-area-inset-bottom) + 4.5rem))" }}>
+        <MessageComposer from={`driver:${driver.id}`} fromLabel={`${driver.firstName} ${driver.lastName}`}
+          updateDyn={updateDyn} placeholder="z. B. Rückfrage, Verspätung, brauche Info…" />
+        <MyMessages dyn={dyn} fromKey={`driver:${driver.id}`} />
+      </div>
+
       {issueFor && <IssueModal ride={issueFor} onClose={() => setIssueFor(null)} onReport={reportIssue} setup={setup} />}
     </div>
   );
@@ -2230,6 +2317,15 @@ function StageApp({ setup, dyn, updateDyn, onLogout }) {
     setIssueFor(null);
   };
 
+  // Für die Nachrichten-Funktion: Absender-Label (gewählte Stage, sonst
+  // "Stage") und schnelle Artist-Auswahl aus den aktuell sichtbaren Fahrten.
+  const stageLabel = stageFilter !== "all" && stageFilter !== NO_STAGE ? stageFilter : "Stage";
+  const artistOptions = useMemo(() => {
+    const names = new Set();
+    enriched.forEach((x) => { const n = (x.r.djName || "").trim(); if (n) names.add(n); });
+    return [...names].sort().slice(0, 12);
+  }, [enriched]);
+
   return (
     <div className="min-h-screen bg-stone-950 text-stone-100" style={{ paddingBottom: "env(safe-area-inset-bottom)" }}>
       <header className="sticky top-0 z-20 bg-stone-950/95 backdrop-blur border-b border-stone-800" style={{ paddingTop: "env(safe-area-inset-top)" }}>
@@ -2311,6 +2407,16 @@ function StageApp({ setup, dyn, updateDyn, onLogout }) {
               </div>
             </details>
           )}
+        </section>
+
+        {/* Nachrichten an die Leitstelle (Nachtrag 6) */}
+        <section className="space-y-3">
+          <MessageComposer
+            from={`stage:${stageLabel}`} fromLabel={stageLabel}
+            updateDyn={updateDyn}
+            artistOptions={artistOptions}
+            placeholder="z. B. Vini Vici muss um 23:30 abgeholt werden, oder Rückfrage…" />
+          <MyMessages dyn={dyn} fromKey={`stage:${stageLabel}`} />
         </section>
       </main>
 
@@ -3124,6 +3230,7 @@ function Dashboard({ setup, dyn, session, updateDyn, updateSetup, onLogout, onPr
   const emCases = emergencyCases(setup, dyn, day);
   const emCrit = emCases.filter((c) => c.sev === "critical").length;
   const emCount = emCases.length;
+  const msgOpen = openMessages(dyn).length; // offene (unbeantwortete) Nachrichten -> Tab-Badge
 
   return (
     <div className="min-h-screen bg-stone-950 text-stone-100">
@@ -3144,13 +3251,18 @@ function Dashboard({ setup, dyn, session, updateDyn, updateSetup, onLogout, onPr
                 die GANZE Seite seitlich überlaufen lassen (sichtbar als
                 weißer Rand, siehe index.css). Jetzt bleibt der Überlauf auf
                 diese eine Zeile begrenzt, scrollt bei Bedarf für sich. */}
-            {[["overview", "Überblick", LayoutGrid], ["board", "Board", Route], ["timeline", "Timeline", Gauge], ["emergency", "Notfall", Siren], ["returns", "Rückfahrten", Moon], ["flights", "Flughafen", Plane], ["map", "Karte", MapIcon], ["drivers", "Fahrer", Users], ["settings", "Einstellungen", Settings]].map(([t, l, I]) => (
+            {[["overview", "Überblick", LayoutGrid], ["board", "Board", Route], ["timeline", "Timeline", Gauge], ["emergency", "Notfall", Siren], ["messages", "Nachrichten", MessageSquare], ["returns", "Rückfahrten", Moon], ["flights", "Flughafen", Plane], ["map", "Karte", MapIcon], ["drivers", "Fahrer", Users], ["settings", "Einstellungen", Settings]].map(([t, l, I]) => (
               <button key={t} onClick={() => setTab(t)}
                 className={`shrink-0 px-3 py-1.5 rounded-lg text-sm flex items-center gap-1.5 relative ${tab === t ? "bg-stone-800 text-stone-100" : "text-stone-400 hover:text-stone-200"}`}>
                 <I className="w-4 h-4" />{l}
                 {t === "emergency" && emCount > 0 && (
                   <span className={`ml-0.5 min-w-[1.1rem] h-[1.1rem] px-1 inline-flex items-center justify-center rounded-full text-[10px] font-bold ${emCrit > 0 ? "bg-red-500 text-white ob-pulse" : "bg-amber-500/80 text-stone-900"}`}>
                     {emCount}
+                  </span>
+                )}
+                {t === "messages" && msgOpen > 0 && (
+                  <span className="ml-0.5 min-w-[1.1rem] h-[1.1rem] px-1 inline-flex items-center justify-center rounded-full text-[10px] font-bold bg-orange-500 text-white">
+                    {msgOpen}
                   </span>
                 )}
               </button>
@@ -3353,6 +3465,7 @@ function Dashboard({ setup, dyn, session, updateDyn, updateSetup, onLogout, onPr
           onNewReturn={(artistName) => setEditRide({ _new: true, dayKey: day, date: day, djName: artistName, fromId: "festival", toId: "" })} />}
         {tab === "emergency" && <EmergencyTab setup={setup} dyn={dyn} day={day} updateDyn={updateDyn} by={meBy}
           onAssign={(r) => setAssignRide(r)} onWhatsApp={(r) => setWaRide(r)} onEdit={(r) => { setDay(r.dayKey); setEditRide(r); }} />}
+        {tab === "messages" && <MessagesInbox dyn={dyn} updateDyn={updateDyn} by={meBy} />}
         {tab === "flights" && <FlightTab setup={setup} dyn={dyn} day={day} updateDyn={updateDyn} by={meBy} onEdit={(r) => { setDay(r.dayKey); setEditRide(r); }} />}
         {tab === "map" && <MapTab setup={setup} dyn={dyn} day={day} onEdit={(r) => { setDay(r.dayKey); setEditRide(r); }} />}
         {tab === "drivers" && <DriversTab setup={setup} dyn={dyn} day={day} />}
@@ -3499,6 +3612,7 @@ function MobileDispatcherView({ setup, dyn, session, updateDyn, onLogout, onSwit
   const visibleReturns = returnRides.filter((r) => matchesSearch(r));
 
   const locName = (id, txt) => setup.locations.find((l) => l.id === id)?.short || txt || "—";
+  const msgOpenMobile = openMessages(dyn).length; // offene Nachrichten -> Badge am mobilen Nachrichten-Tab
 
   const doAssign = (rideId, driverId) => {
     updateDyn((d) => {
@@ -3666,10 +3780,21 @@ function MobileDispatcherView({ setup, dyn, session, updateDyn, onLogout, onSwit
         </div>
       )}
 
+      {tab === "messages" && (
+        <div className="flex-1 min-h-0 overflow-y-auto px-4 pt-3 pb-20">
+          <MessagesInbox dyn={dyn} updateDyn={updateDyn} by={meBy} />
+        </div>
+      )}
+
       <nav className="shrink-0 bg-stone-950/95 backdrop-blur border-t border-stone-800 flex" style={{ paddingBottom: "env(safe-area-inset-bottom)" }}>
-        {[["rides", "Fahrten", Route], ["timeline", "Timeline", Gauge], ["map", "Karte", MapIcon], ["returns", "Rückfahrten", Moon]].map(([k, l, I]) => (
-          <button key={k} onClick={() => setTab(k)} className="flex-1 flex flex-col items-center gap-0.5 py-2">
-            <I className={`w-[18px] h-[18px] ${tab === k ? "text-stone-100" : "text-stone-600"}`} />
+        {[["rides", "Fahrten", Route], ["timeline", "Timeline", Gauge], ["map", "Karte", MapIcon], ["returns", "Rückf.", Moon], ["messages", "Nachr.", MessageSquare]].map(([k, l, I]) => (
+          <button key={k} onClick={() => setTab(k)} className="flex-1 flex flex-col items-center gap-0.5 py-2 relative">
+            <div className="relative">
+              <I className={`w-[18px] h-[18px] ${tab === k ? "text-stone-100" : "text-stone-600"}`} />
+              {k === "messages" && msgOpenMobile > 0 && (
+                <span className="absolute -top-1.5 -right-2 min-w-[14px] h-[14px] px-0.5 inline-flex items-center justify-center rounded-full text-[8px] font-bold bg-orange-500 text-white">{msgOpenMobile}</span>
+              )}
+            </div>
             <span className={`text-[9px] ${tab === k ? "text-stone-100" : "text-stone-600"}`}>{l}</span>
           </button>
         ))}
@@ -4570,6 +4695,128 @@ function AuditLogSection({ setup, dyn }) {
           </div>
         ))}
         {entries.length === 0 && <div className="text-xs text-stone-600 py-4 text-center">Noch keine Einträge{dayFilter !== "all" ? " an diesem Tag" : ""}.</div>}
+      </div>
+    </div>
+  );
+}
+
+/* ------------------------- Nachrichten (Nachtrag 6) ---------------------- *
+ * Einfache, gerichtete Nachrichten zwischen Fahrern/Stage-Managern und der
+ * Leitstelle — bewusst KEIN laufender Chat-Verlauf, sondern einzelne Meldungen
+ * mit optionaler EINER Antwort. Deckt den realen Fall ab ("Artist muss um X
+ * abgeholt werden" -> "bestätigt/nicht bestätigt"), ohne die grosse Komplexität
+ * (Threads pro Person, Lese-Status, Scroll-Historie) eines echten Chats.
+ *
+ * Wichtig fürs Rollen-Prinzip: das gibt dem Stage Manager KEINE neue Handlungs-
+ * macht (keine Fahrten/Fahrer/Status-Änderung) — es ist reine Kommunikation,
+ * dieselbe Kategorie wie das bestehende "Problem melden", nur allgemeiner und
+ * mit Antwortweg.
+ *
+ * Eine Nachricht in dyn.messages[]:
+ *   { id, from: "driver:<id>"|"stage:<label>", fromLabel, text, artist?,
+ *     at, reply?: { text, status: "confirmed"|"declined"|"info", by, at },
+ *     readByDispatch?: bool }
+ */
+function makeMessage(from, fromLabel, text, artist) {
+  return {
+    id: "m" + Date.now() + Math.random().toString(36).slice(2, 6),
+    from, fromLabel, text: (text || "").trim(), artist: (artist || "").trim() || null,
+    at: Date.now(), reply: null, readByDispatch: false,
+  };
+}
+// Nachrichten, die von einem bestimmten Absender (Fahrer/Stage) stammen —
+// für die "Meine Nachrichten"-Ansicht in Fahrer-/Stage-App.
+function messagesFrom(dyn, fromKey) {
+  return (dyn.messages || []).filter((m) => m.from === fromKey).sort((a, b) => b.at - a.at);
+}
+// Offene (von der Leitstelle noch nicht gelesene ODER noch nicht beantwortete)
+// Nachrichten — für das Postfach-Badge in der Leitstelle.
+function openMessages(dyn) {
+  return (dyn.messages || []).filter((m) => !m.reply).sort((a, b) => b.at - a.at);
+}
+
+// Leitstellen-Postfach: zeigt alle eingegangenen Nachrichten (Fahrer/Stage),
+// erlaubt EINE Antwort pro Nachricht (Bestätigt / Nicht bestätigt / Freitext).
+// Bewusst kein Chat-Verlauf. Antwort wird über updateDyn (CAS) gespeichert,
+// mit by/Zeitstempel wie alles andere.
+function MessagesInbox({ dyn, updateDyn, by }) {
+  const [sort, setSort] = useState("open"); // open | all
+  const [drafts, setDrafts] = useState({}); // messageId -> Freitext-Entwurf
+  const all = (dyn.messages || []).slice().sort((a, b) => b.at - a.at);
+  const open = all.filter((m) => !m.reply);
+  const shown = sort === "open" ? open : all;
+
+  const reply = (id, status) => {
+    const text = (drafts[id] || "").trim();
+    updateDyn((d) => {
+      const m = (d.messages || []).find((x) => x.id === id);
+      if (m) m.reply = { status, text: text || null, by, at: Date.now() };
+      return d;
+    });
+    setDrafts((cur) => { const n = { ...cur }; delete n[id]; return n; });
+  };
+  // Antwort zurücknehmen (falls man sich vertan hat) -> wieder offen.
+  const undoReply = (id) => updateDyn((d) => {
+    const m = (d.messages || []).find((x) => x.id === id);
+    if (m) m.reply = null;
+    return d;
+  });
+
+  const fromStyle = (from) => from?.startsWith("stage:") ? "text-purple-300 bg-purple-500/10 border-purple-500/30" : "text-sky-300 bg-sky-500/10 border-sky-500/30";
+  const fromKind = (from) => from?.startsWith("stage:") ? "Stage" : "Fahrer";
+  const replyStyle = { confirmed: "text-emerald-300 border-emerald-500/40 bg-emerald-500/10", declined: "text-red-300 border-red-500/40 bg-red-500/10", info: "text-sky-300 border-sky-500/40 bg-sky-500/10" };
+  const replyLabel = { confirmed: "Bestätigt", declined: "Nicht bestätigt", info: "Info" };
+
+  return (
+    <div>
+      <div className="flex items-center gap-3 mb-4 flex-wrap">
+        <h3 className="text-lg font-semibold text-stone-100 flex items-center gap-2"><MessageSquare className="w-5 h-5 text-orange-400" />Nachrichten</h3>
+        {open.length > 0 && <span className="text-xs bg-orange-500/15 text-orange-300 px-2 py-1 rounded-full">{open.length} offen</span>}
+        <div className="flex items-center gap-1 bg-stone-900 border border-stone-800 rounded-lg p-0.5 ml-auto">
+          <button onClick={() => setSort("open")} className={`text-xs px-2.5 py-1 rounded ${sort === "open" ? "bg-orange-600 text-white" : "text-stone-400"}`}>Offen</button>
+          <button onClick={() => setSort("all")} className={`text-xs px-2.5 py-1 rounded ${sort === "all" ? "bg-orange-600 text-white" : "text-stone-400"}`}>Alle</button>
+        </div>
+      </div>
+
+      {shown.length === 0 && (
+        <div className="text-stone-500 text-sm py-12 text-center border border-dashed border-stone-800 rounded-xl">
+          <MessageSquare className="w-8 h-8 mx-auto mb-2 opacity-40" />
+          {sort === "open" ? "Keine offenen Nachrichten." : "Noch keine Nachrichten eingegangen."}
+        </div>
+      )}
+
+      <div className="space-y-3 max-w-3xl">
+        {shown.map((m) => (
+          <div key={m.id} className={`rounded-xl border p-3.5 ${m.reply ? "border-stone-800 bg-stone-900" : "border-orange-500/40 bg-orange-500/5"}`}>
+            <div className="flex items-center gap-2 mb-1.5 flex-wrap">
+              <span className={`text-[10px] font-medium px-1.5 py-0.5 rounded border ${fromStyle(m.from)}`}>{fromKind(m.from)}</span>
+              <span className="text-sm font-medium text-stone-200">{m.fromLabel}</span>
+              {m.artist && <span className="text-xs text-orange-300/80">· {m.artist}</span>}
+              <span className="text-[11px] text-stone-500 font-mono ml-auto">{new Date(m.at).toLocaleString("de-DE", { weekday: "short", hour: "2-digit", minute: "2-digit" })}</span>
+            </div>
+            <div className="text-sm text-stone-100 mb-2">{m.text}</div>
+
+            {m.reply ? (
+              <div className="flex items-center gap-2 flex-wrap">
+                <div className={`text-xs border rounded-lg px-2.5 py-1.5 ${replyStyle[m.reply.status] || replyStyle.info}`}>
+                  <span className="font-medium">{replyLabel[m.reply.status] || "Antwort"}</span>{m.reply.text ? `: ${m.reply.text}` : ""}
+                </div>
+                <button onClick={() => undoReply(m.id)} className="text-[11px] text-stone-500 hover:text-stone-300">Antwort zurücknehmen</button>
+              </div>
+            ) : (
+              <div>
+                <input value={drafts[m.id] || ""} onChange={(e) => setDrafts((c) => ({ ...c, [m.id]: e.target.value }))}
+                  placeholder="Antworttext (optional)"
+                  className="w-full mb-2 bg-stone-950 border border-stone-800 rounded-lg px-2.5 py-1.5 text-sm text-stone-200 placeholder-stone-600 focus:outline-none focus:border-orange-500" />
+                <div className="flex items-center gap-2 flex-wrap">
+                  <button onClick={() => reply(m.id, "confirmed")} className="text-sm bg-emerald-600/90 hover:bg-emerald-500 text-white px-3 py-1.5 rounded-lg flex items-center gap-1.5"><Check className="w-4 h-4" />Bestätigt</button>
+                  <button onClick={() => reply(m.id, "declined")} className="text-sm bg-red-600/80 hover:bg-red-500 text-white px-3 py-1.5 rounded-lg flex items-center gap-1.5"><X className="w-4 h-4" />Nicht bestätigt</button>
+                  <button onClick={() => reply(m.id, "info")} className="text-sm bg-stone-800 hover:bg-stone-700 text-stone-100 px-3 py-1.5 rounded-lg">Nur Info senden</button>
+                </div>
+              </div>
+            )}
+          </div>
+        ))}
       </div>
     </div>
   );
