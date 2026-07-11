@@ -6003,13 +6003,19 @@ function LiveGoogleMap({ setup, dyn }) {
       if (!fresh) return;
       seen.add(d.id);
       const pos = { lat: fix.lat, lng: fix.lng };
-      const label = `${d.vehicleType === "Van" ? "Van" : "Car"} · ${d.firstName} ${d.lastName}`;
+      const title = `${d.vehicleType === "Van" ? "Van" : "Car"} · ${d.firstName} ${d.lastName}`;
+      // Initialen direkt auf dem Marker sichtbar (Google-Maps-Marker-Label,
+      // kein eigenes Icon/SVG nötig) - sonst sind bei mehreren Fahrern auf
+      // der Karte nur gleichfarbige Punkte zu unterscheiden.
+      const initials = `${(d.firstName || "?")[0] || "?"}${(d.lastName || "")[0] || ""}`.toUpperCase();
+      const markerLabel = { text: initials, color: "#0c0a09", fontSize: "10px", fontWeight: "700" };
       if (markersRef.current[d.id]) {
         markersRef.current[d.id].setPosition(pos);
+        markersRef.current[d.id].setLabel(markerLabel);
       } else {
         markersRef.current[d.id] = new maps.Marker({
-          position: pos, map: mapRef.current, title: label,
-          icon: { path: maps.SymbolPath.CIRCLE, scale: 8, fillColor: d.vehicleType === "Van" ? "#fb923c" : "#38bdf8", fillOpacity: 1, strokeColor: "#0c0a09", strokeWeight: 2 },
+          position: pos, map: mapRef.current, title, label: markerLabel,
+          icon: { path: maps.SymbolPath.CIRCLE, scale: 11, fillColor: d.vehicleType === "Van" ? "#fb923c" : "#38bdf8", fillOpacity: 1, strokeColor: "#0c0a09", strokeWeight: 2 },
         });
       }
     });
