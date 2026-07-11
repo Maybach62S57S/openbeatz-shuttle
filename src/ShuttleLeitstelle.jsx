@@ -5962,10 +5962,30 @@ function BoardMiniMap({ setup, dyn, day, onEdit }) {
 // Marker-Updates. Zeigt nur Fahrer mit einer GPS-Position, die jünger als
 // GPS_MAX_AGE_MS ist; ältere/keine Position -> kein Marker (statt eine
 // falsche/veraltete Position zu zeigen, siehe gpsOverrideF oben).
+// InfoWindow-Inhalt ist rohes HTML (Google-Maps-API) - Namen/Telefon o.ä.
+// deshalb immer escapen, bevor sie da reinkommen (sonst potenzielles HTML/
+// Skript-Einschleusen über Fahrer-Stammdaten möglich).
+function escapeHtml(s) {
+  return String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+}
+function driverInfoWindowHtml(driver, fix) {
+  const ageS = fix?.at ? Math.round((Date.now() - fix.at) / 1000) : null;
+  const ageTxt = ageS == null ? "unbekannt" : ageS < 60 ? `vor ${ageS}s` : `vor ${Math.round(ageS / 60)} Min`;
+  return `<div style="font:12px sans-serif;color:#1c1917;min-width:150px;line-height:1.5">
+    <div style="font-weight:700;margin-bottom:2px;">${escapeHtml(driver.firstName)} ${escapeHtml(driver.lastName)}</div>
+    <div>${driver.vehicleType === "Van" ? "Van" : "Car"}${driver.vehicleId ? " · " + escapeHtml(driver.vehicleId) : ""}</div>
+    ${driver.phone ? `<div>${escapeHtml(driver.phone)}</div>` : ""}
+    <div style="color:#78716c;margin-top:4px;font-size:11px;">Position ${ageTxt} aktualisiert</div>
+  </div>`;
+}
 function LiveGoogleMap({ setup, dyn }) {
   const containerRef = useRef(null);
   const mapRef = useRef(null);
   const markersRef = useRef({}); // driverId -> google.maps.Marker
+  const infoWindowRef = useRef(null); // ein einziges, wiederverwendetes Info-Fenster
+  const driverDataRef = useRef({}); // driverId -> { driver, fix } - immer der aktuelle Stand,
+  // damit ein Klick auf einen älteren Marker keine veralteten Daten zeigt
+  // (der Klick-Handler wird nur EINMAL beim Anlegen des Markers gesetzt).
   const [status, setStatus] = useState(hasGoogleMaps() ? "loading" : "no-key"); // loading|ready|error|no-key
   const [errorMsg, setErrorMsg] = useState("");
 
@@ -5981,6 +6001,7 @@ function LiveGoogleMap({ setup, dyn }) {
       mapRef.current = new maps.Map(containerRef.current, {
         center, zoom: 11, streetViewControl: false, mapTypeControl: false, fullscreenControl: false,
       });
+      infoWindowRef.current = new maps.InfoWindow();
       locs.forEach((l) => {
         new maps.Marker({
           position: { lat: l.lat, lng: l.lng }, map: mapRef.current, title: l.name,
@@ -6002,6 +6023,7 @@ function LiveGoogleMap({ setup, dyn }) {
       const fresh = fix && fix.lat != null && fix.lng != null && fix.at && (Date.now() - fix.at) <= GPS_MAX_AGE_MS;
       if (!fresh) return;
       seen.add(d.id);
+      driverDataRef.current[d.id] = { driver: d, fix }; // immer aktuell halten, siehe Klick-Handler unten
       const pos = { lat: fix.lat, lng: fix.lng };
       const title = `${d.vehicleType === "Van" ? "Van" : "Car"} · ${d.firstName} ${d.lastName}`;
       // Initialen direkt auf dem Marker sichtbar (Google-Maps-Marker-Label,
@@ -6013,10 +6035,19 @@ function LiveGoogleMap({ setup, dyn }) {
         markersRef.current[d.id].setPosition(pos);
         markersRef.current[d.id].setLabel(markerLabel);
       } else {
-        markersRef.current[d.id] = new maps.Marker({
+        const marker = new maps.Marker({
           position: pos, map: mapRef.current, title, label: markerLabel,
           icon: { path: maps.SymbolPath.CIRCLE, scale: 11, fillColor: d.vehicleType === "Van" ? "#fb923c" : "#38bdf8", fillOpacity: 1, strokeColor: "#0c0a09", strokeWeight: 2 },
         });
+        // Klick-Handler wird nur EINMAL beim Anlegen gesetzt, liest aber bei
+        // jedem Klick aus driverDataRef.current -> zeigt immer die zuletzt
+        // bekannte Position/Zeit, auch wenn der Marker schon länger existiert.
+        marker.addListener("click", () => {
+          const cur = driverDataRef.current[d.id] || { driver: d, fix };
+          infoWindowRef.current.setContent(driverInfoWindowHtml(cur.driver, cur.fix));
+          infoWindowRef.current.open(mapRef.current, marker);
+        });
+        markersRef.current[d.id] = marker;
       }
     });
     // Marker für Fahrer ohne (mehr) frische GPS-Position entfernen
