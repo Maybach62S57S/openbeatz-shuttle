@@ -4617,6 +4617,76 @@ function computeArtistPresence(dyn) {
     .sort((a, b) => (a.pendingReturn || a.noReturn ? 1 : 0) - (b.pendingReturn || b.noReturn ? 1 : 0) || a.name.localeCompare(b.name));
 }
 
+// Eigene Sektion zur manuellen Präsenz-Verwaltung: zeigt alle aktuell als
+// "vor Ort" geltenden Artists (automatisch erkannt ODER manuell gesetzt),
+// erlaubt pro Artist "ist weg"/"wieder da"/"zurück zur Automatik", und ein
+// freies Eingabefeld, um jemanden manuell als anwesend zu ergänzen, den die
+// Fahrten nicht hergeben. Aufklappbar (Standard zu), damit sie den Tab nicht
+// dominiert.
+function PresenceManager({ presence, manualOnly, onSetManual, onAdd, onSetNoReturn }) {
+  const [open, setOpen] = useState(false);
+  const [newName, setNewName] = useState("");
+  const all = [...presence, ...manualOnly].sort((a, b) => a.name.localeCompare(b.name));
+  const add = () => { if (newName.trim()) { onAdd(newName); setNewName(""); } };
+
+  return (
+    <div className="mb-4 bg-stone-900 border border-stone-800 rounded-xl overflow-hidden">
+      <button onClick={() => setOpen((v) => !v)}
+        className="w-full flex items-center gap-2 px-3 py-2.5 text-left hover:bg-stone-800/50">
+        <Users className="w-4 h-4 text-orange-400 shrink-0" />
+        <span className="text-sm text-stone-200 font-medium">Anwesenheit verwalten</span>
+        <span className="text-xs text-stone-500">({all.length} vor Ort)</span>
+        <span className="ml-auto text-stone-500 text-xs">{open ? "schließen" : "öffnen"}</span>
+      </button>
+
+      {open && (
+        <div className="px-3 pb-3 pt-1 border-t border-stone-800">
+          <p className="text-[11px] text-stone-500 mb-2.5">Normalerweise erkennt die App automatisch aus den Fahrten, wer vor Ort ist. Hier kannst du das übersteuern, falls es nicht passt (mehrere Personen/Fahrzeuge, Selbstorganisation, jemand bleibt).</p>
+
+          <div className="space-y-1.5 mb-3">
+            {all.length === 0 && <div className="text-xs text-stone-600 py-1">Aktuell ist niemand als vor Ort erfasst.</div>}
+            {all.map((p) => (
+              <div key={p.name} className="flex items-center gap-2 bg-stone-950/50 rounded-lg px-2.5 py-1.5">
+                <span className="w-2 h-2 rounded-full bg-emerald-400 shrink-0" />
+                <span className="text-sm text-stone-200 truncate flex-1">{p.name}</span>
+                {p.manual === "here" && <span className="text-[10px] text-emerald-400/80 shrink-0">manuell da</span>}
+                {p.manualOnly && <span className="text-[10px] text-stone-600 shrink-0">nur manuell</span>}
+                {p.noReturn && <span className="text-[10px] text-stone-500 shrink-0">keine Rückfahrt</span>}
+                <div className="flex items-center gap-1 shrink-0">
+                  {/* "ist weg" markieren */}
+                  <button onClick={() => onSetManual(p.name, "gone")}
+                    title="Als weg markieren — verschwindet aus der Vor-Ort-Liste"
+                    className="text-[11px] text-stone-400 hover:text-red-300 hover:bg-red-500/10 px-2 py-1 rounded">
+                    ist weg
+                  </button>
+                  {/* zurück zur Automatik, nur wenn manuell übersteuert */}
+                  {p.manual && (
+                    <button onClick={() => onSetManual(p.name, null)}
+                      title="Manuelle Übersteuerung aufheben — wieder automatisch erkennen"
+                      className="text-stone-500 hover:text-stone-200 hover:bg-stone-800 p-1 rounded"><RefreshCw className="w-3 h-3" /></button>
+                  )}
+                </div>
+              </div>
+            ))}
+          </div>
+
+          {/* Manuell hinzufügen */}
+          <div className="flex items-center gap-1.5">
+            <input value={newName} onChange={(e) => setNewName(e.target.value)}
+              onKeyDown={(e) => e.key === "Enter" && add()}
+              placeholder="Name manuell als anwesend hinzufügen"
+              className="flex-1 bg-stone-950 border border-stone-800 rounded-lg px-2.5 py-1.5 text-sm text-stone-200 placeholder-stone-600 focus:outline-none focus:border-orange-500" />
+            <button onClick={add} disabled={!newName.trim()}
+              className="bg-stone-800 hover:bg-stone-700 disabled:opacity-40 text-stone-100 text-sm px-3 py-1.5 rounded-lg flex items-center gap-1.5 shrink-0">
+              <Plus className="w-3.5 h-3.5" />hinzufügen
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function ReturnsTab({ setup, dyn, day, updateDyn, by, onAssign, onWhatsApp, onEdit, onNewReturn }) {
   const [sort, setSort] = useState("time"); // time | dest
   const ln = (id, c) => setup.locations.find((l) => l.id === id)?.short || c || "—";
@@ -4645,6 +4715,42 @@ function ReturnsTab({ setup, dyn, day, updateDyn, by, onAssign, onWhatsApp, onEd
     d.artistPresence[name] = { ...cur, noReturn: value, by, at: Date.now() };
     return d;
   });
+
+  // Manuelle Präsenz-Übersteuerung (Schritt 2): "here" = ist da (auch ohne
+  // erkannte Ankunft), "gone" = ist weg (auch ohne erledigte Rückfahrt),
+  // null = zurück zur automatischen Erkennung aus den Fahrten.
+  const setManualPresence = (name, value) => updateDyn((d) => {
+    d.artistPresence = d.artistPresence || {};
+    const cur = d.artistPresence[name] || {};
+    if (value === null) { const { manual, ...rest } = cur; d.artistPresence[name] = { ...rest, by, at: Date.now() }; }
+    else d.artistPresence[name] = { ...cur, manual: value, by, at: Date.now() };
+    return d;
+  });
+
+  // Manuell jemanden als "vor Ort" hinzufügen, den die Automatik nicht kennt
+  // (kein Fahrten-Eintrag mit diesem Namen). Legt einen artistPresence-Eintrag
+  // mit manual:"here" an; computeArtistPresence berücksichtigt aber nur Namen,
+  // die auch in den Fahrten vorkommen -> für rein manuelle Namen führen wir
+  // sie separat aus artistPresence zusammen (siehe manualOnly unten).
+  const addManualArtist = (rawName) => {
+    const name = (rawName || "").trim();
+    if (!name) return;
+    updateDyn((d) => {
+      d.artistPresence = d.artistPresence || {};
+      const cur = d.artistPresence[name] || {};
+      d.artistPresence[name] = { ...cur, manual: "here", by, at: Date.now() };
+      return d;
+    });
+  };
+
+  // Artists, die NUR manuell als "da" existieren (kein passender Fahrten-
+  // Eintrag) — computeArtistPresence sieht sie nicht, weil es über Fahrten
+  // iteriert. Hier separat aus artistPresence ziehen und in der Präsenz-
+  // Sektion mit anzeigen, damit manuell Hinzugefügte nicht unsichtbar bleiben.
+  const presenceNames = new Set(presence.map((p) => p.name));
+  const manualOnly = Object.entries(dyn.artistPresence || {})
+    .filter(([name, ov]) => ov?.manual === "here" && !presenceNames.has(name))
+    .map(([name]) => ({ name, onSite: true, pendingReturn: null, noReturn: false, manual: "here", manualOnly: true }));
 
   const sortRides = (list) => list.slice().sort((a, b) => sort === "dest"
     ? (destName(a).localeCompare(destName(b)) || sortMin(a.time) - sortMin(b.time))
@@ -4746,6 +4852,13 @@ function ReturnsTab({ setup, dyn, day, updateDyn, by, onAssign, onWhatsApp, onEd
           </div>
         </div>
       )}
+
+      {/* Präsenz-Verwaltung (Schritt 2): manuelle Übersteuerung, wer vor Ort
+          ist. Aufklappbar, damit sie im Normalfall (Automatik reicht) nicht
+          stört, aber immer griffbereit ist. */}
+      <PresenceManager
+        presence={presence} manualOnly={manualOnly}
+        onSetManual={setManualPresence} onAdd={addManualArtist} onSetNoReturn={setNoReturn} />
 
       {/* Kennzahlen */}
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 mb-4">
