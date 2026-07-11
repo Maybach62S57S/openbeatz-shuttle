@@ -211,7 +211,7 @@ async function sbGetDyn() {
   }
   if (!row) return null;
   const d = row.dyn_data || {};
-  return { rides: d.rides || [], driverState: d.driverState || {}, dispatcherState: d.dispatcherState || {}, rev: row.dyn_rev || 0 };
+  return { rides: d.rides || [], driverState: d.driverState || {}, dispatcherState: d.dispatcherState || {}, artistPresence: d.artistPresence || {}, rev: row.dyn_rev || 0 };
 }
 // Atomares Compare-and-Swap statt blindem Überschreiben (siehe
 // write_dyn_if_unchanged in supabase-schema.sql, Nachtrag 3). baseRev ist
@@ -225,11 +225,12 @@ async function sbSetDyn(val, baseRev) {
     p_rides: val.rides || [],
     p_driver_state: val.driverState || {},
     p_dispatcher_state: val.dispatcherState || {},
+    p_artist_presence: val.artistPresence || {},
   });
   if (error) throw error;
   const row = Array.isArray(data) ? data[0] : data;
   if (!row) return { ok: false, value: null };
-  return { ok: row.ok, value: { rides: row.rides || [], driverState: row.driver_state || {}, dispatcherState: row.dispatcher_state || {}, rev: row.rev } };
+  return { ok: row.ok, value: { rides: row.rides || [], driverState: row.driver_state || {}, dispatcherState: row.dispatcher_state || {}, artistPresence: row.artist_presence || {}, rev: row.rev } };
 }
 
 async function sget(key) {
@@ -670,7 +671,7 @@ export default function App() {
       let d = await sget(DYN_KEY);
       if (!d) {
         // Gleiche Begründung wie oben bei setup: bei Supabase nie automatisch schreiben.
-        d = hasSupabase() ? { rides: [], driverState: {}, dispatcherState: {}, rev: 0 } : { rides: seedExampleRides(s), driverState: {}, dispatcherState: {}, rev: 0 };
+        d = hasSupabase() ? { rides: [], driverState: {}, dispatcherState: {}, artistPresence: {}, rev: 0 } : { rides: seedExampleRides(s), driverState: {}, dispatcherState: {}, artistPresence: {}, rev: 0 };
         if (!hasSupabase()) await sset(DYN_KEY, d);
       }
       setSetup(s); setDyn(d); setLoading(false);
@@ -766,7 +767,7 @@ export default function App() {
     let last = null;
     try {
       for (let attempt = 0; attempt < 6; attempt++) {
-        const cur = (await sget(DYN_KEY)) || { rides: [], driverState: {}, dispatcherState: {}, rev: 0 };
+        const cur = (await sget(DYN_KEY)) || { rides: [], driverState: {}, dispatcherState: {}, artistPresence: {}, rev: 0 };
         const baseRev = cur.rev || 0;
         const next = mutator(structuredClone(cur));
         next.rev = baseRev + 1;
@@ -3347,7 +3348,7 @@ function Dashboard({ setup, dyn, session, updateDyn, updateSetup, onLogout, onPr
           onEdit={(r) => { setDay(r.dayKey); setEditRide(r); }} onAssign={(r) => setAssignRide(r)} />}
         {tab === "timeline" && <TimelinePage setup={setup} dyn={dyn} day={day} updateDyn={updateDyn} by={meBy} onUndo={onUndo}
           onEdit={(r) => { setDay(r.dayKey); setEditRide(r); }} onAssign={(r) => setAssignRide(r)} />}
-        {tab === "returns" && <ReturnsTab setup={setup} dyn={dyn} day={day} updateDyn={updateDyn}
+        {tab === "returns" && <ReturnsTab setup={setup} dyn={dyn} day={day} updateDyn={updateDyn} by={meBy}
           onAssign={(r) => setAssignRide(r)} onWhatsApp={(r) => setWaRide(r)} onEdit={(r) => { setDay(r.dayKey); setEditRide(r); }}
           onNewReturn={(artistName) => setEditRide({ _new: true, dayKey: day, date: day, djName: artistName, fromId: "festival", toId: "" })} />}
         {tab === "emergency" && <EmergencyTab setup={setup} dyn={dyn} day={day} updateDyn={updateDyn} by={meBy}
@@ -4579,7 +4580,16 @@ function AuditLogSection({ setup, dyn }) {
 // Bewusst über ALLE Tage berechnet (nicht nur den gerade angezeigten), weil ein Artist
 // an einem Tag ankommen und erst an einem späteren Tag zurückfahren kann — sonst würde
 // ein Tageswechsel in der Ansicht fälschlich "niemand da" anzeigen.
+//
+// Manuelle Übersteuerung: dyn.artistPresence[name] kann pro Artist zwei
+// bewusst gesetzte Flags tragen (beide optional, Standard = automatische
+// Erkennung aus erledigten Fahrten):
+//   - noReturn: true  -> "braucht keine Rückfahrt" (Schritt 1). Bleibt sichtbar,
+//                        wird aber ausgegraut und zählt nicht als "fehlt noch".
+//   - manual: "here"|"gone" -> manueller Präsenz-Status (Schritt 2), übersteuert
+//                        die automatische arrived/returned-Rechnung.
 function computeArtistPresence(dyn) {
+  const presenceOverrides = dyn.artistPresence || {};
   const byArtist = {};
   (dyn.rides || []).forEach((r) => {
     const name = (r.djName || "").trim();
@@ -4595,15 +4605,19 @@ function computeArtistPresence(dyn) {
     .map((a) => {
       const arrivedCount = a.arrivals.filter((r) => r.status === "done").length;
       const returnedCount = a.returns.filter((r) => r.status === "done").length;
-      const onSite = arrivedCount > returnedCount; // (wieder) angekommen, noch nicht (erneut) weg
+      const autoOnSite = arrivedCount > returnedCount; // (wieder) angekommen, noch nicht (erneut) weg
+      const ov = presenceOverrides[a.name] || {};
+      // manueller Präsenz-Status übersteuert die Automatik (Schritt 2)
+      const onSite = ov.manual === "gone" ? false : ov.manual === "here" ? true : autoOnSite;
       const pendingReturn = a.returns.filter((r) => r.status !== "done").sort((x, y) => sortMin(x.time) - sortMin(y.time))[0] || null;
-      return { name: a.name, onSite, pendingReturn };
+      const noReturn = ov.noReturn === true; // "braucht keine Rückfahrt" (Schritt 1)
+      return { name: a.name, onSite, pendingReturn, noReturn, manual: ov.manual || null, presenceBy: ov.by || null, presenceAt: ov.at || null };
     })
     .filter((a) => a.onSite)
-    .sort((a, b) => (a.pendingReturn ? 1 : 0) - (b.pendingReturn ? 1 : 0) || a.name.localeCompare(b.name));
+    .sort((a, b) => (a.pendingReturn || a.noReturn ? 1 : 0) - (b.pendingReturn || b.noReturn ? 1 : 0) || a.name.localeCompare(b.name));
 }
 
-function ReturnsTab({ setup, dyn, day, updateDyn, onAssign, onWhatsApp, onEdit, onNewReturn }) {
+function ReturnsTab({ setup, dyn, day, updateDyn, by, onAssign, onWhatsApp, onEdit, onNewReturn }) {
   const [sort, setSort] = useState("time"); // time | dest
   const ln = (id, c) => setup.locations.find((l) => l.id === id)?.short || c || "—";
   const destName = (r) => ln(r.toId, r.toCustom);
@@ -4614,9 +4628,23 @@ function ReturnsTab({ setup, dyn, day, updateDyn, onAssign, onWhatsApp, onEdit, 
   const active = returns.filter((r) => r.assignedDriverId && r.status !== "done");
   const done = returns.filter((r) => r.status === "done");
   const problems = returns.filter((r) => rideHasOpenIssue(r));
-  const presence = useMemo(() => computeArtistPresence(dyn), [dyn.rides]);
-  const missing = presence.filter((p) => !p.pendingReturn);
+  const presence = useMemo(() => computeArtistPresence(dyn), [dyn.rides, dyn.artistPresence]);
+  // "missing" = wirklich noch offen: vor Ort, keine geplante Rückfahrt UND nicht
+  // als "braucht keine Rückfahrt" markiert. "noReturnList" = bewusst abgemeldet
+  // (ausgegraut sichtbar). "covered" = Rückfahrt schon geplant.
+  const missing = presence.filter((p) => !p.pendingReturn && !p.noReturn);
+  const noReturnList = presence.filter((p) => !p.pendingReturn && p.noReturn);
   const covered = presence.filter((p) => p.pendingReturn);
+
+  // Setzt/entfernt das "braucht keine Rückfahrt"-Flag pro Artist-Name.
+  // Speichert über dieselbe geprüfte updateDyn-Kette wie alles andere (mit
+  // by/Zeitstempel), kein separater Schreibweg.
+  const setNoReturn = (name, value) => updateDyn((d) => {
+    d.artistPresence = d.artistPresence || {};
+    const cur = d.artistPresence[name] || {};
+    d.artistPresence[name] = { ...cur, noReturn: value, by, at: Date.now() };
+    return d;
+  });
 
   const sortRides = (list) => list.slice().sort((a, b) => sort === "dest"
     ? (destName(a).localeCompare(destName(b)) || sortMin(a.time) - sortMin(b.time))
@@ -4682,11 +4710,18 @@ function ReturnsTab({ setup, dyn, day, updateDyn, onAssign, onWhatsApp, onEdit, 
           <div className="text-xs uppercase tracking-wide text-stone-400 mb-2 flex items-center gap-1.5"><MapPin className="w-3.5 h-3.5 text-orange-400" />Vor Ort ({presence.length}){missing.length > 0 ? ` · ${missing.length} ohne Rückfahrt` : ""}</div>
           <div className="flex flex-wrap gap-2">
             {missing.map((p) => (
-              <button key={p.name} onClick={() => onNewReturn && onNewReturn(p.name)}
-                title="Noch keine Rückfahrt angelegt — antippen zum Anlegen"
-                className="flex items-center gap-1.5 text-xs bg-orange-500/15 hover:bg-orange-500/25 border border-orange-500/50 text-orange-300 px-2.5 py-1.5 rounded-lg">
-                <AlertTriangle className="w-3.5 h-3.5 shrink-0" />{p.name}<span className="text-orange-400/70">braucht Rückfahrt</span>
-              </button>
+              <div key={p.name} className="flex items-center gap-0.5 bg-orange-500/15 border border-orange-500/50 rounded-lg overflow-hidden">
+                <button onClick={() => onNewReturn && onNewReturn(p.name)}
+                  title="Noch keine Rückfahrt angelegt — antippen zum Anlegen"
+                  className="flex items-center gap-1.5 text-xs hover:bg-orange-500/25 text-orange-300 pl-2.5 pr-2 py-1.5">
+                  <AlertTriangle className="w-3.5 h-3.5 shrink-0" />{p.name}<span className="text-orange-400/70">braucht Rückfahrt</span>
+                </button>
+                <button onClick={() => setNoReturn(p.name, true)}
+                  title="Braucht keine Rückfahrt — aus der offenen Liste nehmen"
+                  className="text-orange-400/60 hover:text-orange-200 hover:bg-orange-500/25 px-1.5 py-1.5 border-l border-orange-500/30 text-[10px] whitespace-nowrap">
+                  keine nötig
+                </button>
+              </div>
             ))}
             {covered.map((p) => (
               <button key={p.name} onClick={() => onEdit && onEdit(p.pendingReturn)}
@@ -4694,6 +4729,19 @@ function ReturnsTab({ setup, dyn, day, updateDyn, onAssign, onWhatsApp, onEdit, 
                 className="flex items-center gap-1.5 text-xs bg-stone-900 hover:border-stone-700 border border-stone-800 text-stone-400 px-2.5 py-1.5 rounded-lg">
                 <CheckCircle2 className="w-3.5 h-3.5 shrink-0 text-emerald-500" />{p.name}<span className="text-stone-600">{p.pendingReturn.time}</span>
               </button>
+            ))}
+            {noReturnList.map((p) => (
+              <div key={p.name} className="flex items-center gap-0.5 bg-stone-950/60 border border-stone-800 rounded-lg overflow-hidden opacity-60">
+                <span className="flex items-center gap-1.5 text-xs text-stone-500 pl-2.5 pr-2 py-1.5 line-through">
+                  {p.name}
+                </span>
+                <span className="text-[10px] text-stone-600 pr-1.5">keine Rückfahrt</span>
+                <button onClick={() => setNoReturn(p.name, false)}
+                  title="Doch wieder als braucht Rückfahrt aufnehmen"
+                  className="text-stone-500 hover:text-stone-200 hover:bg-stone-800 px-1.5 py-1.5 border-l border-stone-800">
+                  <RefreshCw className="w-3 h-3" />
+                </button>
+              </div>
             ))}
           </div>
         </div>

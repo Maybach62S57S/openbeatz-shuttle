@@ -466,9 +466,13 @@ end $$;
 -- Signatur seit Nachtrag 4 um dispatcher_state erweitert (Leitstellen-Push,
 -- siehe unten) -> alte 3-Parameter-Version zuerst explizit entfernen, sonst
 -- bleibt sie als separate Überladung stehen statt ersetzt zu werden.
+-- Signatur seit Nachtrag 5 um p_artist_presence erweitert (manueller Präsenz-/
+-- Rückfahr-Status pro Artist, siehe Rückfahrten-Tab). Der alte 3-Argument-Aufruf
+-- (rides/driver_state/dispatcher_state) wird weiter unten separat gedroppt.
 drop function if exists write_dyn_if_unchanged(int, jsonb, jsonb);
-create or replace function write_dyn_if_unchanged(p_expected_rev int, p_rides jsonb, p_driver_state jsonb, p_dispatcher_state jsonb default '{}'::jsonb)
-returns table(ok boolean, rev int, rides jsonb, driver_state jsonb, dispatcher_state jsonb)
+drop function if exists write_dyn_if_unchanged(int, jsonb, jsonb, jsonb);
+create or replace function write_dyn_if_unchanged(p_expected_rev int, p_rides jsonb, p_driver_state jsonb, p_dispatcher_state jsonb default '{}'::jsonb, p_artist_presence jsonb default '{}'::jsonb)
+returns table(ok boolean, rev int, rides jsonb, driver_state jsonb, dispatcher_state jsonb, artist_presence jsonb)
 language plpgsql
 security definer
 set search_path = public
@@ -477,7 +481,7 @@ declare
   v_rows int;
 begin
   update settings
-  set dyn_data = jsonb_build_object('rides', p_rides, 'driverState', p_driver_state, 'dispatcherState', p_dispatcher_state),
+  set dyn_data = jsonb_build_object('rides', p_rides, 'driverState', p_driver_state, 'dispatcherState', p_dispatcher_state, 'artistPresence', p_artist_presence),
       dyn_rev = p_expected_rev + 1,
       updated_at = now()
   where id = 1 and dyn_rev = p_expected_rev;
@@ -485,10 +489,10 @@ begin
   get diagnostics v_rows = row_count;
 
   if v_rows > 0 then
-    return query select true, p_expected_rev + 1, p_rides, p_driver_state, p_dispatcher_state;
+    return query select true, p_expected_rev + 1, p_rides, p_driver_state, p_dispatcher_state, p_artist_presence;
   else
     return query
-      select false, s.dyn_rev, coalesce(s.dyn_data->'rides', '[]'::jsonb), coalesce(s.dyn_data->'driverState', '{}'::jsonb), coalesce(s.dyn_data->'dispatcherState', '{}'::jsonb)
+      select false, s.dyn_rev, coalesce(s.dyn_data->'rides', '[]'::jsonb), coalesce(s.dyn_data->'driverState', '{}'::jsonb), coalesce(s.dyn_data->'dispatcherState', '{}'::jsonb), coalesce(s.dyn_data->'artistPresence', '{}'::jsonb)
       from settings s where s.id = 1;
   end if;
 end $$;
@@ -632,7 +636,7 @@ begin
   end if;
 end $$;
 
-grant execute on function write_dyn_if_unchanged(int, jsonb, jsonb, jsonb) to anon, authenticated;
+grant execute on function write_dyn_if_unchanged(int, jsonb, jsonb, jsonb, jsonb) to anon, authenticated;
 -- clear_push_subscription bewusst NICHT an anon/authenticated vergeben — nur
 -- für api/send-push.js gedacht (läuft mit dem Service-Role-Key, der braucht
 -- diese Freigabe nicht, umgeht Postgres-Grants ohnehin). Sonst könnte jeder
