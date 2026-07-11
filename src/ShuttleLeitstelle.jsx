@@ -2237,19 +2237,6 @@ function stageIsLate(setup, ride, nowMin, live) {
   if (["enroute_pickup", "onboard"].includes(ride.status)) return nowMin > sortMin(ride.time) + effDur(cfg, ride);
   return ride.assignedDriverId ? nowMin > sortMin(ride.time) - 5 : false;
 }
-function waStageText(setup, ride, stageLabel) {
-  const drv = setup.drivers.find((d) => d.id === ride.assignedDriverId);
-  const loc = (id, c) => setup.locations.find((l) => l.id === id)?.short || c || "—";
-  return [
-    "Stage-Rückfrage an die Leitstelle:",
-    `Stage: ${stageLabel || ride.zone || "—"}`,
-    `Artist: ${ride.djName || "—"}`,
-    `Geplante Ankunft: ${ride.time} (${loc(ride.fromId, ride.fromCustom)} → ${loc(ride.toId, ride.toCustom)})`,
-    `Status: ${STATUS_LABEL[ride.status] || ride.status}`,
-    drv ? `Fahrer: ${drv.firstName} (${drv.vehicleType === "Van" ? "Van" : "Car"})` : "Fahrer: noch nicht zugeteilt",
-  ].filter(Boolean).join("\n");
-}
-
 function StageApp({ setup, dyn, updateDyn, onLogout }) {
   const days = dayTabs(setup, dyn);
   const [day, setDay] = useState(days[0]?.key || "");
@@ -2267,9 +2254,7 @@ function StageApp({ setup, dyn, updateDyn, onLogout }) {
     setStageFilterRaw(val);
     try { localStorage.setItem(STAGE_FILTER_KEY, val); } catch {}
   };
-  const [statusFilter, setStatusFilter] = useState("all"); // all|soon|enroute|delayed|problem|done
   const [issueFor, setIssueFor] = useState(null);
-  const [waFor, setWaFor] = useState(null);
 
   const now = dayNowMin(day);
   const live = now >= 0 && now < 90000;
@@ -2295,17 +2280,10 @@ function StageApp({ setup, dyn, updateDyn, onLogout }) {
     issue: rideHasOpenIssue(r),
   })), [dayRides, stageFilter, now, live, setup]);
 
-  const passesStatus = (x) => {
-    switch (statusFilter) {
-      case "soon": return live && x.r.status !== "done" && (sortMin(x.r.time) - now) <= 90 && (sortMin(x.r.time) - now) >= -15;
-      case "enroute": return ["enroute_pickup", "onboard"].includes(x.r.status);
-      case "delayed": return x.late;
-      case "problem": return x.issue;
-      case "done": return x.r.status === "done";
-      default: return true;
-    }
-  };
-  const filtered = enriched.filter(passesStatus);
+  // Status-Filter (Alle/Kommt bald/Unterwegs/Verspätet/Problem/Erledigt) auf
+  // Wunsch entfernt — Stage Manager sehen direkt die volle Live-Liste ihrer
+  // gewählten Stage, ohne zusätzliche Einschränkung.
+  const filtered = enriched;
   const openList = filtered.filter((x) => x.r.status !== "done").sort((a, b) => {
     const crit = (x) => x.issue || x.light === "red" ? 0 : 1;
     return crit(a) - crit(b) || sortMin(a.r.time) - sortMin(b.r.time);
@@ -2364,7 +2342,7 @@ function StageApp({ setup, dyn, updateDyn, onLogout }) {
           ))}
         </div>
         {/* Stage-Filter (dynamisch aus setup.zones) */}
-        <div className="px-4 pb-2.5 flex gap-1.5 overflow-x-auto">
+        <div className="px-4 pb-3 flex gap-1.5 overflow-x-auto">
           <button onClick={() => setStageFilter("all")}
             className={`px-3 py-1.5 rounded-lg text-xs whitespace-nowrap shrink-0 ${stageFilter === "all" ? "bg-orange-600 text-white" : "bg-stone-900 text-stone-400"}`}>Alle Stages</button>
           {stages.map((z) => (
@@ -2373,13 +2351,6 @@ function StageApp({ setup, dyn, updateDyn, onLogout }) {
           ))}
           <button onClick={() => setStageFilter(NO_STAGE)}
             className={`px-3 py-1.5 rounded-lg text-xs whitespace-nowrap shrink-0 ${stageFilter === NO_STAGE ? "bg-orange-600 text-white" : "bg-stone-900 text-stone-400"}`}>Sonstige / Ohne Stage</button>
-        </div>
-        {/* Status-Filter */}
-        <div className="px-4 pb-3 flex gap-1.5 overflow-x-auto">
-          {[["all", "Alle"], ["soon", "Kommt bald"], ["enroute", "Unterwegs"], ["delayed", "Verspätet"], ["problem", "Problem"], ["done", "Erledigt"]].map(([k, l]) => (
-            <button key={k} onClick={() => setStatusFilter(k)}
-              className={`px-3 py-1.5 rounded-lg text-xs whitespace-nowrap shrink-0 border ${statusFilter === k ? "bg-stone-100 text-stone-900 border-stone-100 font-medium" : "bg-stone-950 text-stone-400 border-stone-800"}`}>{l}</button>
-          ))}
         </div>
       </header>
 
@@ -2390,7 +2361,7 @@ function StageApp({ setup, dyn, updateDyn, onLogout }) {
           <div className="flex gap-2 overflow-x-auto pb-1">
             {nextArrivals.length === 0 && <div className="text-xs text-stone-600 py-2">Keine anstehenden Ankünfte.</div>}
             {nextArrivals.map((x) => (
-              <button key={x.r.id} onClick={() => setStatusFilter("all")}
+              <div key={x.r.id}
                 className="shrink-0 w-40 text-left bg-stone-900 border border-stone-800 rounded-xl p-2.5">
                 <div className="flex items-center gap-1.5 mb-1">
                   <span className={`w-2 h-2 rounded-full shrink-0 ${TRAFFIC_DOT[x.light]}`} />
@@ -2399,7 +2370,7 @@ function StageApp({ setup, dyn, updateDyn, onLogout }) {
                 <div className="text-sm text-orange-300 truncate font-semibold">{x.r.djName || "—"}</div>
                 {x.r.zone ? <ZoneChip zone={x.r.zone} className="mt-1" /> : <span className="text-[10px] text-stone-600">ohne Stage</span>}
                 <div className="text-[10px] text-stone-500 mt-1 truncate">{x.status.label}</div>
-              </button>
+              </div>
             ))}
           </div>
         </section>
@@ -2410,7 +2381,7 @@ function StageApp({ setup, dyn, updateDyn, onLogout }) {
           <div className="space-y-2">
             {openList.length === 0 && <div className="text-sm text-stone-600 py-8 text-center border border-dashed border-stone-800 rounded-xl">Keine Fahrten in dieser Ansicht.</div>}
             {openList.map((x) => (
-              <StageTile key={x.r.id} setup={setup} x={x} onReport={() => setIssueFor(x.r)} onContact={() => setWaFor(x.r)} />
+              <StageTile key={x.r.id} setup={setup} x={x} onReport={() => setIssueFor(x.r)} />
             ))}
           </div>
           {doneList.length > 0 && (
@@ -2418,7 +2389,7 @@ function StageApp({ setup, dyn, updateDyn, onLogout }) {
               <summary className="text-xs text-stone-500 cursor-pointer flex items-center gap-1.5"><CheckCircle2 className="w-3.5 h-3.5 text-emerald-500" />Erledigt ({doneList.length})</summary>
               <div className="space-y-2 mt-2 opacity-70">
                 {doneList.map((x) => (
-                  <StageTile key={x.r.id} setup={setup} x={x} onReport={() => setIssueFor(x.r)} onContact={() => setWaFor(x.r)} compact />
+                  <StageTile key={x.r.id} setup={setup} x={x} onReport={() => setIssueFor(x.r)} compact />
                 ))}
               </div>
             </details>
@@ -2437,12 +2408,11 @@ function StageApp({ setup, dyn, updateDyn, onLogout }) {
       </main>
 
       {issueFor && <StageIssueModal ride={issueFor} onClose={() => setIssueFor(null)} onReport={reportIssue} setup={setup} />}
-      {waFor && <StageContactModal ride={waFor} setup={setup} stageLabel={stageFilter !== "all" && stageFilter !== NO_STAGE ? stageFilter : ""} onClose={() => setWaFor(null)} />}
     </div>
   );
 }
 
-function StageTile({ setup, x, onReport, onContact, compact }) {
+function StageTile({ setup, x, onReport, compact }) {
   const { r, status, eta, light, late, issue } = x;
   const loc = (id, c) => setup.locations.find((l) => l.id === id)?.short || c || "—";
   const drv = setup.drivers.find((d) => d.id === r.assignedDriverId);
@@ -2487,7 +2457,6 @@ function StageTile({ setup, x, onReport, onContact, compact }) {
           {!compact && (
             <div className="flex items-center gap-2 mt-2.5">
               <button onClick={onReport} className="text-xs bg-red-500 hover:bg-red-400 text-white px-3 py-1.5 rounded-lg flex items-center gap-1.5"><AlertTriangle className="w-3.5 h-3.5" />Problem melden</button>
-              <button onClick={onContact} className="text-xs bg-stone-800 hover:bg-stone-700 text-stone-200 px-3 py-1.5 rounded-lg flex items-center gap-1.5"><MessageSquare className="w-3.5 h-3.5" />Für Leitstelle</button>
             </div>
           )}
         </div>
@@ -2511,23 +2480,6 @@ function StageIssueModal({ ride, onClose, onReport, setup }) {
       </div>
       <Field label="Notiz (optional)"><input className={inp} value={note} onChange={(e) => setNote(e.target.value)} placeholder="kurze Beschreibung" /></Field>
       <button onClick={() => onReport(ride, type, note)} className="w-full mt-4 bg-red-500 hover:bg-red-400 text-white font-medium py-3 rounded-xl">An Leitstelle melden</button>
-    </Modal>
-  );
-}
-
-function StageContactModal({ ride, setup, stageLabel, onClose }) {
-  const txt = waStageText(setup, ride, stageLabel);
-  const [copied, setCopied] = useState(false);
-  const doCopy = async () => { const ok = await copyText(txt); if (ok) { setCopied(true); setTimeout(() => setCopied(false), 1800); } };
-  return (
-    <Modal onClose={onClose} title="Für die Leitstelle">
-      <div className="rounded-xl border border-stone-800 bg-stone-950 p-3">
-        <pre className="text-xs text-stone-300 whitespace-pre-wrap font-sans leading-relaxed">{txt}</pre>
-      </div>
-      <button onClick={doCopy} className="w-full mt-4 bg-emerald-600 hover:bg-emerald-500 text-white font-medium py-3 rounded-xl flex items-center justify-center gap-2">
-        {copied ? <><Check className="w-4 h-4" />kopiert</> : <><Copy className="w-4 h-4" />Text kopieren</>}
-      </button>
-      <p className="text-[11px] text-stone-600 mt-2 text-center">Wird nur kopiert – bitte selbst per WhatsApp an die Leitstelle senden.</p>
     </Modal>
   );
 }
