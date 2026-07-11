@@ -231,6 +231,11 @@ end $$;
 alter table drivers add column if not exists phone text not null default '';
 alter table drivers add column if not exists plate text not null default '';
 alter table drivers add column if not exists pin   text not null default '';
+-- Life360-Integration (optional): freier Text, gegen den der Vorname+Nachname
+-- eines Life360-Circle-Mitglieds beim Sync case-insensitiv verglichen wird.
+-- Leer lassen = dieser Fahrer wird nicht über Life360 synchronisiert, nur
+-- über die eigene Standortfreigabe in der App. Siehe api/life360-sync.js.
+alter table drivers add column if not exists life360_name text not null default '';
 
 alter table settings add column if not exists dispatchers jsonb not null default '[]';
 alter table settings add column if not exists setup_rev   int  not null default 0;
@@ -524,17 +529,18 @@ language sql
 security definer
 set search_path = public
 as $$
-  insert into drivers (id, first_name, last_name, vehicle_type, vehicle_id, seats, active, phone, plate, pin)
+  insert into drivers (id, first_name, last_name, vehicle_type, vehicle_id, seats, active, phone, plate, pin, life360_name)
   select
     d->>'id', d->>'first_name', d->>'last_name', d->>'vehicle_type', d->>'vehicle_id',
     coalesce((d->>'seats')::int, 4), coalesce((d->>'active')::boolean, true),
-    coalesce(d->>'phone', ''), coalesce(d->>'plate', ''), coalesce(d->>'pin', '')
+    coalesce(d->>'phone', ''), coalesce(d->>'plate', ''), coalesce(d->>'pin', ''), coalesce(d->>'life360_name', '')
   from jsonb_array_elements(p_drivers) as d
   on conflict (id) do update set
     first_name = excluded.first_name, last_name = excluded.last_name,
     vehicle_type = excluded.vehicle_type, vehicle_id = excluded.vehicle_id,
     seats = excluded.seats, active = excluded.active,
-    phone = excluded.phone, plate = excluded.plate, pin = excluded.pin;
+    phone = excluded.phone, plate = excluded.plate, pin = excluded.pin,
+    life360_name = excluded.life360_name;
 $$;
 
 create or replace function dispatcher_list_guest_tokens()
