@@ -2456,7 +2456,7 @@ function StageTile({ setup, x, onReport, compact }) {
           )}
           {!compact && (
             <div className="flex items-center gap-2 mt-2.5">
-              <button onClick={onReport} className="text-xs bg-red-800 hover:bg-red-700 text-white px-3 py-1.5 rounded-lg flex items-center gap-1.5"><AlertTriangle className="w-3.5 h-3.5" />Problem melden</button>
+              <button onClick={onReport} className="text-xs px-3 py-1.5 rounded-lg border border-red-500/40 text-red-300 hover:bg-red-500/10 flex items-center gap-1.5"><AlertTriangle className="w-3.5 h-3.5" />Problem melden</button>
             </div>
           )}
         </div>
