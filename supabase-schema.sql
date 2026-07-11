@@ -639,3 +639,42 @@ grant execute on function write_dyn_if_unchanged(int, jsonb, jsonb, jsonb) to an
 -- mit dem anon-Key beliebige Push-Abos löschen (Verfügbarkeits-Ärgernis,
 -- kein Datenleck, aber unnötig).
 revoke execute on function clear_push_subscription(text, text) from public;
+
+-- ============================================================================
+-- Nachtrag 5: Direkte Schreibzugriffe per REST/anon-Key sperren
+--
+-- Die bisherigen Policies write_drivers/write_settings/rw_state_all/
+-- write_guest_tokens erlaubten "using (true) with check (true)" — jeder mit
+-- dem öffentlichen anon-Key (zwangsläufig im ausgelieferten JS-Bundle) konnte
+-- damit PER DIREKTEM REST-CALL an der App vorbei die komplette Fahrer-/
+-- Einstellungs-/Fahrtendatenbank überschreiben, unabhängig von jeder Logik
+-- in dispatcher_save_drivers/write_setup_if_unchanged/write_dyn_if_unchanged.
+--
+-- Die App selbst hat diese Lücke nie gebraucht: jeder Schreibzugriff läuft
+-- bereits ausschließlich über die genannten RPCs (SECURITY DEFINER, umgehen
+-- RLS ohnehin und funktionieren deshalb nach diesem Nachtrag unverändert
+-- weiter). Kein Funktionsverlust, nur die Hintertür wird geschlossen.
+--
+-- rides/driver_state: laut Nachtrag oben bereits vollständig unbenutzte
+-- Alt-Tabellen (echte Daten liegen in settings.dyn_data) — hier komplett
+-- (Lesen UND Schreiben) für anon/authenticated gesperrt, da nichts
+-- Legitimes mehr darauf zugreift.
+--
+-- guest_tokens: Lesezugriff war ebenfalls offen — das ist die Liste aller
+-- gültigen Gast-Link-Tokens samt Künstlername, im Grunde eine Generalliste
+-- aller Zugangsschlüssel. guest_session/dispatcher_list_guest_tokens sind
+-- beide SECURITY DEFINER und lesen die Tabelle intern, RLS betrifft sie
+-- nicht — auch hier also kein Funktionsverlust, nur Direktzugriff dicht.
+-- ============================================================================
+drop policy if exists write_drivers on drivers;
+drop policy if exists write_settings on settings;
+drop policy if exists rw_state_all on driver_state;
+drop policy if exists rw_rides_select on rides;
+drop policy if exists rw_rides_update on rides;
+drop policy if exists rw_rides_insert on rides;
+drop policy if exists read_guest_tokens on guest_tokens;
+drop policy if exists write_guest_tokens on guest_tokens;
+-- Ohne jede Policy ist eine Tabelle mit aktivierter RLS für anon/authenticated
+-- automatisch komplett gesperrt (Postgres-Standard: implizites Verweigern).
+-- Kein "using (false)"-Ersatz nötig, das Fehlen der Policy reicht.
+
