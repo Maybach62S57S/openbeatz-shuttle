@@ -464,6 +464,26 @@ function fmtDur(min) {
 }
 function nowHM() { const d = new Date(); return `${pad(d.getHours())}:${pad(d.getMinutes())}`; }
 
+// Erzeugt einen universellen Karten-/Navigations-Link für das Ziel einer Fahrt.
+// Nutzt die Google-Maps-URL-API (https://www.google.com/maps/dir/?...): die
+// leitet auf iOS wie Android an die jeweils installierte Karten-App bzw. den
+// Browser weiter, ohne dass wir plattformspezifisch unterscheiden müssen.
+// Bevorzugt exakte Koordinaten (lat/lng des bekannten Orts), fällt sonst auf
+// die hinterlegte Adresse und zuletzt auf den Namen zurück. Für Ziele ohne
+// jede dieser Angaben (reiner Custom-Text ohne Koordinaten) gibt die Funktion
+// null zurück -> Aufrufer blendet den Button dann aus, statt einen kaputten
+// Link anzubieten.
+function navUrlForRide(setup, ride) {
+  const loc = setup.locations.find((l) => l.id === ride.toId);
+  let dest = null;
+  if (loc && loc.lat != null && loc.lng != null) dest = `${loc.lat},${loc.lng}`;
+  else if (loc && loc.address) dest = loc.address;
+  else if (loc && loc.name) dest = loc.name;
+  else if (ride.toCustom) dest = ride.toCustom;
+  if (!dest) return null;
+  return `https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(dest)}&travelmode=driving`;
+}
+
 // Misst die tatsächliche Breite eines Containers (per ResizeObserver). Wichtig in Artifacts:
 // der Frame kann schmaler sein als der Bildschirm, daher sind feste Tailwind-Breakpoints
 // (lg/xl/2xl, an die Fensterbreite gekoppelt) hier unzuverlässig.
@@ -1922,6 +1942,12 @@ function DriverApp({ setup, dyn, session, updateDyn, onLogout }) {
             {nextRide.meetingPoint && <div className="mt-1.5 text-sm text-orange-300 flex items-center gap-1.5"><MapPin className="w-4 h-4" />{nextRide.meetingPoint}</div>}
             {nextRide.notes && <div className="mt-1 text-xs text-stone-400">{nextRide.notes}</div>}
             <ContactReveal passengers={nextRide.passengers} />
+            {navUrlForRide(setup, nextRide) && (
+              <a href={navUrlForRide(setup, nextRide)} target="_blank" rel="noopener noreferrer"
+                className="w-full mt-3 py-2.5 rounded-xl font-medium text-stone-100 bg-stone-800 hover:bg-stone-700 transition flex items-center justify-center gap-2">
+                <Navigation className="w-4 h-4" />Route nach {loc(nextRide.toId, nextRide.toCustom)} starten
+              </a>
+            )}
             <StepProgress status={nextRide.status} />
             {STATUS_FLOW[nextRide.status]?.next && (
               <button onClick={() => advance(nextRide)}
@@ -2008,6 +2034,13 @@ function DriverApp({ setup, dyn, session, updateDyn, onLogout }) {
                     {r.status === "onboard" ? <Flag className="w-4 h-4" /> : <Play className="w-4 h-4" />}
                     {flow.label}
                   </button>
+                )}
+                {!done && navUrlForRide(setup, r) && (
+                  <a href={navUrlForRide(setup, r)} target="_blank" rel="noopener noreferrer"
+                    title={`Route nach ${loc(r.toId, r.toCustom)}`}
+                    className="px-3 py-3 rounded-xl border border-stone-700 text-stone-300 hover:bg-stone-800 flex items-center gap-1.5 text-sm">
+                    <Navigation className="w-4 h-4" />Route
+                  </a>
                 )}
                 {!done && (
                   <button onClick={() => setIssueFor(r)}
@@ -3083,6 +3116,14 @@ function Dashboard({ setup, dyn, session, updateDyn, updateSetup, onLogout, onPr
 
   const locName = (id, txt) => setup.locations.find((l) => l.id === id)?.short || txt || "—";
 
+  // Für das Warn-Badge am Notfall-Reiter: dieselbe Logik wie im Notfall-Tab
+  // (emergencyCases), damit man aus jedem Reiter sieht, wenn dort etwas
+  // Akutes wartet, ohne aktiv reinschauen zu müssen. Nur der Zähler, die
+  // eigentliche Liste bleibt im Notfall-Tab.
+  const emCases = emergencyCases(setup, dyn, day);
+  const emCrit = emCases.filter((c) => c.sev === "critical").length;
+  const emCount = emCases.length;
+
   return (
     <div className="min-h-screen bg-stone-950 text-stone-100">
       {/* Kopf */}
@@ -3104,8 +3145,13 @@ function Dashboard({ setup, dyn, session, updateDyn, updateSetup, onLogout, onPr
                 diese eine Zeile begrenzt, scrollt bei Bedarf für sich. */}
             {[["overview", "Überblick", LayoutGrid], ["board", "Board", Route], ["timeline", "Timeline", Gauge], ["emergency", "Notfall", Siren], ["returns", "Rückfahrten", Moon], ["flights", "Flughafen", Plane], ["map", "Karte", MapIcon], ["drivers", "Fahrer", Users], ["settings", "Einstellungen", Settings]].map(([t, l, I]) => (
               <button key={t} onClick={() => setTab(t)}
-                className={`shrink-0 px-3 py-1.5 rounded-lg text-sm flex items-center gap-1.5 ${tab === t ? "bg-stone-800 text-stone-100" : "text-stone-400 hover:text-stone-200"}`}>
+                className={`shrink-0 px-3 py-1.5 rounded-lg text-sm flex items-center gap-1.5 relative ${tab === t ? "bg-stone-800 text-stone-100" : "text-stone-400 hover:text-stone-200"}`}>
                 <I className="w-4 h-4" />{l}
+                {t === "emergency" && emCount > 0 && (
+                  <span className={`ml-0.5 min-w-[1.1rem] h-[1.1rem] px-1 inline-flex items-center justify-center rounded-full text-[10px] font-bold ${emCrit > 0 ? "bg-red-500 text-white ob-pulse" : "bg-amber-500/80 text-stone-900"}`}>
+                    {emCount}
+                  </span>
+                )}
               </button>
             ))}
             {/* Rückgängig: auf Jordans Wunsch direkt neben Einstellungen, als
@@ -4066,27 +4112,62 @@ function LocSelect({ setup, label, value, custom, onId, onCustom }) {
 
 /* ------------------------------- Fahrer-Tab ------------------------------ */
 function DriversTab({ setup, dyn, day }) {
+  const [, setTick] = useState(0);
+  useEffect(() => { const t = setInterval(() => setTick((x) => x + 1), 30000); return () => clearInterval(t); }, []);
   const rows = setup.drivers.map((d) => ({ d, s: computeDriverStats(setup, dyn, d.id, day) }));
   const maxMin = Math.max(1, ...rows.map((r) => r.s.drivingMin));
+  const now = dayNowMin(day);
+  const live = now >= 0 && now < 90000;
+  const ln = (id) => setup.locations.find((l) => l.id === id)?.short || null;
+  const freeCount = rows.filter((r) => r.s.availability === "free").length;
+  const busyCount = rows.length - freeCount;
   return (
     <div>
-      <h3 className="text-sm text-stone-400 mb-3">Auslastung {fmtDate(day)} – gleichmäßiger Einsatz</h3>
+      <div className="flex items-center gap-3 mb-3 flex-wrap">
+        <h3 className="text-sm text-stone-400">Auslastung {fmtDate(day)} – gleichmäßiger Einsatz</h3>
+        {live && (
+          <div className="flex items-center gap-3 text-xs">
+            <span className="flex items-center gap-1.5 text-emerald-400"><span className="w-2 h-2 rounded-full bg-emerald-400" />{freeCount} frei</span>
+            <span className="flex items-center gap-1.5 text-blue-400"><span className="w-2 h-2 rounded-full bg-blue-400" />{busyCount} auf Fahrt</span>
+          </div>
+        )}
+      </div>
       <div className="space-y-1.5 2xl:space-y-0 2xl:grid 2xl:grid-cols-2 2xl:gap-1.5">
-        {rows.sort((a, b) => b.s.drivingMin - a.s.drivingMin).map(({ d, s }) => (
-          <div key={d.id} className="bg-stone-900 border border-stone-800 rounded-lg px-4 py-2.5 flex items-center gap-4">
-            <span className={`text-xs font-mono px-1.5 py-0.5 rounded shrink-0 ${d.vehicleType === "Van" ? "bg-orange-500/20 text-orange-300" : "bg-sky-500/20 text-sky-300"}`}>{d.vehicleType === "Van" ? "Van" : "Car"}</span>
-            <div className="w-40 shrink-0 text-sm text-stone-200 truncate">{d.firstName} {d.lastName}</div>
-            <div className="flex-1">
-              <div className="h-2 bg-stone-800 rounded-full overflow-hidden">
-                <div className={`h-full ${s.drivingMin >= setup.config.softHoursMin ? "bg-red-500" : "bg-orange-600"}`} style={{ width: `${(s.drivingMin / maxMin) * 100}%` }} />
+        {rows.sort((a, b) => {
+          // Beim Zuteilen sind freie Fahrer am interessantesten -> zuerst die
+          // freien (nach geringster Auslastung, wer noch am meisten Luft hat),
+          // dann die belegten nach frei-ab-Zeit.
+          if (live && a.s.availability !== b.s.availability) return a.s.availability === "free" ? -1 : 1;
+          if (live && a.s.availability === "free" && b.s.availability === "free") return a.s.drivingMin - b.s.drivingMin;
+          return b.s.drivingMin - a.s.drivingMin;
+        }).map(({ d, s }) => {
+          const loc = live ? ln(s.locNow) : null;
+          const freeAtTxt = live && s.availability === "busy" && s.freeAt != null ? fromMin(s.freeAt) : null;
+          return (
+            <div key={d.id} className="bg-stone-900 border border-stone-800 rounded-lg px-4 py-2.5 flex items-center gap-4">
+              <span className={`text-xs font-mono px-1.5 py-0.5 rounded shrink-0 ${d.vehicleType === "Van" ? "bg-orange-500/20 text-orange-300" : "bg-sky-500/20 text-sky-300"}`}>{d.vehicleType === "Van" ? "Van" : "Car"}</span>
+              <div className="w-40 shrink-0 min-w-0">
+                <div className="text-sm text-stone-200 truncate">{d.firstName} {d.lastName}</div>
+                {live && (
+                  <div className="text-[10px] flex items-center gap-1 mt-0.5">
+                    {s.availability === "free"
+                      ? <span className="text-emerald-400 flex items-center gap-1"><span className="w-1.5 h-1.5 rounded-full bg-emerald-400" />frei{loc ? ` · ${loc}` : ""}</span>
+                      : <span className="text-blue-400 flex items-center gap-1"><span className="w-1.5 h-1.5 rounded-full bg-blue-400" />auf Fahrt{freeAtTxt ? ` · frei ab ${freeAtTxt}` : ""}</span>}
+                  </div>
+                )}
+              </div>
+              <div className="flex-1">
+                <div className="h-2 bg-stone-800 rounded-full overflow-hidden">
+                  <div className={`h-full ${s.drivingMin >= setup.config.softHoursMin ? "bg-red-500" : "bg-orange-600"}`} style={{ width: `${(s.drivingMin / maxMin) * 100}%` }} />
+                </div>
+              </div>
+              <div className="w-16 text-right text-sm font-mono text-stone-300 shrink-0">{s.count}×</div>
+              <div className="w-24 text-right text-sm font-mono shrink-0" >
+                <span className={s.drivingMin >= setup.config.softHoursMin ? "text-red-400" : "text-stone-400"}>{fmtDur(s.drivingMin)}</span>
               </div>
             </div>
-            <div className="w-16 text-right text-sm font-mono text-stone-300 shrink-0">{s.count}×</div>
-            <div className="w-24 text-right text-sm font-mono shrink-0" >
-              <span className={s.drivingMin >= setup.config.softHoursMin ? "text-red-400" : "text-stone-400"}>{fmtDur(s.drivingMin)}</span>
-            </div>
-          </div>
-        ))}
+          );
+        })}
       </div>
     </div>
   );
