@@ -29,6 +29,7 @@ Die App erfasst jetzt echte Fahrer-Standorte im Browser (`useDriverLocationShari
 - Schema/Store bereits erweitert: `driver_state` hat jetzt `gps_lat/gps_lng/gps_accuracy/gps_at`, `supabaseStore.js` hat `setDriverGps()`/liest es in `loadDriverState()` mit ein.
 - **Wichtiger Hinweis für den Live-Betrieb:** Reines Web-Tracking funktioniert nur im Vordergrund – sperrt ein Fahrer das Handy längere Zeit, pausiert die Übertragung (iOS ist hier besonders restriktiv). Das ist eine Plattform-Grenze, keine Baustelle in der App; sie fällt in dem Fall sauber auf „geschätzt" zurück.
 - **Datenschutz:** Standort-Freigabe ist im Fahrer-Header sichtbar und einzeln abschaltbar; vor dem Event kurz die Einwilligung/DSGVO-Seite klären (nur während der Schicht tracken, keine Langzeit-Historie).
+- **"Kein Live-Standort"-Übersicht:** in der Karten-Ansicht (Desktop und mobil) erscheint automatisch ein Hinweis-Panel mit allen Fahrern, die heute eine Fahrt haben, aber gerade keine frische GPS-Position teilen (weder eigene Freigabe noch Life360) — inkl. Anruf-Button, damit proaktiv nachgehakt werden kann. Erscheint nur bei Bedarf, ist leer/unsichtbar, wenn alle aktiven Fahrer teilen.
 
 ## Life360-GPS-Sync (optional, riskant, siehe Abwägung)
 Zusätzliche, optionale GPS-Quelle neben der eigenen Standortfreigabe: `api/life360-sync.js` loggt sich mit einem Life360-Konto ein, holt die Positionen aus dem gemeinsamen Circle und schreibt sie in dieselben `driverState[driverId].gps`-Felder, die auch die eigene Standortfreigabe nutzt.
@@ -96,7 +97,7 @@ Beide Endpoints waren vorher völlig offen — jeder, der die URL kennt, konnte 
 **Das ist kein vollwertiges Auth** — dafür bräuchte es echte Nutzer-Logins, die es hier bewusst noch nicht gibt. Für ein internes Dispo-Tool für ein Wochenend-Event (kein öffentliches Produkt) ist das aber eine sinnvolle Abwägung: schützt gegen automatisiertes/versehentliches Fremdnutzen, nicht gegen einen gezielten, technisch versierten Angreifer. Beide Variablenpaare sind optional — ohne sie gesetzt läuft alles wie vorher (Checks werden übersprungen), siehe `.env.example`.
 
 ## PWA / Home‑Screen (Punkt 17)
-Braucht echtes Hosting (nicht im Artifact möglich): `manifest.webmanifest` + „Zum Homescreen hinzufügen"-Unterstützung (z. B. `vite-plugin-pwa`). Der Service Worker für Push (`sw.js`) ist oben schon beschrieben; für eine vollwertige installierbare PWA (Icon auf dem Homescreen, Standalone-Fenster) zusätzlich ein `manifest.webmanifest` mit Icons/Namen ergänzen.
+Bereits vollständig eingerichtet: `public/manifest.webmanifest` (Name, Icons in 192px/512px, `display: standalone`, Theme-Farbe), `index.html` verlinkt es und enthält zusätzlich die iOS-eigenen Meta-Tags (`apple-mobile-web-app-*`, `apple-touch-icon`). „Zum Home-Bildschirm hinzufügen" ergibt damit ein echtes Standalone-Fenster mit eigenem Icon, kein Browser-Tab mehr. Der Service Worker für Push (`sw.js`) ist oben beschrieben und wird zusätzlich beim Aktivieren von Push registriert.
 
 ## Ehrliche Einordnung
 Die Artifact-Version ist voll funktionsfähig zum Planen und Demonstrieren. Für den Festival-Livebetrieb mit 20 Handys ist der Supabase-Weg oben der richtige.

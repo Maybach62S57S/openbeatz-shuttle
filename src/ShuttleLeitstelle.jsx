@@ -3675,6 +3675,9 @@ function MobileMapPane({ setup, dyn, day }) {
           {sel.driver.vehicleType === "Van" ? "Van" : "Car"} · {sel.driver.firstName} {sel.driver.lastName} · {STATUS_STYLE[sel.mode]?.label || sel.mode}
         </div>
       )}
+      <div className="mt-2">
+        <NoGpsSharingPanel setup={setup} dyn={dyn} day={day} />
+      </div>
     </div>
   );
 }
@@ -6089,6 +6092,42 @@ function LiveGoogleMap({ setup, dyn }) {
   );
 }
 
+// Zeigt Fahrer, die HEUTE mindestens eine Fahrt haben, aber aktuell keine
+// frische GPS-Position teilen (weder eigene Standortfreigabe noch Life360,
+// beide landen im selben driverState[id].gps-Feld, siehe useDriverLocation-
+// Sharing/api/life360-sync.js) — damit die Leitstelle proaktiv nachhaken
+// kann ("Fahrer XY, kannst du den Standort aktivieren?"), statt es erst an
+// einer leeren Stelle auf der Karte zu bemerken. Fahrer ohne Fahrt heute
+// werden bewusst nicht gelistet, sonst wäre die Liste bei einem mehrtägigen
+// Festival ständig voll mit Leuten, die einfach nicht im Dienst sind.
+function NoGpsSharingPanel({ setup, dyn, day }) {
+  const withoutGps = useMemo(() => {
+    return (setup.drivers || []).filter((d) => {
+      if (driverDay(dyn.rides || [], d.id, day).length === 0) return false;
+      const fix = dyn.driverState?.[d.id]?.gps;
+      const fresh = fix && fix.lat != null && fix.at && (Date.now() - fix.at) <= GPS_MAX_AGE_MS;
+      return !fresh;
+    });
+  }, [setup.drivers, dyn.rides, dyn.driverState, day]);
+
+  if (withoutGps.length === 0) return null; // nichts Auffälliges -> kein leeres/beruhigendes Panel nötig
+
+  return (
+    <div className="bg-stone-900 border border-amber-800/40 rounded-xl p-3">
+      <div className="text-xs text-amber-300 mb-2 flex items-center gap-1.5"><AlertTriangle className="w-3.5 h-3.5" />Kein Live-Standort ({withoutGps.length})</div>
+      <div className="space-y-1">
+        {withoutGps.map((d) => (
+          <div key={d.id} className="flex items-center gap-2 text-xs">
+            <span className={`text-[10px] font-mono px-1.5 py-0.5 rounded shrink-0 ${d.vehicleType === "Van" ? "bg-orange-500/20 text-orange-300" : "bg-sky-500/20 text-sky-300"}`}>{d.vehicleType === "Van" ? "Van" : "Car"}</span>
+            <span className="text-stone-300 truncate flex-1">{d.firstName} {d.lastName}</span>
+            {d.phone && <a href={`tel:${d.phone}`} className="text-stone-500 hover:text-emerald-400 shrink-0" title={`Anrufen: ${d.phone}`}><Navigation className="w-3.5 h-3.5 rotate-90" /></a>}
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 function MapTab({ setup, dyn, day, onEdit }) {
   const isToday = dayNowMin(day) >= 0 && dayNowMin(day) < 90000;
   const [mode, setMode] = useState(isToday ? "live" : "sim");   // 'live' | 'sim' (Punkt 8)
@@ -6173,6 +6212,8 @@ function MapTab({ setup, dyn, day, onEdit }) {
 
         <div className="space-y-3">
           {selPos && <DriverDetailsPanel pos={selPos} setup={setup} nodes={nodes} onClose={() => setSelected(null)} />}
+
+          <NoGpsSharingPanel setup={setup} dyn={dyn} day={day} />
 
           {/* Offene Fahrten */}
           <div className="bg-stone-900 border border-stone-800 rounded-xl p-3">
