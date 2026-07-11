@@ -83,7 +83,13 @@ function loadGoogleMapsApi() {
     const key = typeof import.meta !== "undefined" ? import.meta.env?.VITE_GOOGLE_MAPS_API_KEY : undefined;
     if (!key) { googleMapsLoadPromise = null; reject(new Error("Kein Google-Maps-Key hinterlegt (VITE_GOOGLE_MAPS_API_KEY).")); return; }
     const script = document.createElement("script");
-    script.src = `https://maps.googleapis.com/maps/api/js?key=${encodeURIComponent(key)}&v=weekly&loading=async`;
+    // WICHTIG: kein "loading=async" hier. Mit dem Flag lädt Google das
+    // Bootstrap-Skript sofort, aber die eigentlichen Klassen (Map, Marker, ...)
+    // erst asynchron nach ("dynamic library import") - beim script.onload
+    // unten wäre google.maps.Map dann noch undefined -> "undefined is not a
+    // constructor". Ohne das Flag lädt alles synchron und ist bei onload
+    // vollständig da, wie der restliche Code hier es erwartet.
+    script.src = `https://maps.googleapis.com/maps/api/js?key=${encodeURIComponent(key)}&v=weekly`;
     script.async = true;
     script.onerror = () => { googleMapsLoadPromise = null; reject(new Error("Google Maps konnte nicht geladen werden (Netzwerk/Key prüfen).")); };
     script.onload = () => resolve(window.google.maps);
