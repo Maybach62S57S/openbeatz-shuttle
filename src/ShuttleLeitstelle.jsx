@@ -993,31 +993,28 @@ function Login({ setup, onLogin }) {
   };
 
   return (
-    <div className="min-h-screen w-full flex flex-col items-center px-4 pt-16 pb-8 sm:justify-center sm:pt-10 sm:pb-10 relative overflow-hidden">
+    <div className="min-h-screen w-full flex flex-col items-center justify-center px-4 py-10 relative overflow-hidden">
       {/* Hintergrundfoto in eigenem Layer – der Sättigungs-/Helligkeitsfilter soll nur
           das Foto treffen, nicht Logo/Karte/Text (die liegen als eigene Kinder darüber). */}
       <div className="absolute inset-0" style={{
         backgroundImage: `url(${OB_BG})`, backgroundSize: "cover", backgroundPosition: "center 40%",
         filter: "saturate(0.72) brightness(0.82) contrast(1.05)",
       }} />
-      {/* Scrim – kräftiger genau im Logo-Bereich oben (radial), sonst vertikaler Verlauf
-          zum Boden hin dunkler, damit Formular & Text lesbar bleiben */}
-      <div className="absolute inset-0" style={{
-        background:
-          "radial-gradient(ellipse 70% 40% at 50% 12%, rgba(12,10,9,0.55) 0%, rgba(12,10,9,0.15) 60%, rgba(12,10,9,0) 100%)," +
-          "linear-gradient(180deg, rgba(12,10,9,0.45) 0%, rgba(12,10,9,0.35) 25%, rgba(12,10,9,0.75) 62%, rgba(12,10,9,0.96) 100%)",
-      }} />
+      {/* Scrim – dunkelt das Stimmungsbild ab, damit Formular & Text lesbar bleiben.
+          Gleichmäßiger Verlauf, da der zentrierte Block je nach Bildschirmhöhe an
+          unterschiedlicher Stelle im Foto liegen kann. */}
+      <div className="absolute inset-0" style={{ background: "linear-gradient(180deg, rgba(12,10,9,0.62) 0%, rgba(12,10,9,0.58) 45%, rgba(12,10,9,0.82) 100%)" }} />
 
       <div className="w-full max-w-sm relative z-10 flex flex-col items-center text-center">
-        <img src={OB_HORIZ} alt="Open Beatz" style={obInvert} className="h-20 sm:h-24 w-auto mb-4 drop-shadow-[0_2px_16px_rgba(0,0,0,0.7)]" />
-        <div className="flex items-center justify-center gap-1.5">
-          <span className="ob-pulse inline-block w-2 h-2 rounded-full bg-orange-500 shrink-0" />
-          <span className="ob-display text-orange-400 text-sm tracking-[0.15em]">VIP SHUTTLE · LEITSTELLE</span>
+        <img src={OB_HORIZ} alt="Open Beatz" style={obInvert} className="h-28 sm:h-32 w-auto mb-5 drop-shadow-[0_2px_16px_rgba(0,0,0,0.7)]" />
+        <div className="flex items-center justify-center gap-2">
+          <span className="ob-pulse inline-block w-2.5 h-2.5 rounded-full bg-orange-500 shrink-0" />
+          <span className="ob-display text-orange-400 text-base sm:text-lg tracking-[0.15em]">VIP SHUTTLE · LEITSTELLE</span>
         </div>
-        <p className="text-stone-400 text-xs mt-2.5">24.–26. Juli 2026 · Herzogenaurach</p>
+        <p className="text-stone-400 text-xs mt-2.5 mb-6">24.–26. Juli 2026 · Herzogenaurach</p>
       </div>
 
-      <div className="w-full max-w-sm relative z-10 mt-auto sm:mt-10">
+      <div className="w-full max-w-sm relative z-10">
         <div className="bg-stone-950/65 backdrop-blur-md border border-stone-800/80 rounded-2xl p-5">
           <div className="grid grid-cols-3 gap-1 p-1 bg-stone-900/80 rounded-xl mb-4 border border-stone-800">
             {[["driver", "Fahrer"], ["dispo", "Leitstelle"], ["stage", "Stage Manager"]].map(([r, l]) => (
