@@ -116,6 +116,7 @@ async function fetchLife360Members() {
       if (!loc || loc.latitude == null || loc.longitude == null) continue;
       members.push({
         name: `${m.firstName || ""} ${m.lastName || ""}`.trim(),
+        firstName: (m.firstName || "").trim(),
         lat: Number(loc.latitude), lng: Number(loc.longitude),
         // Life360 liefert den Zeitstempel als Unix-Sekunden (String)
         at: loc.timestamp ? Number(loc.timestamp) * 1000 : Date.now(),
@@ -156,7 +157,23 @@ export default async function handler(req, res) {
     }
 
     const members = await fetchLife360Members();
-    const byName = new Map(members.map((m) => [m.name.toLowerCase(), m]));
+    const byFullName = new Map(members.map((m) => [m.name.toLowerCase(), m]));
+    // Fallback: nur Vorname, aber nur wenn der Vorname unter den aktuellen
+    // Life360-Mitgliedern eindeutig ist (sonst bleibt's beim vollen Namen,
+    // um niemanden versehentlich zu verwechseln). Grund: Life360 zeigt in
+    // der App oft nur den Vornamen an, ob ein Nachname im Profil hinterlegt
+    // ist, sieht man von außen nicht - Fahrer sollen einfach den Namen
+    // eintragen können, den sie in der Life360-App sehen.
+    const firstNameCounts = new Map();
+    for (const m of members) {
+      if (!m.firstName) continue;
+      const key = m.firstName.toLowerCase();
+      firstNameCounts.set(key, (firstNameCounts.get(key) || 0) + 1);
+    }
+    const byUniqueFirstName = new Map(
+      members.filter((m) => m.firstName && firstNameCounts.get(m.firstName.toLowerCase()) === 1)
+        .map((m) => [m.firstName.toLowerCase(), m])
+    );
 
     // CAS-Schreiben wie updateDyn im Frontend: lesen, mergen, mit
     // erwarteter rev zurückschreiben, bei Konflikt (Rides wurden zeitgleich
@@ -172,8 +189,9 @@ export default async function handler(req, res) {
       updated.length = 0; skipped.length = 0;
 
       for (const d of mapped) {
-        const m = byName.get(d.life360_name.trim().toLowerCase());
-        if (!m) { skipped.push({ driverId: d.id, reason: "kein Life360-Mitglied mit diesem Namen gefunden" }); continue; }
+        const key = d.life360_name.trim().toLowerCase();
+        const m = byFullName.get(key) || byUniqueFirstName.get(key);
+        if (!m) { skipped.push({ driverId: d.id, reason: "kein Life360-Mitglied mit diesem Namen gefunden (auch nicht als eindeutiger Vorname)" }); continue; }
         const current = driverState[d.id]?.gps;
         // Nur überschreiben, wenn die Life360-Position tatsächlich neuer ist
         // als die zuletzt bekannte (egal ob die vorher von der App selbst
