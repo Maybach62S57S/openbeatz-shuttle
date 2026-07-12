@@ -231,10 +231,10 @@ end $$;
 alter table drivers add column if not exists phone text not null default '';
 alter table drivers add column if not exists plate text not null default '';
 alter table drivers add column if not exists pin   text not null default '';
--- Life360-Integration (optional): freier Text, gegen den der Vorname+Nachname
--- eines Life360-Circle-Mitglieds beim Sync case-insensitiv verglichen wird.
--- Leer lassen = dieser Fahrer wird nicht über Life360 synchronisiert, nur
--- über die eigene Standortfreigabe in der App. Siehe api/life360-sync.js.
+-- Life360-Sync wurde ausprobiert (Login von Cloudflare geblockt) und am
+-- 12.07.2026 wieder aus dem Code entfernt (siehe BACKEND-README.md). Diese
+-- Spalte ist seitdem ungenutzt/leer und bewusst NICHT entfernt, um kein
+-- erneutes Ausfuehren des Schemas noetig zu machen - schadet nirgends.
 alter table drivers add column if not exists life360_name text not null default '';
 
 alter table settings add column if not exists dispatchers jsonb not null default '[]';

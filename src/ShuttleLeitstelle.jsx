@@ -101,12 +101,12 @@ function loadGoogleMapsApi() {
 const fromDbDriver = (d) => ({
   id: d.id, firstName: d.first_name, lastName: d.last_name, vehicleType: d.vehicle_type,
   vehicleId: d.vehicle_id, seats: d.seats, active: d.active,
-  phone: d.phone || "", plate: d.plate || "", pin: d.pin || "", life360Name: d.life360_name || "",
+  phone: d.phone || "", plate: d.plate || "", pin: d.pin || "",
 });
 const toDbDriver = (d) => ({
   id: d.id, first_name: d.firstName, last_name: d.lastName, vehicle_type: d.vehicleType,
   vehicle_id: d.vehicleId, seats: d.seats, active: d.active !== false,
-  phone: d.phone || "", plate: d.plate || "", pin: d.pin || "", life360_name: d.life360Name || "",
+  phone: d.phone || "", plate: d.plate || "", pin: d.pin || "",
 });
 
 async function sbGetSetup() {
@@ -721,21 +721,6 @@ export default function App() {
     }, POLL_MS);
     return () => clearInterval(t);
   }, [loading, loadError]);
-
-  // Optionaler Life360-GPS-Sync (siehe api/life360-sync.js): nur auslösen,
-  // wenn eine Leitstelle eingeloggt ist (nicht bei Fahrern/Stage/Gast — die
-  // haben ihre eigene Standortfreigabe bzw. brauchen das gar nicht) und nur
-  // im echten Deployment (hasSupabase), nicht im Chat-Artifact. Bewusst
-  // seltener als das normale Polling (45s statt 3s) und komplett
-  // fire-and-forget: schlägt der Sync fehl, passiert einfach nichts, die
-  // eigene Standortfreigabe der Fahrer bleibt die alleinige Quelle.
-  useEffect(() => {
-    if (loading || loadError || !hasSupabase() || session?.role !== "dispo") return;
-    const sync = () => { fetch("/api/life360-sync", { method: "POST", headers: apiHeaders() }).catch(() => {}); };
-    sync();
-    const t = setInterval(sync, 45000);
-    return () => clearInterval(t);
-  }, [loading, loadError, session?.role]);
 
   // Punkt 8: Read-Check-Write mit Retry. Ändert ein anderes Gerät zwischendurch,
   // wird die Mutation auf den frischen Stand neu angewendet statt ihn zu überschreiben.
@@ -4348,17 +4333,16 @@ function DriverPhones({ setup, updateSetup }) {
   const [phones, setPhones] = useState(() => Object.fromEntries(setup.drivers.map((d) => [d.id, d.phone || ""])));
   const [plates, setPlates] = useState(() => Object.fromEntries(setup.drivers.map((d) => [d.id, d.plate || ""])));
   const [pins, setPins] = useState(() => Object.fromEntries(setup.drivers.map((d) => [d.id, d.pin || ""])));
-  const [life360Names, setLife360Names] = useState(() => Object.fromEntries(setup.drivers.map((d) => [d.id, d.life360Name || ""])));
   const [saved, setSaved] = useState(false);
-  const dirty = setup.drivers.some((d) => (phones[d.id] || "") !== (d.phone || "") || (plates[d.id] || "") !== (d.plate || "") || (pins[d.id] || "") !== (d.pin || "") || (life360Names[d.id] || "") !== (d.life360Name || ""));
+  const dirty = setup.drivers.some((d) => (phones[d.id] || "") !== (d.phone || "") || (plates[d.id] || "") !== (d.plate || "") || (pins[d.id] || "") !== (d.pin || ""));
   const save = async () => {
-    await updateSetup((s) => { s.drivers.forEach((d) => { d.phone = (phones[d.id] || "").trim(); d.plate = (plates[d.id] || "").trim(); d.pin = (pins[d.id] || "").trim(); d.life360Name = (life360Names[d.id] || "").trim(); }); return s; });
+    await updateSetup((s) => { s.drivers.forEach((d) => { d.phone = (phones[d.id] || "").trim(); d.plate = (plates[d.id] || "").trim(); d.pin = (pins[d.id] || "").trim(); }); return s; });
     setSaved(true); setTimeout(() => setSaved(false), 1800);
   };
   return (
     <div>
       <h3 className="font-medium text-stone-200 mb-1 flex items-center gap-2"><Radio className="w-4 h-4" />Fahrer-Telefonnummern, Kennzeichen &amp; PIN</h3>
-      <p className="text-xs text-stone-500 mb-3">Telefonnummer für Anruf-Buttons in der Leitstelle. Kennzeichen optional — erscheint nur, wenn gepflegt, im Gast-/Artist-Link. Eigener PIN optional — leer lassen, um den Standard-PIN (unten bei „Zugangs-PINs") zu nutzen. „Life360-Name" optional — exakter Vor- und Nachname, wie er im gemeinsamen Life360-Circle steht, aktiviert den Live-GPS-Abgleich über Life360 für diesen Fahrer (siehe BACKEND-README). Leer lassen, wenn nicht gewünscht. Alles bleibt im System (im Deployment in der DB, nicht im Code).</p>
+      <p className="text-xs text-stone-500 mb-3">Telefonnummer für Anruf-Buttons in der Leitstelle. Kennzeichen optional — erscheint nur, wenn gepflegt, im Gast-/Artist-Link. Eigener PIN optional — leer lassen, um den Standard-PIN (unten bei „Zugangs-PINs") zu nutzen. Alles bleibt im System (im Deployment in der DB, nicht im Code).</p>
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-4 gap-y-1.5 max-h-72 overflow-y-auto pr-1">
         {setup.drivers.map((d) => (
           <div key={d.id} className="flex items-center gap-1.5 text-sm flex-wrap">
@@ -4370,8 +4354,6 @@ function DriverPhones({ setup, updateSetup }) {
               value={plates[d.id] || ""} onChange={(e) => setPlates((p) => ({ ...p, [d.id]: e.target.value }))} placeholder="Kennz." />
             <input className="w-16 shrink-0 bg-stone-950 border border-stone-800 rounded px-2 py-1 text-sm text-stone-200 placeholder-stone-600 focus:outline-none focus:border-orange-500"
               value={pins[d.id] || ""} onChange={(e) => setPins((p) => ({ ...p, [d.id]: e.target.value.replace(/\D/g, "") }))} placeholder="PIN" inputMode="numeric" />
-            <input className="w-full sm:w-36 shrink-0 bg-stone-950 border border-stone-800 rounded px-2 py-1 text-sm text-stone-200 placeholder-stone-600 focus:outline-none focus:border-orange-500"
-              value={life360Names[d.id] || ""} onChange={(e) => setLife360Names((p) => ({ ...p, [d.id]: e.target.value }))} placeholder="Life360-Name (optional)" />
           </div>
         ))}
       </div>
@@ -6559,9 +6541,8 @@ function LiveGoogleMap({ setup, dyn }) {
 }
 
 // Zeigt Fahrer, die HEUTE mindestens eine Fahrt haben, aber aktuell keine
-// frische GPS-Position teilen (weder eigene Standortfreigabe noch Life360,
-// beide landen im selben driverState[id].gps-Feld, siehe useDriverLocation-
-// Sharing/api/life360-sync.js) — damit die Leitstelle proaktiv nachhaken
+// frische GPS-Position teilen (siehe useDriverLocationSharing weiter oben,
+// landet in driverState[id].gps) — damit die Leitstelle proaktiv nachhaken
 // kann ("Fahrer XY, kannst du den Standort aktivieren?"), statt es erst an
 // einer leeren Stelle auf der Karte zu bemerken. Fahrer ohne Fahrt heute
 // werden bewusst nicht gelistet, sonst wäre die Liste bei einem mehrtägigen
