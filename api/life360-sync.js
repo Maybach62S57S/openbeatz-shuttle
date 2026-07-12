@@ -191,6 +191,8 @@ export default async function handler(req, res) {
         p_rides: dyn.rides || [],
         p_driver_state: driverState,
         p_dispatcher_state: dyn.dispatcherState || {},
+        p_artist_presence: dyn.artistPresence || {},
+        p_messages: dyn.messages || [],
       });
       if (writeErr) { lastError = writeErr.message; continue; }
       const writeRow = Array.isArray(writeData) ? writeData[0] : writeData;
