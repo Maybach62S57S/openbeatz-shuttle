@@ -86,7 +86,24 @@ async function life360Login() {
     headers: { Authorization: `Basic ${CLIENT_TOKEN}`, "Content-Type": "application/x-www-form-urlencoded", Accept: "application/json" },
     body: new URLSearchParams({ grant_type: "password", username: LIFE360_EMAIL, password: LIFE360_PASSWORD }),
   });
-  if (!r.ok) throw new Error(`Life360-Login fehlgeschlagen (${r.status})`);
+  if (!r.ok) {
+    // Diagnose: Antworttext (gekürzt, keine Zugangsdaten enthalten - das ist
+    // Life360s Antwort, nicht unsere Anfrage) + ein paar Header, um zu sehen
+    // ob das eine echte API-Fehlermeldung ist (z. B. JSON mit "invalid_grant"
+    // -> Zugangsdaten falsch) oder eine Firewall/Bot-Sperre vor Life360s
+    // eigentlicher Login-Pruefung (z. B. HTML-Seite, cf-ray/cf-mitigated-
+    // Header -> Cloudflare hat schon vorher geblockt, unabhaengig davon ob
+    // Zugangsdaten oder Client-Token stimmen wuerden).
+    let bodySnippet = "";
+    try { bodySnippet = (await r.text()).slice(0, 300); } catch { /* egal, Diagnose ist best effort */ }
+    const cfRay = r.headers.get("cf-ray");
+    const cfMitigated = r.headers.get("cf-mitigated");
+    const server = r.headers.get("server");
+    const contentType = r.headers.get("content-type");
+    throw new Error(
+      `Life360-Login fehlgeschlagen (${r.status}) | content-type: ${contentType} | server: ${server} | cf-ray: ${cfRay} | cf-mitigated: ${cfMitigated} | body: ${JSON.stringify(bodySnippet)}`
+    );
+  }
   const data = await r.json();
   if (!data.access_token) throw new Error("Life360-Login: kein access_token in Antwort");
   return `${data.token_type || "Bearer"} ${data.access_token}`;
