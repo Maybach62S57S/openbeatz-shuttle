@@ -1006,7 +1006,7 @@ function Login({ setup, onLogin }) {
       <div className="absolute inset-0" style={{ background: "linear-gradient(180deg, rgba(12,10,9,0.62) 0%, rgba(12,10,9,0.58) 45%, rgba(12,10,9,0.82) 100%)" }} />
 
       <div className="w-full max-w-sm relative z-10 flex flex-col items-center text-center">
-        <img src={OB_HORIZ} alt="Open Beatz" style={obInvert} className="h-28 sm:h-32 w-auto mb-5 drop-shadow-[0_2px_16px_rgba(0,0,0,0.7)]" />
+        <img src={OB_HORIZ} alt="Open Beatz" style={obInvert} className="h-28 sm:h-32 w-auto max-w-none mb-5 drop-shadow-[0_2px_16px_rgba(0,0,0,0.7)]" />
         <div className="flex items-center justify-center gap-2">
           <span className="ob-pulse inline-block w-2.5 h-2.5 rounded-full bg-orange-500 shrink-0" />
           <span className="ob-display text-orange-400 text-base sm:text-lg tracking-[0.15em]">VIP SHUTTLE · LEITSTELLE</span>
