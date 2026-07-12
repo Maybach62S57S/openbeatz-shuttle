@@ -1,6 +1,6 @@
 {
-  "name": "Open Beatz Shuttle-Leitstelle",
-  "short_name": "OB Shuttle",
+  "name": "VIP Shuttle",
+  "short_name": "VIP Shuttle",
   "description": "VIP-Shuttle-Dispositions-App für das Open Beatz Festival",
   "start_url": "/",
   "scope": "/",
