@@ -5,7 +5,7 @@ import {
   ArrowRight, Plus, Settings, Upload, LogOut, Radio, Navigation, AlertTriangle,
   RefreshCw, Search, X, Route, Timer, Gauge, ChevronRight, Play, Flag, Ban,
   MessageSquare, Copy, Check, Moon, LayoutGrid, BarChart3, Siren, History, Link2, Eye, Trash2,
-  Smartphone,
+  Smartphone, Wifi, WifiOff,
 } from "lucide-react";
 
 /* ============================================================================
@@ -765,6 +765,13 @@ export default function App() {
   // Daten.
   const [loadError, setLoadError] = useState(null);
   const [connIssue, setConnIssue] = useState(null);
+  // Slice 5: echtes Offline-Signal des Browsers. navigator.onLine === false ist
+  // die sichere Aussage "Gerät hat gar kein Netz" (stärker als ein einzelner
+  // fehlgeschlagener Poll). onLine === true heißt NICHT "Server erreichbar",
+  // deshalb bleibt connIssue (poll-basiert) die maßgebliche Abgleich-Fehler-Quelle.
+  const [isOffline, setIsOffline] = useState(() => typeof navigator !== "undefined" && navigator.onLine === false);
+  const [justReconnected, setJustReconnected] = useState(false);
+  const wasConnBadRef = useRef(false);
   const [retryTick, setRetryTick] = useState(0);
   const retryLoad = () => { setLoadError(null); setLoading(true); setRetryTick((t) => t + 1); };
   // Gast-Link: ?guest=TOKEN in der URL (Produktivbetrieb) ODER lokale Vorschau aus den
@@ -899,6 +906,38 @@ export default function App() {
     return () => clearInterval(t);
   }, [loading, loadError]);
 
+  // Slice 5: Browser-Events für sofortiges Offline-/Online-Signal, ohne 3s auf
+  // den nächsten Poll zu warten. Setzt nur isOffline; das "wieder verbunden"
+  // übernimmt der Übergangs-Effekt unten, sobald der Abgleich wirklich läuft.
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const goOnline = () => setIsOffline(false);
+    const goOffline = () => setIsOffline(true);
+    window.addEventListener("online", goOnline);
+    window.addEventListener("offline", goOffline);
+    return () => {
+      window.removeEventListener("online", goOnline);
+      window.removeEventListener("offline", goOffline);
+    };
+  }, []);
+
+  // Slice 5: "Wieder verbunden" nur beim echten Übergang schlecht -> gut zeigen.
+  // "schlecht" = offline ODER letzter Abgleich fehlgeschlagen. Der grüne Hinweis
+  // feuert also erst, wenn BEIDES weg ist (ein Poll ist nach der Störung wieder
+  // durchgegangen), nicht schon wenn nur das WLAN zurück ist. Feuert bewusst
+  // nicht beim ersten Laden (Startzustand gut -> kein Übergang), verschwindet
+  // nach 4s von selbst.
+  useEffect(() => {
+    const bad = isOffline || !!connIssue;
+    if (wasConnBadRef.current && !bad) {
+      wasConnBadRef.current = bad;
+      setJustReconnected(true);
+      const t = setTimeout(() => setJustReconnected(false), 4000);
+      return () => clearTimeout(t);
+    }
+    wasConnBadRef.current = bad;
+  }, [isOffline, connIssue]);
+
   // Punkt 8: Read-Check-Write mit Retry. Ändert ein anderes Gerät zwischendurch,
   // wird die Mutation auf den frischen Stand neu angewendet statt ihn zu überschreiben.
   // Rückgängig: merkt sich vor jeder Änderung, welche Fahrten sich dadurch
@@ -1032,28 +1071,28 @@ export default function App() {
 
   // Gast-Link hat Vorrang vor allem anderen — kein Login, kein Rollen-Wechsel nötig.
   if (guestToken) {
-    return <><BrandStyles /><ConnIssueBanner message={connIssue} /><GuestApp setup={setup} dyn={dyn} token={guestToken} updateDyn={updateDyn}
+    return <><BrandStyles /><ConnIssueBanner message={connIssue} offline={isOffline} reconnected={justReconnected} /><GuestApp setup={setup} dyn={dyn} token={guestToken} updateDyn={updateDyn}
       onExitPreview={previewGuestToken ? () => setPreviewGuestToken(null) : null} /></>;
   }
 
-  if (!session) return <><BrandStyles /><ConnIssueBanner message={connIssue} /><Login setup={setup} onLogin={setSession} /></>;
+  if (!session) return <><BrandStyles /><ConnIssueBanner message={connIssue} offline={isOffline} reconnected={justReconnected} /><Login setup={setup} onLogin={setSession} /></>;
 
   if (session.role === "driver") {
-    return <><BrandStyles /><ConnIssueBanner message={connIssue} /><DriverApp setup={setup} dyn={dyn} session={session}
+    return <><BrandStyles /><ConnIssueBanner message={connIssue} offline={isOffline} reconnected={justReconnected} /><DriverApp setup={setup} dyn={dyn} session={session}
       updateDyn={updateDyn} onLogout={() => { unsubscribePush(session.driverId, "driverState", updateDyn); setSession(null); }} /></>;
   }
   if (session.role === "stage") {
-    return <><BrandStyles /><ConnIssueBanner message={connIssue} /><StageApp setup={setup} dyn={dyn}
+    return <><BrandStyles /><ConnIssueBanner message={connIssue} offline={isOffline} reconnected={justReconnected} /><StageApp setup={setup} dyn={dyn}
       updateDyn={updateDyn} onLogout={() => setSession(null)} /></>;
   }
   if (useMobileView) {
-    return <><BrandStyles /><ConnIssueBanner message={connIssue} /><MobileDispatcherView setup={setup} dyn={dyn} session={session}
+    return <><BrandStyles /><ConnIssueBanner message={connIssue} offline={isOffline} reconnected={justReconnected} /><MobileDispatcherView setup={setup} dyn={dyn} session={session}
       updateDyn={updateDyn} onLogout={() => { unsubscribePush(session.dispatcherId, "dispatcherState", updateDyn); setSession(null); }}
       onSwitchToDesktop={() => setViewMode("desktop")} /></>;
   }
   return <>
     <BrandStyles />
-    <ConnIssueBanner message={connIssue} />
+    <ConnIssueBanner message={connIssue} offline={isOffline} reconnected={justReconnected} />
     <Dashboard setup={setup} dyn={dyn} session={session}
       updateDyn={updateDyn} updateSetup={updateSetup} onLogout={() => { unsubscribePush(session.dispatcherId, "dispatcherState", updateDyn); setSession(null); }}
       onPreviewGuest={setPreviewGuestToken} onUndo={undo} undoCount={undoCount}
@@ -1133,12 +1172,30 @@ function LoadErrorScreen({ message, onRetry }) {
 // zeigt nur an, dass der letzte Datenabgleich nicht geklappt hat. Rein
 // informativ, keine Aktion/kein Button, greift also auch beim Stage Manager
 // nicht in dessen Ablauf ein.
-function ConnIssueBanner({ message }) {
-  if (!message) return null;
+function ConnIssueBanner({ message, offline, reconnected }) {
+  // Slice 5: Priorität offline (sicherstes Signal) vor Abgleichfehler vor
+  // "wieder verbunden". Bewusst KEIN roher Fehlertext mehr (message-Inhalt wird
+  // nicht angezeigt, nur als truthy-Flag genutzt) — konsistent mit Slice 6.
+  let cls, text, Icon;
+  if (offline) {
+    cls = "bg-amber-900/90 text-amber-100";
+    Icon = WifiOff;
+    text = "Offline. Änderungen werden gerade nicht gespeichert, sobald die Verbindung zurück ist, geht es automatisch weiter.";
+  } else if (message) {
+    cls = "bg-red-900/90 text-red-100";
+    Icon = AlertTriangle;
+    text = "Letzter Datenabgleich fehlgeschlagen, es wird der zuletzt bekannte Stand gezeigt. Neuer Versuch läuft automatisch.";
+  } else if (reconnected) {
+    cls = "bg-emerald-900/90 text-emerald-100";
+    Icon = Wifi;
+    text = "Wieder verbunden.";
+  } else {
+    return null;
+  }
   return (
-    <div className="fixed top-0 inset-x-0 z-[60] bg-red-900/90 text-red-100 text-xs px-3 py-1.5 flex items-center justify-center gap-2 font-mono">
-      <AlertTriangle className="w-3.5 h-3.5 flex-shrink-0" />
-      <span>Letzter Datenabgleich fehlgeschlagen: {message}</span>
+    <div className={`fixed top-0 inset-x-0 z-[60] ${cls} text-xs px-3 py-1.5 flex items-center justify-center gap-2 font-mono`}>
+      <Icon className="w-3.5 h-3.5 flex-shrink-0" />
+      <span>{text}</span>
     </div>
   );
 }
