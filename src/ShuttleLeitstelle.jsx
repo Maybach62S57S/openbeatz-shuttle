@@ -7141,7 +7141,20 @@ function SettingsTab({ setup, dyn, day, updateSetup, updateDyn, onPreviewGuest }
       seen.add(sig); return true;
     });
     const matched = rides.filter((r) => r.assignedDriverId).length;
-    setImp({ rides, errors, dupExisting, dupInFile, matched, total: rows.length });
+    // Slice 3: weiche Import-Warnungen (warnen, NICHT blockieren). Diese Fahrten
+    // werden trotzdem importiert, aber der Nutzer sieht sie in der Zusammenfassung,
+    // statt dass sie still durchrutschen. Datum/Uhrzeit sind bereits harte Pflicht
+    // (parseRow -> errors[]); hier nur die weichen Faelle:
+    //  - namenlose Fahrten (djName leer)
+    //  - Datum liegt ausserhalb der eingetragenen Festivaltage (Tippfehler-Verdacht,
+    //    gleiche Regel wie die RideForm-Warnung; nur wenn ueberhaupt Tage hinterlegt sind,
+    //    Vor-/Nachtag bleibt bewusst nur ein Hinweis).
+    const festDates = setup.config.festivalDates || [];
+    const noName = rides.filter((r) => !(r.djName || "").trim()).length;
+    const offDates = festDates.length
+      ? [...new Set(rides.map((r) => r.dayKey).filter((dk) => dk && !festDates.includes(dk)))].sort()
+      : [];
+    setImp({ rides, errors, dupExisting, dupInFile, matched, total: rows.length, noName, offDates });
   };
 
   const onFile = async (e) => {
@@ -7222,6 +7235,15 @@ function SettingsTab({ setup, dyn, day, updateSetup, updateDyn, onPreviewGuest }
             <div className="text-sm text-stone-300 mb-1">{imp.rides.length} neue Fahrten · {[...new Set(imp.rides.map((r) => r.dayKey))].filter(Boolean).length} Tage{imp.matched > 0 ? ` · ${imp.matched} Fahrer zugeordnet` : ""}</div>
             {(imp.dupExisting > 0 || imp.dupInFile > 0) && (
               <div className="text-xs text-orange-400 mb-1">{imp.dupExisting} bereits vorhanden übersprungen{imp.dupInFile > 0 ? `, ${imp.dupInFile} Doppelte in der Datei` : ""}</div>
+            )}
+            {(imp.noName > 0 || (imp.offDates && imp.offDates.length > 0)) && (
+              <div className="text-xs text-amber-300 bg-amber-500/10 border border-amber-500/25 rounded-lg px-2.5 py-1.5 mb-2">
+                <div className="font-medium mb-0.5">Werden importiert, bitte prüfen:</div>
+                {imp.noName > 0 && <div>{imp.noName} Fahrt(en) ohne Namen (Name später ergänzen)</div>}
+                {imp.offDates && imp.offDates.length > 0 && (
+                  <div>{imp.offDates.reduce((n, dk) => n + imp.rides.filter((r) => r.dayKey === dk).length, 0)} Fahrt(en) mit Datum außerhalb der Festivaltage: {imp.offDates.map((dk) => fmtDate(dk)).join(", ")} (Datum prüfen, Vor-/Nachtag ist ok)</div>
+                )}
+              </div>
             )}
             {imp.errors.filter((e) => e.reason).length > 0 && (
               <div className="text-xs text-red-300 bg-red-500/10 border border-red-500/25 rounded-lg px-2.5 py-1.5 mb-2 max-h-28 overflow-y-auto">
