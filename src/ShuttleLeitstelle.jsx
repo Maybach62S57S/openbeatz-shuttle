@@ -3944,6 +3944,19 @@ function MobileDispatcherView({ setup, dyn, session, updateDyn, onLogout, onSwit
     return res;
   };
 
+  // Ein-Tap-Zuteilen (Slice 7): duenner Wrapper vor doAssign, der genau denselben
+  // Slice-4-Guard traegt wie das AssignModal. Bei unzugeteilten Fahrten (Status
+  // "geplant") feuert er faktisch nie, ist aber defensiv identisch zum Modal-Weg.
+  // Bewusst NICHT im geteilten doAssign, sonst wuerde der Guard beim Modal-Weg
+  // doppelt fragen (das Modal hat ihn schon in seinem eigenen doAssign).
+  const assignOneTap = async (r, driverId) => {
+    if (wouldResetLiveStatus(r.status, r.assignedDriverId, driverId)) {
+      const verb = driverId ? "Fahrerwechsel" : "Zuteilung entfernen";
+      if (!window.confirm(`Diese Fahrt läuft schon (Status: ${STATUS_LABEL[r.status] || r.status}).\n\n${verb} setzt sie zurück auf „Geplant“ und verwirft den aktuellen Stand. Trotzdem?`)) return;
+    }
+    return doAssign(r.id, driverId);
+  };
+
   const RideCard = ({ r }) => {
     const drv = setup.drivers.find((d) => d.id === r.assignedDriverId);
     const issue = rideHasOpenIssue(r);
@@ -3962,17 +3975,43 @@ function MobileDispatcherView({ setup, dyn, session, updateDyn, onLogout, onSwit
             {issue && <span className="text-[11px] px-1.5 py-0.5 rounded bg-red-500/10 text-red-300 flex items-center gap-1"><AlertTriangle className="w-3 h-3" />Problem</span>}
           </div>
         )}
-        <div className="flex items-center justify-between mt-2 gap-2">
-          <span className="text-[11px] px-2 py-0.5 rounded bg-stone-800 text-stone-300 shrink-0">{STATUS_LABEL[r.status] || r.status}</span>
-          {drv ? (
+        {drv ? (
+          <div className="flex items-center justify-between mt-2 gap-2">
+            <span className="text-[11px] px-2 py-0.5 rounded bg-stone-800 text-stone-300 shrink-0">{STATUS_LABEL[r.status] || r.status}</span>
             <div className="flex items-center gap-2 min-w-0 ml-auto">
               <span className="text-xs text-stone-300 truncate">{drv.firstName} {drv.lastName[0]}. · {drv.vehicleType === "Van" ? "Van" : "Car"}</span>
               {drv.phone && <a href={`tel:${drv.phone}`} aria-label={`${drv.firstName} anrufen`} className="shrink-0 flex items-center gap-1.5 text-xs bg-emerald-600 hover:bg-emerald-500 text-white px-3 py-2 rounded-lg"><Phone className="w-4 h-4" />Anrufen</a>}
             </div>
-          ) : (
-            <button onClick={() => setAssignRide(r)} className="text-xs bg-orange-600 hover:bg-orange-500 text-white px-3 py-2 rounded-lg shrink-0">Fahrer zuteilen</button>
-          )}
-        </div>
+          </div>
+        ) : (() => {
+          // Ein-Tap-Zuteilen (Slice 7): die zwei besten Fahrer direkt als Chips.
+          // suggestDrivers filtert vorab eligible && !overlap && !hasIssue -> ein Chip
+          // bietet NIE einen harten Konflikt an, schlimmstenfalls "knapp" (enge Zeit),
+          // genau wie die Vorschlags-Buttons im vollen Modal. "mehr..." fuehrt fuer
+          // Konflikte/alle Fahrer/entfernen in das volle AssignModal.
+          const topTwo = suggestDrivers(setup, dyn, r).slice(0, 2);
+          return (
+            <div className="mt-2">
+              <span className="inline-block text-[11px] px-2 py-0.5 rounded bg-stone-800 text-stone-300">{STATUS_LABEL[r.status] || r.status}</span>
+              {topTwo.length > 0 ? (
+                <div className="flex items-stretch gap-1.5 mt-2">
+                  {topTwo.map((x) => (
+                    <button key={x.driver.id} onClick={() => assignOneTap(r, x.driver.id)}
+                      className="flex-1 min-w-0 flex items-center justify-center gap-1.5 text-xs bg-orange-600 hover:bg-orange-500 text-white px-3 py-2 rounded-lg">
+                      <span className="truncate">{x.driver.firstName} {x.driver.lastName[0]}.</span>
+                      <span className="shrink-0 text-[10px] opacity-80">{x.driver.vehicleType === "Van" ? "Van" : "Car"}</span>
+                      {!x.feasible && <span className="shrink-0 text-[9px] bg-white/25 px-1 rounded">knapp</span>}
+                    </button>
+                  ))}
+                  <button onClick={() => setAssignRide(r)} aria-label="Mehr Fahrer und Optionen"
+                    className="shrink-0 text-xs bg-stone-800 hover:bg-stone-700 text-stone-200 px-3 py-2 rounded-lg">mehr…</button>
+                </div>
+              ) : (
+                <button onClick={() => setAssignRide(r)} className="mt-2 w-full text-xs bg-orange-600 hover:bg-orange-500 text-white px-3 py-2 rounded-lg">Fahrer zuteilen</button>
+              )}
+            </div>
+          );
+        })()}
       </div>
     );
   };
