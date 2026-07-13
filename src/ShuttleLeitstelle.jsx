@@ -5,7 +5,7 @@ import {
   ArrowRight, Plus, Settings, Upload, LogOut, Radio, Navigation, AlertTriangle,
   RefreshCw, Search, X, Route, Timer, Gauge, ChevronRight, Play, Flag, Ban,
   MessageSquare, Copy, Check, Moon, LayoutGrid, BarChart3, Siren, History, Link2, Eye, Trash2,
-  Smartphone, Wifi, WifiOff,
+  Smartphone, Wifi, WifiOff, Phone,
 } from "lucide-react";
 
 /* ============================================================================
@@ -3965,12 +3965,12 @@ function MobileDispatcherView({ setup, dyn, session, updateDyn, onLogout, onSwit
         <div className="flex items-center justify-between mt-2 gap-2">
           <span className="text-[11px] px-2 py-0.5 rounded bg-stone-800 text-stone-300 shrink-0">{STATUS_LABEL[r.status] || r.status}</span>
           {drv ? (
-            <span className="text-xs text-stone-300 flex items-center gap-1.5 truncate">
-              <span className="truncate">{drv.firstName} {drv.lastName[0]}. · {drv.vehicleType === "Van" ? "Van" : "Car"}</span>
-              {drv.phone && <a href={`tel:${drv.phone}`} className="text-emerald-400 shrink-0"><Navigation className="w-3.5 h-3.5 rotate-90" /></a>}
-            </span>
+            <div className="flex items-center gap-2 min-w-0 ml-auto">
+              <span className="text-xs text-stone-300 truncate">{drv.firstName} {drv.lastName[0]}. · {drv.vehicleType === "Van" ? "Van" : "Car"}</span>
+              {drv.phone && <a href={`tel:${drv.phone}`} aria-label={`${drv.firstName} anrufen`} className="shrink-0 flex items-center gap-1.5 text-xs bg-emerald-600 hover:bg-emerald-500 text-white px-3 py-2 rounded-lg"><Phone className="w-4 h-4" />Anrufen</a>}
+            </div>
           ) : (
-            <button onClick={() => setAssignRide(r)} className="text-xs bg-orange-600 hover:bg-orange-500 text-white px-2.5 py-1.5 rounded-lg shrink-0">Fahrer zuteilen</button>
+            <button onClick={() => setAssignRide(r)} className="text-xs bg-orange-600 hover:bg-orange-500 text-white px-3 py-2 rounded-lg shrink-0">Fahrer zuteilen</button>
           )}
         </div>
       </div>
@@ -4000,12 +4000,12 @@ function MobileDispatcherView({ setup, dyn, session, updateDyn, onLogout, onSwit
         <span className="text-orange-400 text-[10px] font-mono tracking-[0.15em]">DISPO</span>
         <span className="ml-auto text-stone-500 text-xs font-mono flex items-center gap-1"><Clock className="w-3.5 h-3.5" />{clock}</span>
         {push.status !== "unconfigured" && (
-          <button onClick={push.enable} title={push.status === "active" ? `${PUSH_STATUS_LABEL[push.status]} · antippen zum erneuten Synchronisieren` : PUSH_STATUS_LABEL[push.status]} className="p-1">
+          <button onClick={push.enable} title={push.status === "active" ? `${PUSH_STATUS_LABEL[push.status]} · antippen zum erneuten Synchronisieren` : PUSH_STATUS_LABEL[push.status]} className="flex items-center justify-center w-10 h-10">
             <span className={`w-2 h-2 rounded-full block ${push.status === "active" ? "bg-emerald-400" : push.status === "denied" || push.status === "error" ? "bg-red-400" : "bg-stone-600"}`} />
           </button>
         )}
-        <button onClick={onSwitchToDesktop} title="Zur vollen Desktop-Ansicht wechseln" className="text-stone-500 hover:text-stone-300 p-1"><LayoutGrid className="w-4 h-4" /></button>
-        <button onClick={onLogout} className="text-stone-500 hover:text-stone-300 p-1"><LogOut className="w-4 h-4" /></button>
+        <button onClick={onSwitchToDesktop} title="Zur vollen Desktop-Ansicht wechseln" className="text-stone-500 hover:text-stone-300 flex items-center justify-center w-10 h-10"><LayoutGrid className="w-4 h-4" /></button>
+        <button onClick={onLogout} className="text-stone-500 hover:text-stone-300 flex items-center justify-center w-10 h-10"><LogOut className="w-4 h-4" /></button>
       </header>
 
       {tab === "rides" && (
@@ -4020,13 +4020,13 @@ function MobileDispatcherView({ setup, dyn, session, updateDyn, onLogout, onSwit
           <div className="shrink-0 flex gap-1.5 px-4 py-2.5 overflow-x-auto">
             {days.map((d) => (
               <button key={d.key} onClick={() => setDay(d.key)}
-                className={`shrink-0 text-xs px-2.5 py-1.5 rounded-lg ${day === d.key ? "bg-stone-100 text-stone-950 font-medium" : "bg-stone-900 text-stone-400"}`}>{d.label}</button>
+                className={`shrink-0 text-xs px-3 py-2.5 rounded-lg ${day === d.key ? "bg-stone-100 text-stone-950 font-medium" : "bg-stone-900 text-stone-400"}`}>{d.label}</button>
             ))}
           </div>
           <div className="shrink-0 flex gap-1.5 px-4 pb-2.5 overflow-x-auto">
             {FILTER_CHIPS.map(([k, l, c]) => (
               <button key={k} onClick={() => setFilter(k)}
-                className={`shrink-0 text-xs px-2.5 py-1.5 rounded-full ${filter === k ? "bg-stone-100 text-stone-950 font-medium" : `bg-stone-900 ${c}`}`}>
+                className={`shrink-0 text-xs px-3 py-2.5 rounded-full ${filter === k ? "bg-stone-100 text-stone-950 font-medium" : `bg-stone-900 ${c}`}`}>
                 {l} · {kpi[k]}
               </button>
             ))}
