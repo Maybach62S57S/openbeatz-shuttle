@@ -549,6 +549,75 @@ as $$
     life360_name = excluded.life360_name;
 $$;
 
+-- ---------- Setup + Fahrer ATOMAR in EINER Transaktion (Paket 1, Ziel 1) ----
+-- Bisher lief das Speichern der Leitstellen-Einstellungen (settings-CAS) und
+-- das der Fahrer (drivers-Upsert) in zwei getrennten RPC-Aufrufen nacheinander
+-- (siehe sbSetSetup im Frontend). Klappte der erste und scheiterte der zweite,
+-- blieb ein inkonsistenter Zustand zurück (settings neu, drivers alt). Diese
+-- Funktion macht beides in EINEM Aufruf: eine plpgsql-Funktion läuft in
+-- Postgres automatisch als eine Transaktion, wirft der Fahrer-Teil, wird der
+-- settings-Teil mit zurückgerollt. Entweder beides oder nichts.
+--
+-- Verhalten sonst identisch zu write_setup_if_unchanged: gleicher CAS auf
+-- setup_rev, gleiches Rückgabe-Format. Zusätzlich p_drivers und p_has_drivers:
+--   p_has_drivers = true  -> Fahrer werden mitgeschrieben (auch ein leeres
+--                            Array [] ist gültig, dann werden alle entfernt,
+--                            die nicht mehr im Array stehen -> siehe unten).
+--   p_has_drivers = false -> Fahrer-Tabelle bleibt komplett unangetastet
+--                            (Aufruf ohne Fahrer-Änderung, z. B. nur PIN/Config).
+-- Der Upsert selbst ist Wort für Wort derselbe wie in dispatcher_save_drivers,
+-- damit sich am Fahrer-Speichern nichts ändert. dispatcher_save_drivers und
+-- write_setup_if_unchanged bleiben als eigenständige Funktionen erhalten
+-- (Fallback / kein Feature-Verlust).
+create or replace function write_setup_and_drivers_if_unchanged(
+  p_expected_rev int, p_dispatchers jsonb, p_locations jsonb, p_matrix jsonb,
+  p_zones jsonb, p_config jsonb, p_drivers jsonb default '[]'::jsonb,
+  p_has_drivers boolean default false
+)
+returns table(ok boolean, rev int, dispatchers jsonb, locations jsonb, matrix jsonb, zones jsonb, config jsonb)
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_rows int;
+begin
+  update settings
+  set dispatchers = p_dispatchers, locations = p_locations, matrix = p_matrix,
+      zones = p_zones, config = p_config, setup_rev = p_expected_rev + 1,
+      updated_at = now()
+  where id = 1 and setup_rev = p_expected_rev;
+
+  get diagnostics v_rows = row_count;
+
+  if v_rows > 0 then
+    -- settings-CAS erfolgreich. Nur DANN die Fahrer mitschreiben, und zwar in
+    -- derselben Transaktion: scheitert das (Constraint, Typfehler, ...), wirft
+    -- plpgsql und die settings-Aenderung oben wird automatisch mitzurückgerollt.
+    if p_has_drivers then
+      insert into drivers (id, first_name, last_name, vehicle_type, vehicle_id, seats, active, phone, plate, pin, life360_name)
+      select
+        d->>'id', d->>'first_name', d->>'last_name', d->>'vehicle_type', d->>'vehicle_id',
+        coalesce((d->>'seats')::int, 4), coalesce((d->>'active')::boolean, true),
+        coalesce(d->>'phone', ''), coalesce(d->>'plate', ''), coalesce(d->>'pin', ''), coalesce(d->>'life360_name', '')
+      from jsonb_array_elements(p_drivers) as d
+      on conflict (id) do update set
+        first_name = excluded.first_name, last_name = excluded.last_name,
+        vehicle_type = excluded.vehicle_type, vehicle_id = excluded.vehicle_id,
+        seats = excluded.seats, active = excluded.active,
+        phone = excluded.phone, plate = excluded.plate, pin = excluded.pin,
+        life360_name = excluded.life360_name;
+    end if;
+    return query select true, p_expected_rev + 1, p_dispatchers, p_locations, p_matrix, p_zones, p_config;
+  else
+    -- Rev-Konflikt: nichts geschrieben (weder settings noch drivers), aktuellen
+    -- Serverstand zurückgeben, damit das Frontend seine Aenderung neu anwendet.
+    return query
+      select false, s.setup_rev, s.dispatchers, s.locations, s.matrix, s.zones, s.config
+      from settings s where s.id = 1;
+  end if;
+end $$;
+
 create or replace function dispatcher_list_guest_tokens()
 returns jsonb
 language sql
@@ -583,6 +652,7 @@ grant execute on function guest_confirm_pickup(text, text) to anon, authenticate
 grant execute on function guest_at_pickup(text, text) to anon, authenticated;
 grant execute on function guest_report_issue(text, text, text, text) to anon, authenticated;
 grant execute on function write_setup_if_unchanged(int, jsonb, jsonb, jsonb, jsonb, jsonb) to anon, authenticated;
+grant execute on function write_setup_and_drivers_if_unchanged(int, jsonb, jsonb, jsonb, jsonb, jsonb, jsonb, boolean) to anon, authenticated;
 grant execute on function dispatcher_save_drivers(jsonb) to anon, authenticated;
 grant execute on function dispatcher_list_guest_tokens() to anon, authenticated;
 grant execute on function dispatcher_save_guest_tokens(jsonb) to anon, authenticated;

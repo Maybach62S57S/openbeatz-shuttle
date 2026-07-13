@@ -142,40 +142,52 @@ async function sbGetSetup() {
   };
 }
 // Schreibt settings/drivers nur noch über geprüfte RPCs (siehe
-// supabase-schema.sql, Nachtrag 3), nicht mehr per offenem Tabellenzugriff.
+// supabase-schema.sql), nicht mehr per offenem Tabellenzugriff.
 // baseRev wird für ein atomares Compare-and-Swap in der DB gebraucht:
 // schlägt es fehl (jemand anders hat zwischenzeitlich geschrieben), kommt
 // { ok:false, value: <aktueller Serverstand> } zurück statt zu überschreiben.
-// Nicht mehr parallel (Promise.all): Settings-CAS und Drivers-Save liefen
-// vorher gleichzeitig, sodass Drivers auch dann geschrieben wurden, wenn der
-// Settings-CAS wegen Rev-Konflikt scheiterte — nicht atomar. Jetzt erst
-// Settings-CAS, Ergebnis prüfen, NUR bei echtem Erfolg (row.ok) danach
-// dispatcher_save_drivers. Schlägt die Drivers-RPC ihrerseits fehl, wird das
-// (wie jeder echte Supabase-Fehler) geworfen statt verschluckt.
+// Settings UND Fahrer werden seit Paket 1 in EINER Transaktion geschrieben
+// (write_setup_and_drivers_if_unchanged): entweder beides oder nichts. Vorher
+// waren das zwei getrennte RPC-Aufrufe nacheinander, was bei Fehler im zweiten
+// Schritt einen inkonsistenten Zwischenzustand hinterlassen konnte.
 async function sbSetSetup(val, baseRev) {
   const sb = window.__obfSupabase;
-  const { data, error } = await sb.rpc("write_setup_if_unchanged", {
+  // EIN atomarer Aufruf statt vorher zwei (settings-CAS, dann separat drivers):
+  // write_setup_and_drivers_if_unchanged schreibt beides in derselben
+  // Postgres-Transaktion. Scheitert der Fahrer-Teil, wird der Settings-Teil
+  // automatisch mitzurückgerollt -> kein inkonsistenter Zwischenzustand mehr.
+  // p_has_drivers bildet exakt das bisherige Verhalten ab:
+  //   Array.isArray(val.drivers) -> true (auch [] wird geschrieben, damit sich
+  //     alle Fahrer auf einmal entfernen lassen),
+  //   undefined/null (Aufruf ohne Fahrer-Änderung) -> false, Tabelle
+  //     unangetastet.
+  const hasDrivers = Array.isArray(val.drivers);
+  const { data, error } = await sb.rpc("write_setup_and_drivers_if_unchanged", {
     p_expected_rev: baseRev ?? 0,
     p_dispatchers: val.dispatchers || [],
     p_locations: val.locations || [],
     p_matrix: val.matrix || {},
     p_zones: val.zones || [],
     p_config: val.config || {},
+    p_drivers: hasDrivers ? val.drivers.map(toDbDriver) : [],
+    p_has_drivers: hasDrivers,
   });
   if (error) throw error;
   const row = Array.isArray(data) ? data[0] : data;
   if (!row) return { ok: false, value: null };
-  if (row.ok) {
-    // Auf Array.isArray statt val.drivers.length prüfen: ein bewusst
-    // geleertes Fahrer-Array ([]) muss ebenfalls gespeichert werden, sonst
-    // lassen sich nie alle Fahrer auf einmal löschen. undefined/null
-    // (Aufruf ohne Drivers-Änderung) lässt die Fahrer-Tabelle unangetastet.
-    if (Array.isArray(val.drivers)) {
-      const { error: driversError } = await sb.rpc("dispatcher_save_drivers", { p_drivers: val.drivers.map(toDbDriver) });
-      if (driversError) throw driversError;
-    }
+  // Fahrer nach dem Speichern frisch laden. Fehler hier NICHT verschlucken:
+  // vorher wurde nur "data" destrukturiert, ein Ladefehler (Netzwerk, RLS,
+  // Timeout) fiel dann auf (drivers || []) zurück und hätte eine LEERE
+  // Fahrerliste in den App-State geschrieben, obwohl in der DB alle Fahrer
+  // noch da sind. Der eigentliche Schreibvorgang war zu diesem Zeitpunkt schon
+  // erfolgreich (die kombinierte RPC ist atomar durchgelaufen), nur das
+  // Wieder-Einlesen scheitert. Deshalb werfen wir und lassen den Aufrufer
+  // (updateSetup) das als Fehler behandeln, statt eine falsche leere Liste
+  // anzuzeigen.
+  const { data: drivers, error: driversReloadError } = await sb.from("drivers").select("*");
+  if (driversReloadError) {
+    throw new Error("Fahrer nach dem Speichern nicht neu ladbar: " + driversReloadError.message);
   }
-  const { data: drivers } = await sb.from("drivers").select("*");
   return {
     ok: row.ok,
     value: {
@@ -790,9 +802,15 @@ export default function App() {
     const stack = undoStackRef.current;
     const entry = stack[stack.length - 1];
     if (!entry) return;
-    undoStackRef.current = stack.slice(0, -1);
-    setUndoCount(undoStackRef.current.length);
-    await updateDyn((d) => {
+    // Eintrag NICHT vorab aus dem Stack nehmen: erst speichern, und nur wenn
+    // das wirklich geklappt hat, den Eintrag entfernen. Sonst verschwindet die
+    // Rückgängig-Möglichkeit, obwohl die Rücknahme nie in der DB angekommen ist
+    // (Netzwerkfehler, Schreibkonflikt), und der Nutzer kann es nicht nochmal
+    // versuchen. pushUndoEntry in updateDyn erzeugt für die Rücknahme selbst
+    // keinen neuen Undo-Eintrag, wenn sich an den Fahrten effektiv nichts
+    // ändert; im Normalfall (Rücknahme ändert etwas) legt es bewusst einen
+    // "Redo-artigen" Eintrag an, das war auch vorher schon so.
+    const res = await updateDyn((d) => {
       entry.changed.forEach(({ id, prev }) => {
         const idx = d.rides.findIndex((x) => x.id === id);
         if (prev == null) { if (idx >= 0) d.rides.splice(idx, 1); }
@@ -801,6 +819,17 @@ export default function App() {
       });
       return d;
     });
+    if (res && res.ok) {
+      // Referenz-Vergleich statt Länge: updateDyn kann zwischenzeitlich selbst
+      // einen neuen Eintrag oben aufgelegt haben (die Rücknahme als solche).
+      // Wir entfernen gezielt genau diesen einen Eintrag, den wir gerade
+      // zurückgenommen haben, egal wo er jetzt liegt.
+      undoStackRef.current = undoStackRef.current.filter((e) => e !== entry);
+      setUndoCount(undoStackRef.current.length);
+    } else {
+      console.error("undo: Rücknahme nicht gespeichert, Eintrag bleibt erhalten", res?.error);
+    }
+    return res;
   }, [updateDyn]);
 
   // Gleiche Rückgabe-Form wie updateDyn: { ok, value, error }, nie ungefangen werfen.
@@ -1636,8 +1665,20 @@ function usePushNotifications(id, stateKey, updateDyn, vapidPublicKey) {
       if (perm !== "granted") { setStatus("denied"); return; }
       const reg = await navigator.serviceWorker.register("/sw.js");
       const sub = await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: urlBase64ToUint8Array(vapidPublicKey) });
-      await updateDyn((d) => { d[stateKey] = d[stateKey] || {}; d[stateKey][id] = d[stateKey][id] || {}; d[stateKey][id].pushSubscription = sub.toJSON(); return d; });
-      setStatus("active");
+      // Erst als "aktiv" anzeigen, wenn das Abo WIRKLICH in der DB gelandet ist.
+      // Vorher wurde der Rückgabewert ignoriert: schlug das Speichern fehl (z. B.
+      // wiederholter Schreibkonflikt oder Netzwerkfehler), stand trotzdem
+      // "aktiv" da, obwohl der Server nie ein Abo bekommen hat, an das er pushen
+      // könnte. Bei Fehler: Browser-Abo wieder zurücknehmen, damit kein
+      // verwaistes Abo (das die DB nicht kennt) auf dem Gerät stehen bleibt.
+      const res = await updateDyn((d) => { d[stateKey] = d[stateKey] || {}; d[stateKey][id] = d[stateKey][id] || {}; d[stateKey][id].pushSubscription = sub.toJSON(); return d; });
+      if (res && res.ok) {
+        setStatus("active");
+      } else {
+        await sub.unsubscribe().catch(() => {});
+        console.error("usePushNotifications enable(): Abo nicht gespeichert, zurückgerollt", res?.error);
+        setStatus("error");
+      }
     } catch (e) { console.error("usePushNotifications enable() fehlgeschlagen:", e); setStatus("error"); }
   };
   return { status, enable };
@@ -1662,20 +1703,31 @@ const PUSH_STATUS_LABEL = {
 // unabhängig voneinander (das eine kann klappen, auch wenn das andere
 // fehlschlägt, z. B. kein Netz gerade).
 async function unsubscribePush(id, stateKey, updateDyn) {
-  if (!id) return;
+  if (!id) return { ok: false, error: "keine id" };
+  let browserOk = true;
   try {
     if ("serviceWorker" in navigator) {
       const reg = await navigator.serviceWorker.getRegistration();
       const sub = reg ? await reg.pushManager.getSubscription().catch(() => null) : null;
       if (sub) await sub.unsubscribe().catch(() => {});
     }
-  } catch (e) { console.error("unsubscribePush (Browser-Abo)", e); }
+  } catch (e) { browserOk = false; console.error("unsubscribePush (Browser-Abo)", e); }
+  // Ergebnis des DB-Schreibens jetzt wirklich auswerten statt es zu verwerfen.
+  // Bleibt der DB-Eintrag stehen (Schreibfehler), pusht der Server weiter an ein
+  // Gerät, das gar nicht mehr abonniert ist. Wir können den Fehler hier nicht
+  // sinnvoll "reparieren" (der Nutzer loggt sich gerade aus), aber wir geben ihn
+  // an den Aufrufer zurück, statt still zu tun als wäre alles sauber.
   try {
-    await updateDyn((d) => {
+    const res = await updateDyn((d) => {
       if (d[stateKey]?.[id]) delete d[stateKey][id].pushSubscription;
       return d;
     });
-  } catch (e) { console.error("unsubscribePush (Datenbank)", e); }
+    if (!res || !res.ok) console.error("unsubscribePush (Datenbank): Abo-Eintrag evtl. nicht entfernt", res?.error);
+    return { ok: browserOk && !!(res && res.ok), error: res?.error };
+  } catch (e) {
+    console.error("unsubscribePush (Datenbank)", e);
+    return { ok: false, error: e?.message || "Speicherfehler beim Abmelden" };
+  }
 }
 
 async function triggerPush(driverId, title, body, tag) {
@@ -4334,10 +4386,16 @@ function DriverPhones({ setup, updateSetup }) {
   const [plates, setPlates] = useState(() => Object.fromEntries(setup.drivers.map((d) => [d.id, d.plate || ""])));
   const [pins, setPins] = useState(() => Object.fromEntries(setup.drivers.map((d) => [d.id, d.pin || ""])));
   const [saved, setSaved] = useState(false);
+  const [saveError, setSaveError] = useState("");
   const dirty = setup.drivers.some((d) => (phones[d.id] || "") !== (d.phone || "") || (plates[d.id] || "") !== (d.plate || "") || (pins[d.id] || "") !== (d.pin || ""));
   const save = async () => {
-    await updateSetup((s) => { s.drivers.forEach((d) => { d.phone = (phones[d.id] || "").trim(); d.plate = (plates[d.id] || "").trim(); d.pin = (pins[d.id] || "").trim(); }); return s; });
-    setSaved(true); setTimeout(() => setSaved(false), 1800);
+    setSaveError("");
+    // "gespeichert" nur zeigen, wenn updateSetup wirklich ok meldet. Sonst
+    // sähe der Nutzer eine Erfolgsmeldung, obwohl Telefonnummer/Kennzeichen/PIN
+    // nie in der DB gelandet sind.
+    const res = await updateSetup((s) => { s.drivers.forEach((d) => { d.phone = (phones[d.id] || "").trim(); d.plate = (plates[d.id] || "").trim(); d.pin = (pins[d.id] || "").trim(); }); return s; });
+    if (res && res.ok) { setSaved(true); setTimeout(() => setSaved(false), 1800); }
+    else setSaveError(res?.error || "Speichern fehlgeschlagen, bitte erneut versuchen.");
   };
   return (
     <div>
@@ -4360,6 +4418,7 @@ function DriverPhones({ setup, updateSetup }) {
       <div className="flex items-center gap-2 mt-3">
         <button onClick={save} disabled={!dirty} className="bg-orange-600 hover:bg-orange-500 disabled:opacity-40 text-white text-sm px-3 py-2 rounded-lg">Speichern</button>
         {saved && <span className="text-xs text-emerald-400 flex items-center gap-1"><Check className="w-3.5 h-3.5" />gespeichert</span>}
+        {saveError && <span className="text-xs text-red-400">{saveError}</span>}
       </div>
     </div>
   );
@@ -4370,15 +4429,20 @@ function DispatcherUsers({ setup, updateSetup }) {
   const [names, setNames] = useState(() => Object.fromEntries((setup.dispatchers || []).map((p) => [p.id, p.name])));
   const [pins, setPins] = useState(() => Object.fromEntries((setup.dispatchers || []).map((p) => [p.id, p.pin || ""])));
   const [saved, setSaved] = useState(false);
+  const [saveError, setSaveError] = useState("");
   const dirty = (setup.dispatchers || []).some((p) => (names[p.id] || "") !== p.name || (pins[p.id] || "") !== (p.pin || ""));
   const save = async () => {
-    await updateSetup((s) => { (s.dispatchers || []).forEach((p) => { p.name = (names[p.id] || p.name).trim(); p.pin = (pins[p.id] || "").trim(); }); return s; });
-    setSaved(true); setTimeout(() => setSaved(false), 1800);
+    setSaveError("");
+    const res = await updateSetup((s) => { (s.dispatchers || []).forEach((p) => { p.name = (names[p.id] || p.name).trim(); p.pin = (pins[p.id] || "").trim(); }); return s; });
+    if (res && res.ok) { setSaved(true); setTimeout(() => setSaved(false), 1800); }
+    else setSaveError(res?.error || "Speichern fehlgeschlagen, bitte erneut versuchen.");
   };
   const addOne = async () => {
     const name = window.prompt("Name des neuen Leitstellen-Nutzers?");
     if (!name || !name.trim()) return;
-    await updateSetup((s) => { s.dispatchers = [...(s.dispatchers || []), { id: slug(name.trim()) + "-" + Date.now().toString(36).slice(-3), name: name.trim(), pin: "" }]; return s; });
+    setSaveError("");
+    const res = await updateSetup((s) => { s.dispatchers = [...(s.dispatchers || []), { id: slug(name.trim()) + "-" + Date.now().toString(36).slice(-3), name: name.trim(), pin: "" }]; return s; });
+    if (!(res && res.ok)) setSaveError(res?.error || "Hinzufügen fehlgeschlagen, bitte erneut versuchen.");
   };
   return (
     <div>
@@ -4398,6 +4462,7 @@ function DispatcherUsers({ setup, updateSetup }) {
         <button onClick={save} disabled={!dirty} className="bg-orange-600 hover:bg-orange-500 disabled:opacity-40 text-white text-sm px-3 py-2 rounded-lg">Speichern</button>
         <button onClick={addOne} className="text-sm bg-stone-800 hover:bg-stone-700 text-stone-200 px-3 py-2 rounded-lg flex items-center gap-1.5"><Plus className="w-3.5 h-3.5" />Person hinzufügen</button>
         {saved && <span className="text-xs text-emerald-400 flex items-center gap-1"><Check className="w-3.5 h-3.5" />gespeichert</span>}
+        {saveError && <span className="text-xs text-red-400">{saveError}</span>}
       </div>
     </div>
   );
@@ -4408,10 +4473,13 @@ function AccessPinsSection({ setup, updateSetup }) {
   const [defaultPin, setDefaultPin] = useState(setup.config.defaultPin || "");
   const [stagePin, setStagePin] = useState(setup.config.stagePin || "");
   const [saved, setSaved] = useState(false);
+  const [saveError, setSaveError] = useState("");
   const dirty = defaultPin !== (setup.config.defaultPin || "") || stagePin !== (setup.config.stagePin || "");
   const save = async () => {
-    await updateSetup((s) => { s.config.defaultPin = defaultPin.trim() || PIN; s.config.stagePin = stagePin.trim(); return s; });
-    setSaved(true); setTimeout(() => setSaved(false), 1800);
+    setSaveError("");
+    const res = await updateSetup((s) => { s.config.defaultPin = defaultPin.trim() || PIN; s.config.stagePin = stagePin.trim(); return s; });
+    if (res && res.ok) { setSaved(true); setTimeout(() => setSaved(false), 1800); }
+    else setSaveError(res?.error || "Speichern fehlgeschlagen, bitte erneut versuchen.");
   };
   return (
     <div>
@@ -4428,6 +4496,7 @@ function AccessPinsSection({ setup, updateSetup }) {
       <div className="flex items-center gap-2 mt-3">
         <button onClick={save} disabled={!dirty} className="bg-orange-600 hover:bg-orange-500 disabled:opacity-40 text-white text-sm px-3 py-2 rounded-lg">Speichern</button>
         {saved && <span className="text-xs text-emerald-400 flex items-center gap-1"><Check className="w-3.5 h-3.5" />gespeichert</span>}
+        {saveError && <span className="text-xs text-red-400">{saveError}</span>}
       </div>
     </div>
   );
