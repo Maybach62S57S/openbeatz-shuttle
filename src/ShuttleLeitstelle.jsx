@@ -730,6 +730,7 @@ export default function App() {
             matrix: seedMatrix(), config: { ...seedConfig(), coordinationPhone: "+491701234567" }, // Demo-Nummer, bitte vor dem Einsatz durch die echte ersetzen
             // Fester Demo-Token zum sofortigen Ausprobieren (Einstellungen → Gast-/Artist-Links → Vorschau).
             guestTokens: [{ token: "demo0000timmytrumpet0000000000", djName: "Timmy Trumpet", createdAt: Date.now() }],
+            rev: 0, // setup trägt jetzt auf JEDEM Pfad ein rev (wie der Supabase-Platzhalter oben und der dyn-Seed) -> Rev-Vergleich im Poll (Teil 4) greift lückenlos
           };
           await sset(SETUP_KEY, s);
         }
@@ -814,7 +815,15 @@ export default function App() {
           setDyn((prev) => (prev && prev.rev === merged.rev && locSig === prevSig ? prev : merged));
         }
         const s = await sget(SETUP_KEY);
-        if (s) setSetup((prev) => (JSON.stringify(prev) === JSON.stringify(s) ? prev : s));
+        // Teil 4: setup vergleicht jetzt über rev statt JSON.stringify des kompletten
+        // Setup-Objekts bei jedem 3s-Poll. updateSetup ist im laufenden Betrieb der
+        // EINZIGE Schreiber von SETUP_KEY (die beiden anderen sset(SETUP_KEY,...) laufen
+        // nur einmalig im Initial-Load, bevor der Poll startet) und zählt rev bei jeder
+        // Änderung hoch (Artifact: cur.rev||0 -> +1; Supabase: setup_rev in der
+        // write_setup_and_drivers_if_unchanged-RPC, gemappt in sbGetSetup). Damit gilt
+        // gleiches rev == inhaltlich gleich -> kein teures Stringify mehr nötig.
+        // prev-Null-Guard wie beim dyn-Poll oben.
+        if (s) setSetup((prev) => (prev && prev.rev === s.rev ? prev : s));
         setConnIssue(null);
       } catch (e) {
         console.error("Polling fehlgeschlagen:", e);
