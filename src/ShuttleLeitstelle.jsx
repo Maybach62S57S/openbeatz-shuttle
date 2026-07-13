@@ -754,6 +754,20 @@ export default function App() {
   }, []);
   const useMobileView = viewOverride === "mobile" || (viewOverride === "auto" && isNarrow);
   const setViewMode = (mode) => { setViewOverride(mode); try { localStorage.setItem("obf:viewMode", mode); } catch {} };
+  // UI-Modus (Classic vs. Mission Control Beta): pro GERAET gemerkt (localStorage,
+  // wie obf:viewMode), NICHT in Supabase. Harter Fallback: alles ausser exakt
+  // "mission-control" faellt auf "classic" zurueck — auch ein defekter/unbekannter
+  // gespeicherter Wert. Wird nur im Dispo-Desktop-Zweig ausgewertet (siehe unten),
+  // Handy behaelt Vorrang, Driver/Stage/Guest sind unberuehrt.
+  const [uiMode, setUiMode] = useState(() => {
+    try { return localStorage.getItem("obf:uiMode") === "mission-control" ? "mission-control" : "classic"; }
+    catch { return "classic"; }
+  });
+  const setUiModeSafe = (mode) => {
+    const val = mode === "mission-control" ? "mission-control" : "classic";
+    setUiMode(val);
+    try { localStorage.setItem("obf:uiMode", val); } catch {}
+  };
   const [loading, setLoading] = useState(true);
   // Unterscheidung "noch keine Daten" (loadError=null, ganz normaler erster
   // Start) vs. "echter Ladefehler/Supabase nicht erreichbar" (loadError
@@ -1090,13 +1104,30 @@ export default function App() {
       updateDyn={updateDyn} onLogout={() => { unsubscribePush(session.dispatcherId, "dispatcherState", updateDyn); setSession(null); }}
       onSwitchToDesktop={() => setViewMode("desktop")} /></>;
   }
+  // Mission Control Beta — nur Dispo-Desktop (dieser Zweig wird nach useMobileView
+  // erreicht, Handy behaelt also Vorrang). Slice 1: MissionControl ist ein reiner
+  // Passthrough auf Dashboard mit identischen Props; der sichtbare Unterschied ist
+  // vorerst nur der Umschalt-Button. Bei unbekanntem/defektem uiMode greift der
+  // harte Fallback in setUiModeSafe, hier landet dann "classic" (unten).
+  if (uiMode === "mission-control") {
+    return <>
+      <BrandStyles />
+      <ConnIssueBanner message={connIssue} offline={isOffline} reconnected={justReconnected} />
+      <MissionControl setup={setup} dyn={dyn} session={session}
+        updateDyn={updateDyn} updateSetup={updateSetup} onLogout={() => { unsubscribePush(session.dispatcherId, "dispatcherState", updateDyn); setSession(null); }}
+        onPreviewGuest={setPreviewGuestToken} onUndo={undo} undoCount={undoCount}
+        onSwitchToMobile={() => setViewMode("mobile")}
+        uiMode={uiMode} onSetUiMode={setUiModeSafe} />
+    </>;
+  }
   return <>
     <BrandStyles />
     <ConnIssueBanner message={connIssue} offline={isOffline} reconnected={justReconnected} />
     <Dashboard setup={setup} dyn={dyn} session={session}
       updateDyn={updateDyn} updateSetup={updateSetup} onLogout={() => { unsubscribePush(session.dispatcherId, "dispatcherState", updateDyn); setSession(null); }}
       onPreviewGuest={setPreviewGuestToken} onUndo={undo} undoCount={undoCount}
-      onSwitchToMobile={() => setViewMode("mobile")} />
+      onSwitchToMobile={() => setViewMode("mobile")}
+      uiMode={uiMode} onSetUiMode={setUiModeSafe} />
     {/* Notausstieg: falls die Desktop-Ansicht (durch einen früheren manuellen
         Wechsel) auf einem schmalen Bildschirm feststeckt, ist der normale
         Umschalt-Button im Dashboard-Header eventuell außerhalb des sichtbaren
@@ -3458,7 +3489,7 @@ function ChatPanel({ setup, dyn, day, updateDyn, by, liftOffset }) {
   );
 }
 
-function Dashboard({ setup, dyn, session, updateDyn, updateSetup, onLogout, onPreviewGuest, onUndo, undoCount, onSwitchToMobile }) {
+function Dashboard({ setup, dyn, session, updateDyn, updateSetup, onLogout, onPreviewGuest, onUndo, undoCount, onSwitchToMobile, uiMode, onSetUiMode }) {
   // Wer ist gerade angemeldet — fließt in jede Protokoll-Zeile statt anonym "Leitstelle".
   const me = (setup.dispatchers || []).find((p) => p.id === session?.dispatcherId);
   const meBy = `dispo:${session?.dispatcherId || ""}`;
@@ -3600,6 +3631,18 @@ function Dashboard({ setup, dyn, session, updateDyn, updateSetup, onLogout, onPr
           )}
           {onSwitchToMobile && (
             <button onClick={onSwitchToMobile} title="Zur schlanken Handy-Ansicht wechseln" className="text-stone-500 hover:text-stone-300 p-2"><Smartphone className="w-4 h-4" /></button>
+          )}
+          {/* Mission-Control-Beta-Umschalter: nur sichtbar, wenn onSetUiMode
+              uebergeben wurde. Das ist ausschliesslich im Dispo-Desktop-Zweig der
+              Fall (Login-Rolle "dispo"). Driver/Stage/Guest rendern das Dashboard
+              nie, sehen den Button also grundsaetzlich nicht. */}
+          {onSetUiMode && (
+            <button onClick={() => onSetUiMode(uiMode === "mission-control" ? "classic" : "mission-control")}
+              title={uiMode === "mission-control" ? "Zurueck zur Classic-Oberflaeche" : "Mission Control Beta oeffnen"}
+              className="flex items-center gap-1.5 text-xs px-2.5 py-1.5 rounded-lg border border-stone-700 text-stone-400 hover:text-stone-200 hover:border-stone-500">
+              <Radio className="w-3.5 h-3.5" />{uiMode === "mission-control" ? "Classic" : "Mission Control"}
+              <span className="text-[9px] font-semibold px-1 py-0.5 rounded bg-stone-800 text-stone-400 leading-none">BETA</span>
+            </button>
           )}
           <button onClick={onLogout} className="text-stone-500 hover:text-stone-300 p-2"><LogOut className="w-5 h-5" /></button>
         </div>
@@ -7815,4 +7858,19 @@ function Modal({ title, children, onClose, wide }) {
       </div>
     </div>
   );
+}
+
+/* ------------------------- Mission Control Beta UI ------------------------ */
+// Neuer optionaler UI-Modus neben der Classic-Oberflaeche. Wird ausschliesslich
+// im Dispo-Desktop-Zweig von App gerendert (nach der useMobileView-Pruefung,
+// Handy behaelt Vorrang), gated ueber uiMode === "mission-control".
+//
+// Slice 1 (dieser Stand): reiner PASSTHROUGH auf Dashboard mit identischen Props.
+// Es gibt hier bewusst noch KEINE eigene Glue, KEINE eigene Datenschicht und KEIN
+// eigenes Layout. Damit bleibt Classic zu 100% erhalten und der Umschalter tauscht
+// vorerst nur die Huelle (sichtbar am Umschalt-Button, der ueber onSetUiMode in den
+// Dashboard-Kopf gereicht wird). Eigenes Shell/KPI-Layout und die duplizierte Glue
+// nach Ansatz A folgen in Slice 2/3, ohne Classic anzufassen.
+function MissionControl(props) {
+  return <Dashboard {...props} />;
 }
