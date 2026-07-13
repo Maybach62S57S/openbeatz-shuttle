@@ -1660,6 +1660,14 @@ const STATUS_LABEL = {
   planned: "Geplant", accepted: "Angenommen", enroute_pickup: "Auf Anfahrt",
   onboard: "Gast an Bord", done: "Abgeschlossen", cancelled: "Storniert",
 };
+// Slice 4: spiegelt die Reset-Bedingung im Zuteilungs-Handler wider
+// ((!driverId || changed) && status !== "planned"): true, wenn ein Fahrerwechsel
+// oder -entfernen den laufenden Status still auf "Geplant" zuruecksetzen wuerde.
+// Storniert/geplant loesen keine Rueckfrage aus (dort geht kein Live-Stand verloren).
+function wouldResetLiveStatus(status, currentDriverId, targetDriverId) {
+  if (!status || status === "planned" || status === "cancelled") return false;
+  return (targetDriverId || null) !== (currentDriverId || null);
+}
 // Punkt 1: vollständige Problemtypen. „Notfall" ist kritisch (rot hervorgehoben).
 const ISSUE_TYPES = ["Gast nicht da", "Flug verspätet", "Stau", "falscher Treffpunkt", "mehr Personen als angegeben", "Auto zu klein", "Fahrzeugproblem", "Zufahrt gesperrt", "Notfall", "Sonstiges"];
 const CRITICAL_ISSUES = ["Notfall", "Fahrzeugproblem", "Zufahrt gesperrt"];
@@ -4135,6 +4143,12 @@ function AssignModal({ setup, dyn, ride, onClose, onAssign }) {
   // Meldung statt das Modal kommentarlos zu schliessen (Parent schliesst nur bei ok).
   const doAssign = async (driverId) => {
     if (assigning) return;
+    // Slice 4: Rueckfrage, wenn Wechsel/Entfernen den Live-Status einer schon
+    // laufenden Fahrt still auf "Geplant" zuruecksetzen wuerde (destruktiv).
+    if (wouldResetLiveStatus(ride.status, ride.assignedDriverId, driverId)) {
+      const verb = driverId ? "Fahrerwechsel" : "Zuteilung entfernen";
+      if (!window.confirm(`Diese Fahrt läuft schon (Status: ${STATUS_LABEL[ride.status] || ride.status}).\n\n${verb} setzt sie zurück auf „Geplant“ und verwirft den aktuellen Stand. Trotzdem?`)) return;
+    }
     setAssignErr("");
     setAssigning(true);
     try {
