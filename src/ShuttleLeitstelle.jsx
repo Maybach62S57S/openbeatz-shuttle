@@ -3635,14 +3635,25 @@ function Dashboard({ setup, dyn, session, updateDyn, updateSetup, onLogout, onPr
           {/* Mission-Control-Beta-Umschalter: nur sichtbar, wenn onSetUiMode
               uebergeben wurde. Das ist ausschliesslich im Dispo-Desktop-Zweig der
               Fall (Login-Rolle "dispo"). Driver/Stage/Guest rendern das Dashboard
-              nie, sehen den Button also grundsaetzlich nicht. */}
+              nie, sehen den Button also grundsaetzlich nicht. Zwei-Segment-
+              Umschalter (Classic / Mission Control Beta), aktive Option gefuellt.
+              Bewusst nur zwei Optionen, kein drittes Theme. */}
           {onSetUiMode && (
-            <button onClick={() => onSetUiMode(uiMode === "mission-control" ? "classic" : "mission-control")}
-              title={uiMode === "mission-control" ? "Zurueck zur Classic-Oberflaeche" : "Mission Control Beta oeffnen"}
-              className="flex items-center gap-1.5 text-xs px-2.5 py-1.5 rounded-lg border border-stone-700 text-stone-400 hover:text-stone-200 hover:border-stone-500">
-              <Radio className="w-3.5 h-3.5" />{uiMode === "mission-control" ? "Classic" : "Mission Control"}
-              <span className="text-[9px] font-semibold px-1 py-0.5 rounded bg-stone-800 text-stone-400 leading-none">BETA</span>
-            </button>
+            <div className="flex items-center gap-1.5">
+              <span className="hidden md:inline text-[11px] uppercase tracking-wide text-stone-500">Oberfläche</span>
+              <div className="inline-flex items-center rounded-lg border border-stone-700 p-0.5 bg-stone-900/60">
+                <button onClick={() => onSetUiMode("classic")}
+                  title="Classic-Oberfläche"
+                  className={`text-xs px-2.5 py-1 rounded-md transition-colors ${uiMode !== "mission-control" ? "bg-stone-800 text-stone-100" : "text-stone-400 hover:text-stone-200"}`}>
+                  Classic
+                </button>
+                <button onClick={() => onSetUiMode("mission-control")}
+                  title="Mission Control Beta öffnen"
+                  className={`flex items-center gap-1.5 text-xs px-2.5 py-1 rounded-md transition-colors ${uiMode === "mission-control" ? "bg-stone-800 text-stone-100" : "text-stone-400 hover:text-stone-200"}`}>
+                  <Radio className="w-3.5 h-3.5" />Mission Control Beta
+                </button>
+              </div>
+            </div>
           )}
           <button onClick={onLogout} className="text-stone-500 hover:text-stone-300 p-2"><LogOut className="w-5 h-5" /></button>
         </div>
