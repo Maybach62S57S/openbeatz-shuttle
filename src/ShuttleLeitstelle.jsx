@@ -6957,6 +6957,7 @@ function SettingsTab({ setup, dyn, day, updateSetup, updateDyn, onPreviewGuest }
   const [sheet, setSheet] = useState("");
   const [imp, setImp] = useState(null);
   const [matchDrivers, setMatchDrivers] = useState(true);
+  const [importing, setImporting] = useState(false); // Doppelklick-/Mehrfachimport-Schutz
 
   // Punkt 14: robustere Signatur – zusätzlich Flug, Passagiere, Treffpunkt (oder Zeilen-ID)
   const rideSig = (r) => r.srcId ? `src:${r.srcId}` :
@@ -6999,21 +7000,30 @@ function SettingsTab({ setup, dyn, day, updateSetup, updateDyn, onPreviewGuest }
   const onSheet = (name) => { setSheet(name); if (wb) parseSheet(wb, name); };
 
   const doImport = async () => {
-    const list = imp.rides;
-    const dates = [...new Set(list.map((r) => r.dayKey))].filter(Boolean).sort();
-    await updateSetup((s) => {
-      s.config.festivalDates = [...new Set([...(s.config.festivalDates || []), ...dates])].sort();
-      return s;
-    });
-    await updateDyn((d) => {
-      list.forEach((r, i) => {
-        const nr = { id: "r" + Date.now() + i + Math.random().toString(36).slice(2, 6), ...r };
-        if (!nr.statusHistory) setRideStatus(nr, "planned", "import");
-        d.rides.push(nr);
+    // Doppelklick-/Mehrfachimport-Schutz: bricht ab, wenn schon ein Import läuft,
+    // sonst wird bei schnellem Doppelklick die komplette Liste zweimal angelegt
+    // (IDs unterscheiden sich, die Dedup-Prüfung greift dann nicht).
+    if (importing || !imp || imp.rides.length === 0) return;
+    setImporting(true);
+    try {
+      const list = imp.rides;
+      const dates = [...new Set(list.map((r) => r.dayKey))].filter(Boolean).sort();
+      await updateSetup((s) => {
+        s.config.festivalDates = [...new Set([...(s.config.festivalDates || []), ...dates])].sort();
+        return s;
       });
-      return d;
-    });
-    setImp(null); setWb(null);
+      await updateDyn((d) => {
+        list.forEach((r, i) => {
+          const nr = { id: "r" + Date.now() + i + Math.random().toString(36).slice(2, 6), ...r };
+          if (!nr.statusHistory) setRideStatus(nr, "planned", "import");
+          d.rides.push(nr);
+        });
+        return d;
+      });
+      setImp(null); setWb(null);
+    } finally {
+      setImporting(false);
+    }
   };
 
   const matrixCell = (a, b) => {
@@ -7066,9 +7076,9 @@ function SettingsTab({ setup, dyn, day, updateSetup, updateDyn, onPreviewGuest }
               {imp.rides.length > 8 && <div>… +{imp.rides.length - 8} weitere</div>}
             </div>
             <div className="flex gap-2">
-              <button onClick={doImport} disabled={imp.rides.length === 0}
-                className="bg-orange-600 hover:bg-orange-500 disabled:opacity-40 text-white text-sm px-3 py-2 rounded-lg">{imp.rides.length} importieren</button>
-              <button onClick={() => { setImp(null); setWb(null); }} className="text-stone-400 text-sm px-3 py-2">Verwerfen</button>
+              <button onClick={doImport} disabled={imp.rides.length === 0 || importing}
+                className="bg-orange-600 hover:bg-orange-500 disabled:opacity-40 text-white text-sm px-3 py-2 rounded-lg">{importing ? "Importiere…" : `${imp.rides.length} importieren`}</button>
+              <button onClick={() => { setImp(null); setWb(null); }} disabled={importing} className="text-stone-400 disabled:opacity-40 text-sm px-3 py-2">Verwerfen</button>
             </div>
           </div>
         )}
