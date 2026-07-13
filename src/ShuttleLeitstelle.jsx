@@ -4372,6 +4372,10 @@ function RideForm({ setup, ride, onClose, onSave, onDelete }) {
   // Formular darf bei einem Schreibfehler nicht kommentarlos schliessen.
   const doDelete = async () => {
     if (!onDelete || saving || deleting) return;
+    // Slice 4: Rueckfrage vor dem Stornieren (destruktiv, ein Fehlklick storniert
+    // sonst eine Fahrt). Identifikation ueber die gespeicherten Werte der Fahrt.
+    const who = (ride.djName || "").trim() || "diese Fahrt";
+    if (!window.confirm(`Fahrt „${who}“${ride.time ? ` um ${ride.time}` : ""} wirklich stornieren?`)) return;
     setSaveErr("");
     setDeleting(true);
     try {
