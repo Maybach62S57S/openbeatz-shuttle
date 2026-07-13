@@ -955,7 +955,10 @@ export default function App() {
       return { ok: false, value: last, error: "Mehrfacher Schreibkonflikt, bitte erneut versuchen." };
     } catch (e) {
       console.error("updateDyn: Speicherfehler", e);
-      return { ok: false, value: null, error: e?.message || "Unbekannter Speicherfehler" };
+      // Slice 6: nie rohen Fehlertext nach oben geben. friendlyError liefert bei
+      // Netzwerk-/Offline-Fehlern eine klare Meldung, sonst null -> die Aufrufstelle
+      // zeigt dann ihren eigenen Kontext-Fallback (res.error || "...").
+      return { ok: false, value: null, error: friendlyError(e?.message, null) };
     }
   }, [pushUndoEntry]);
 
@@ -1019,7 +1022,8 @@ export default function App() {
       return { ok: false, value: last, error: "Mehrfacher Schreibkonflikt, bitte erneut versuchen." };
     } catch (e) {
       console.error("updateSetup: Speicherfehler", e);
-      return { ok: false, value: null, error: e?.message || "Unbekannter Speicherfehler" };
+      // Slice 6: wie updateDyn, nie roher Fehlertext -> friendlyError oder null.
+      return { ok: false, value: null, error: friendlyError(e?.message, null) };
     }
   }, [setup]);
 
@@ -4166,7 +4170,7 @@ function AssignModal({ setup, dyn, ride, onClose, onAssign }) {
     try {
       const res = await onAssign(driverId);
       if (res && res.ok === false && !res.cancelled) {
-        setAssignErr(friendlyError(res.error, "Die Zuteilung konnte nicht gespeichert werden. Bitte Verbindung prüfen und erneut versuchen."));
+        setAssignErr(res.error || "Die Zuteilung konnte nicht gespeichert werden. Bitte Verbindung prüfen und erneut versuchen.");
       }
     } catch (e) {
       console.error("AssignModal.doAssign", e);
@@ -4384,7 +4388,7 @@ function RideForm({ setup, ride, onClose, onSave, onDelete }) {
       });
       // cancelled = Nutzer hat den Konflikt-Dialog bewusst abgebrochen -> keine Fehlermeldung.
       if (res && res.ok === false && !res.cancelled) {
-        setSaveErr(friendlyError(res.error, "Die Fahrt konnte nicht gespeichert werden. Bitte Verbindung prüfen und erneut versuchen."));
+        setSaveErr(res.error || "Die Fahrt konnte nicht gespeichert werden. Bitte Verbindung prüfen und erneut versuchen.");
       }
     } catch (e) {
       console.error("RideForm.save", e);
@@ -4407,7 +4411,7 @@ function RideForm({ setup, ride, onClose, onSave, onDelete }) {
     try {
       const res = await onDelete();
       if (res && res.ok === false && !res.cancelled) {
-        setSaveErr(friendlyError(res.error, "Die Fahrt konnte nicht storniert werden. Bitte erneut versuchen."));
+        setSaveErr(res.error || "Die Fahrt konnte nicht storniert werden. Bitte erneut versuchen.");
       }
     } catch (e) {
       console.error("RideForm.delete", e);
