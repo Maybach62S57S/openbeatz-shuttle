@@ -4303,6 +4303,20 @@ function RideForm({ setup, ride, onClose, onSave, onDelete }) {
   const pax = Number(f.passengerCount) || 1;
   const tooBig = pax > 7; // größer als jede V-Klasse
 
+  // Slice 3: weiche Eingabe-Warnungen (warnen, NICHT blockieren) fuer Fehler,
+  // die nie gewollt sind und heute kommentarlos durchgehen. Speichern bleibt
+  // immer moeglich, das sind Hinweise wie tooBig oben, keine Sperre.
+  const fromCustom = f.fromId === "__custom";
+  const toCustom = f.toId === "__custom";
+  const sameLoc = !fromCustom && f.fromId === f.toId; // gleicher hinterlegter Ort als Start und Ziel
+  const bothCustomSame = fromCustom && toCustom && f.fromCustom.trim() && f.fromCustom.trim().toLowerCase() === f.toCustom.trim().toLowerCase();
+  const fromCustomEmpty = fromCustom && !f.fromCustom.trim();
+  const toCustomEmpty = toCustom && !f.toCustom.trim();
+  const inputWarnings = [];
+  if (sameLoc || bothCustomSame) inputWarnings.push("Start und Ziel sind identisch. Ist das so gewollt?");
+  if (fromCustomEmpty) inputWarnings.push("Für „Von“ ist „Anderer Ort“ gewählt, aber kein Ort eingetragen.");
+  if (toCustomEmpty) inputWarnings.push("Für „Nach“ ist „Anderer Ort“ gewählt, aber kein Ort eingetragen.");
+
   const save = async () => {
     // Doppelklick-Schutz: laeuft schon ein Speicher-/Stornier-Vorgang, nichts tun,
     // sonst wuerde eine neue Fahrt bei schnellem Doppelklick zweimal angelegt.
@@ -4452,6 +4466,10 @@ function RideForm({ setup, ride, onClose, onSave, onDelete }) {
       {tooBig && (
         <div className="mt-3 text-xs text-orange-300 flex items-center gap-2"><AlertTriangle className="w-3.5 h-3.5" />{pax} Personen passen in kein einzelnes Fahrzeug (V-Klasse max. 7) – ggf. auf zwei Fahrten aufteilen.</div>
       )}
+
+      {inputWarnings.map((w, i) => (
+        <div key={i} className="mt-3 text-xs text-orange-300 flex items-center gap-2"><AlertTriangle className="w-3.5 h-3.5 shrink-0" />{w}</div>
+      ))}
 
       <div className="mt-3">
         {durKnown ? (
