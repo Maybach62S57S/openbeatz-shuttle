@@ -1668,6 +1668,18 @@ function wouldResetLiveStatus(status, currentDriverId, targetDriverId) {
   if (!status || status === "planned" || status === "cancelled") return false;
   return (targetDriverId || null) !== (currentDriverId || null);
 }
+// Slice 6: rohe technische Fehlertexte aus der Datenschicht in eine klare Meldung
+// uebersetzen. raw = roher Fehler, fallback = die schon formulierte, verstaendliche
+// Standardmeldung des Aufrufers. Konservativ: nur bekannte Netzwerk-/Offline-Fehler
+// (der reale Festival-Fall) bekommen eine eigene Meldung, alles andere faellt auf die
+// verstaendliche Standardmeldung zurueck -> die Leitstelle sieht nie rohen Text.
+function friendlyError(raw, fallback) {
+  const s = String(raw || "").trim();
+  if (!s) return fallback;
+  if (/network|failed to fetch|fetch|timeout|timed out|offline|econn|net::|networkerror|load failed/i.test(s))
+    return "Keine Verbindung zum Server. Die Änderung wurde nicht gespeichert, bitte gleich nochmal versuchen.";
+  return fallback;
+}
 // Punkt 1: vollständige Problemtypen. „Notfall" ist kritisch (rot hervorgehoben).
 const ISSUE_TYPES = ["Gast nicht da", "Flug verspätet", "Stau", "falscher Treffpunkt", "mehr Personen als angegeben", "Auto zu klein", "Fahrzeugproblem", "Zufahrt gesperrt", "Notfall", "Sonstiges"];
 const CRITICAL_ISSUES = ["Notfall", "Fahrzeugproblem", "Zufahrt gesperrt"];
@@ -4154,7 +4166,7 @@ function AssignModal({ setup, dyn, ride, onClose, onAssign }) {
     try {
       const res = await onAssign(driverId);
       if (res && res.ok === false && !res.cancelled) {
-        setAssignErr(res.error || "Die Zuteilung konnte nicht gespeichert werden. Bitte Verbindung prüfen und erneut versuchen.");
+        setAssignErr(friendlyError(res.error, "Die Zuteilung konnte nicht gespeichert werden. Bitte Verbindung prüfen und erneut versuchen."));
       }
     } catch (e) {
       console.error("AssignModal.doAssign", e);
@@ -4372,7 +4384,7 @@ function RideForm({ setup, ride, onClose, onSave, onDelete }) {
       });
       // cancelled = Nutzer hat den Konflikt-Dialog bewusst abgebrochen -> keine Fehlermeldung.
       if (res && res.ok === false && !res.cancelled) {
-        setSaveErr(res.error || "Die Fahrt konnte nicht gespeichert werden. Bitte Verbindung prüfen und erneut versuchen.");
+        setSaveErr(friendlyError(res.error, "Die Fahrt konnte nicht gespeichert werden. Bitte Verbindung prüfen und erneut versuchen."));
       }
     } catch (e) {
       console.error("RideForm.save", e);
@@ -4395,7 +4407,7 @@ function RideForm({ setup, ride, onClose, onSave, onDelete }) {
     try {
       const res = await onDelete();
       if (res && res.ok === false && !res.cancelled) {
-        setSaveErr(res.error || "Die Fahrt konnte nicht storniert werden. Bitte erneut versuchen.");
+        setSaveErr(friendlyError(res.error, "Die Fahrt konnte nicht storniert werden. Bitte erneut versuchen."));
       }
     } catch (e) {
       console.error("RideForm.delete", e);
