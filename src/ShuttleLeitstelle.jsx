@@ -246,6 +246,71 @@ async function sbSetDyn(val, baseRev) {
   return { ok: row.ok, value: { rides: row.rides || [], driverState: row.driver_state || {}, dispatcherState: row.dispatcher_state || {}, artistPresence: row.artist_presence || {}, messages: row.messages || [], rev: row.rev } };
 }
 
+/* -------- Fahrer-GPS in eigener Tabelle (Paket 2, Teil 3) ----------------- *
+ * Eigener Schreib-/Lesepfad, der dyn_rev NICHT anfasst — damit lösen GPS-Pings
+ * keine Revisionskonflikte mit gleichzeitigen Dispo-Aktionen mehr aus (siehe
+ * Nachtrag 7 in supabase-schema.sql). Nur der Supabase-Pfad nutzt das; im
+ * Chat-Artifact (window.storage) bleibt GPS wie bisher in
+ * dyn_data.driverState[id].gps (kein separater Speicher dort verfügbar).       */
+// Schreiben: ein Upsert pro Fahrer über die dedizierte RPC. Wirft bei echtem
+// Fehler (wie die anderen sb*-Helfer). Der Aufrufer (useDriverLocationSharing)
+// behandelt das best-effort — ein fehlgeschlagener Ping wird beim nächsten
+// (spätestens in 45s) erneut versucht, ohne die App zu stören.
+async function sbWriteDriverLocation(driverId, fix) {
+  const sb = window.__obfSupabase;
+  const { error } = await sb.rpc("upsert_driver_location", {
+    p_driver_id: driverId,
+    p_lat: fix.lat,
+    p_lng: fix.lng,
+    p_accuracy: fix.accuracy ?? null,
+    p_heading: fix.heading ?? null,
+    p_speed: fix.speed ?? null,
+  });
+  if (error) throw error;
+}
+// Lesen: alle Fahrer-Positionen als Map { driverId: { lat, lng, accuracy, at } }.
+// updated_at (timestamptz) wird auf epoch-ms `at` normalisiert, damit die Form
+// exakt der bisherigen dyn_data.driverState[id].gps entspricht und die drei
+// Lesestellen unverändert bleiben können. Wirft bei echtem Ladefehler.
+async function sbGetDriverLocations() {
+  const sb = window.__obfSupabase;
+  const { data, error } = await sb.from("driver_locations").select("driver_id, latitude, longitude, accuracy, updated_at");
+  if (error) throw error;
+  const out = {};
+  (data || []).forEach((r) => {
+    out[r.driver_id] = {
+      lat: r.latitude, lng: r.longitude,
+      accuracy: r.accuracy ?? null,
+      at: r.updated_at ? new Date(r.updated_at).getTime() : 0,
+    };
+  });
+  return out;
+}
+// Reine Merge-Logik (unit-testbar, siehe /tmp-Node-Test): fügt die Positionen
+// aus der neuen Tabelle in eine Kopie von driverState[id].gps ein. Pro Fahrer
+// gewinnt die FRISCHERE Quelle (größeres `at`) — so ist die Übergangsphase in
+// beide Richtungen sauber: ein Fahrer auf altem Frontend schreibt weiter nach
+// dyn (bleibt erhalten), einer auf neuem in die Tabelle (wird bevorzugt, sobald
+// aktueller). Fasst nur das gps-Feld an, alles andere in driverState bleibt
+// unverändert. Gibt eine NEUE driverState-Referenz nur zurück, wenn sich real
+// etwas ändert, sonst das Original (spart unnötige Re-Renders).
+function mergeDriverLocations(driverState, locs) {
+  if (!locs || Object.keys(locs).length === 0) return driverState || {};
+  const base = driverState || {};
+  let changed = false;
+  const out = { ...base };
+  for (const id of Object.keys(locs)) {
+    const loc = locs[id];
+    if (!loc || loc.lat == null || loc.lng == null) continue;
+    const cur = base[id] && base[id].gps;
+    // vorhandene dyn-Position gewinnt nur, wenn sie echt frischer ist
+    if (cur && cur.at != null && loc.at != null && cur.at >= loc.at) continue;
+    out[id] = { ...(base[id] || {}), gps: { lat: loc.lat, lng: loc.lng, accuracy: loc.accuracy ?? null, at: loc.at } };
+    changed = true;
+  }
+  return changed ? out : base;
+}
+
 async function sget(key) {
   // WICHTIG: der Supabase-Pfad bewusst NICHT in dieses try/catch einschließen.
   // sbGetSetup/sbGetDyn werfen bei einem echten Ladefehler (Netzwerk, RLS,
@@ -712,6 +777,12 @@ export default function App() {
     })();
   }, [retryTick]);
 
+  // Signatur der zuletzt gemergten Fahrer-Positionen (Paket 2, Teil 3). Fahrer-GPS
+  // liegt im Produktivbetrieb in einer eigenen Tabelle und erhöht dyn_rev NICHT —
+  // ein reiner Positionswechsel würde deshalb über den dyn_rev-Vergleich unten
+  // nicht neu rendern. Diese Signatur (id:at je Fahrer) fängt genau das ab.
+  const lastLocSigRef = useRef(null);
+
   // Polling der dynamischen Daten. Ein einzelner fehlgeschlagener Poll (kurzer
   // Netzwerk-Hänger) darf die laufende Ansicht NICHT wegreißen — es bleibt bei
   // den zuletzt bekannten setup/dyn, nur ein kleines Hinweis-Banner zeigt an,
@@ -722,7 +793,26 @@ export default function App() {
     const t = setInterval(async () => {
       try {
         const d = await sget(DYN_KEY);
-        if (d) setDyn((prev) => (prev && prev.rev === d.rev ? prev : d));
+        // Fahrer-Positionen aus der eigenen Tabelle dazuholen (nur Supabase) und
+        // zentral in driverState[id].gps mergen -> die drei Lesestellen
+        // (estimateDriverPosition, GoogleLiveMap, NoGpsSharingPanel) bleiben
+        // unverändert. Eigenes try/catch: fehlt die Tabelle (Schema noch nicht
+        // nachgezogen) oder hakt der Abruf kurz, ist GPS nur Zusatzinfo — der
+        // restliche Poll (dyn/setup) läuft normal weiter, kein Verbindungs-Banner.
+        let locs = null;
+        if (d && hasSupabase()) {
+          try { locs = await sbGetDriverLocations(); }
+          catch (e) { console.error("driver_locations laden fehlgeschlagen (GPS fällt auf Schätzung zurück):", e?.message || e); }
+        }
+        if (d) {
+          const hasLocs = locs && Object.keys(locs).length > 0;
+          const merged = hasLocs ? { ...d, driverState: mergeDriverLocations(d.driverState, locs) } : d;
+          const locSig = hasLocs ? Object.keys(locs).sort().map((id) => id + ":" + (locs[id].at || 0)).join("|") : lastLocSigRef.current;
+          const prevSig = lastLocSigRef.current;
+          lastLocSigRef.current = locSig;
+          // neu rendern, wenn sich entweder dyn_rev ODER die Positions-Signatur geändert hat
+          setDyn((prev) => (prev && prev.rev === merged.rev && locSig === prevSig ? prev : merged));
+        }
         const s = await sget(SETUP_KEY);
         if (s) setSetup((prev) => (JSON.stringify(prev) === JSON.stringify(s) ? prev : s));
         setConnIssue(null);
@@ -1598,13 +1688,26 @@ function useDriverLocationSharing(driverId, updateDyn, enabled) {
 
     const onPos = (pos) => {
       setStatus("active");
-      const { latitude: lat, longitude: lng, accuracy } = pos.coords;
+      const { latitude: lat, longitude: lng, accuracy, heading, speed } = pos.coords;
       const now = Date.now();
       const last = lastSentRef.current;
       const movedM = last.lat != null ? haversineApproxM(last.lat, last.lng, lat, lng) : Infinity;
       // gedrosselt: nur schreiben bei spürbarer Bewegung ODER wenn der letzte Stand älter als 45s ist
       if (movedM < 15 && now - last.at < 45000) return;
       lastSentRef.current = { at: now, lat, lng };
+      // Produktivbetrieb: eigene driver_locations-Tabelle über eine dedizierte
+      // RPC, die dyn_rev NICHT anfasst (Paket 2, Teil 3). Damit lösen GPS-Pings
+      // keine Revisionskonflikte mit gleichzeitigen Dispo-Aktionen mehr aus.
+      // Best-effort: ein fehlgeschlagener Ping (Netzwerk, oder Schema noch nicht
+      // nachgezogen) wird beim nächsten (spätestens in 45s) erneut versucht und
+      // stört die App nicht. Der "active"-Status bleibt, weil er die GPS-Freigabe
+      // des Handys meint, nicht den DB-Schreibvorgang.
+      if (hasSupabase()) {
+        sbWriteDriverLocation(driverId, { lat, lng, accuracy, heading: heading ?? null, speed: speed ?? null })
+          .catch((e) => console.error("GPS-Upsert fehlgeschlagen (wird beim nächsten Ping erneut versucht):", e?.message || e));
+        return;
+      }
+      // Chat-Artifact (window.storage): wie bisher in dyn_data.driverState[id].gps.
       updateDyn((d) => {
         d.driverState[driverId] = d.driverState[driverId] || {};
         d.driverState[driverId].gps = { lat, lng, accuracy, at: now };

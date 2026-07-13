@@ -754,3 +754,82 @@ drop policy if exists write_guest_tokens on guest_tokens;
 -- automatisch komplett gesperrt (Postgres-Standard: implizites Verweigern).
 -- Kein "using (false)"-Ersatz nötig, das Fehlen der Policy reicht.
 
+
+-- ============================================================================
+-- Nachtrag 7: Fahrer-GPS in eigene Tabelle auslagern (Paket 2, Teil 3)
+--
+-- Problem vorher: jeder GPS-Ping (useDriverLocationSharing im Frontend) lief
+-- über write_dyn_if_unchanged und erhoehte dyn_rev. Bei 20 Fahrern alle ~45s
+-- heisst das: staendig neue Revisionen, die per Compare-and-Swap mit jeder
+-- gleichzeitigen Dispo-Aktion (Zuteilen, Status, Timeline-Drag) kollidieren.
+-- Die Dispo-Schreibvorgaenge mussten dann sinnlos wiederholen.
+--
+-- Loesung: eigene Tabelle driver_locations mit eigenem Schreibpfad
+-- (upsert_driver_location), der dyn_rev NICHT anfasst. GPS ist damit komplett
+-- aus dem dyn_data-Konflikt-Kreislauf raus.
+--
+-- Eine Zeile pro Fahrer (aktuelle Position, kein Verlauf) -> passt zur
+-- Datenschutz-Vorgabe "nur waehrend der Schicht, keine Langzeit-Historie".
+-- Rein additiv, gefahrlos erneut ausfuehrbar. Aendert nichts an bestehenden
+-- Tabellen/RPCs. Solange das neue Frontend noch nicht deployt ist, bleibt die
+-- Tabelle einfach leer und niemand liest/schreibt sie.
+--
+-- Sicherheit: GPS-Koordinaten waren schon vorher per anon-Key lesbar (lagen in
+-- settings.dyn_data, read_settings using(true)). Lesen bleibt daher offen
+-- (select-Policy), Schreiben laeuft nur ueber die SECURITY-DEFINER-RPC unten,
+-- exakt dasselbe Muster wie settings/drivers seit Nachtrag 5. Kein neuer
+-- direkter Schreibzugriff per REST, keine zusaetzliche Exposition gegenueber
+-- dem bisherigen Zustand.
+-- ============================================================================
+create table if not exists driver_locations (
+  driver_id   text primary key references drivers(id) on delete cascade,
+  latitude    double precision not null,
+  longitude   double precision not null,
+  accuracy    double precision,          -- Genauigkeit in Metern (aus pos.coords.accuracy)
+  heading     double precision,          -- Fahrtrichtung 0-360 Grad, falls das Geraet sie liefert (sonst null)
+  speed       double precision,          -- Geschwindigkeit in m/s, falls geliefert (sonst null)
+  updated_at  timestamptz not null default now()
+);
+-- Kein separater Index auf updated_at: der Primary Key auf driver_id indiziert
+-- die Tabelle bereits, und bei ~20 Zeilen bringt jeder weitere Index nichts.
+
+-- Schreiben ausschliesslich ueber diese RPC. Ein einzelner Upsert pro Fahrer,
+-- setzt updated_at serverseitig auf now(). Fasst settings/dyn_rev bewusst NICHT
+-- an -> das ist der ganze Sinn der Uebung. heading/speed sind optional (das
+-- Fahrer-Handy liefert sie nicht immer, dann null).
+create or replace function upsert_driver_location(
+  p_driver_id text,
+  p_lat double precision,
+  p_lng double precision,
+  p_accuracy double precision default null,
+  p_heading double precision default null,
+  p_speed double precision default null
+)
+returns void
+language plpgsql
+security definer
+set search_path = public
+as $$
+begin
+  insert into driver_locations (driver_id, latitude, longitude, accuracy, heading, speed, updated_at)
+  values (p_driver_id, p_lat, p_lng, p_accuracy, p_heading, p_speed, now())
+  on conflict (driver_id) do update set
+    latitude   = excluded.latitude,
+    longitude  = excluded.longitude,
+    accuracy   = excluded.accuracy,
+    heading    = excluded.heading,
+    speed      = excluded.speed,
+    updated_at = now();
+end $$;
+
+grant execute on function upsert_driver_location(text, double precision, double precision, double precision, double precision, double precision) to anon, authenticated;
+
+-- RLS: Lesen offen (Koordinaten waren schon vorher anon-lesbar, siehe Kopf),
+-- direktes Schreiben per REST gesperrt -> laeuft nur ueber upsert_driver_location
+-- (SECURITY DEFINER, umgeht RLS fuer seine eng begrenzte Aufgabe). Kein
+-- insert/update/delete-Policy -> mit aktivierter RLS ist Direkt-Schreiben fuer
+-- anon/authenticated damit automatisch dicht (Postgres-Standard: implizites
+-- Verweigern ohne passende Policy).
+alter table driver_locations enable row level security;
+drop policy if exists read_driver_locations on driver_locations;
+create policy read_driver_locations on driver_locations for select using (true);
