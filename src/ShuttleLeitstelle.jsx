@@ -3390,6 +3390,21 @@ function Dashboard({ setup, dyn, session, updateDyn, updateSetup, onLogout, onPr
   useEffect(() => { const t = setInterval(() => setClock(nowHM()), 20000); return () => clearInterval(t); }, []);
   const [boardRef, boardWidth] = useElementWidth();
 
+  // Geteilter Fehler-Hinweis fuer die Leitstelle. Kleinere Aktionen (Problem-
+  // status, Flug-Korrektur, Rueckfahrt-/Anwesenheits-Flags) feuern updateDyn;
+  // schlaegt das Speichern fehl (Netz/Konflikt), sah es bisher aus wie "hat
+  // nicht reagiert". Jetzt: kurzer roter Hinweis oben. Gleiche Idee wie das
+  // Fahrer-Toast (~Z. 2068), aber ohne Ton/Vibration (Leitstelle sitzt am
+  // Bildschirm) und mit laengerer Standzeit (Fehler soll man mitkriegen).
+  // Wird an die Tabs (Returns/Flight/Emergency) als onErr durchgereicht und
+  // hier direkt von setIssueState genutzt.
+  const [errToasts, setErrToasts] = useState([]);
+  const notifyErr = useCallback((text) => {
+    const id = Date.now() + Math.random();
+    setErrToasts((t) => [{ id, text }, ...t].slice(0, 4));
+    setTimeout(() => setErrToasts((cur) => cur.filter((x) => x.id !== id)), 8000);
+  }, []);
+
   const dayRides = useMemo(() => (dyn.rides || [])
     .filter((r) => r.dayKey === day)
     .sort((a, b) => sortMin(a.time) - sortMin(b.time)), [dyn.rides, day]);
@@ -3426,6 +3441,17 @@ function Dashboard({ setup, dyn, session, updateDyn, updateSetup, onLogout, onPr
 
   return (
     <div className="min-h-screen bg-stone-950 text-stone-100">
+      {/* Fehler-Hinweise (fehlgeschlagenes Speichern kleinerer Aktionen) */}
+      {errToasts.length > 0 && (
+        <div className="fixed left-1/2 -translate-x-1/2 z-50 px-3 space-y-1.5 w-full max-w-md" style={{ top: "max(0.75rem, env(safe-area-inset-top))" }}>
+          {errToasts.map((t) => (
+            <div key={t.id} onClick={() => setErrToasts((cur) => cur.filter((x) => x.id !== t.id))}
+              className="bg-red-600 text-white text-sm px-3.5 py-2.5 rounded-xl shadow-lg flex items-center gap-2 cursor-pointer">
+              <AlertTriangle className="w-4 h-4 shrink-0" /><span className="flex-1">{t.text}</span><X className="w-4 h-4 shrink-0 opacity-70" />
+            </div>
+          ))}
+        </div>
+      )}
       {/* Kopf */}
       <header className="sticky top-0 z-20 bg-stone-950/95 backdrop-blur border-b border-stone-800">
         <div className="max-w-[1400px] 2xl:max-w-[1800px] mx-auto px-5 py-3 flex items-center gap-4">
@@ -3505,11 +3531,14 @@ function Dashboard({ setup, dyn, session, updateDyn, updateSetup, onLogout, onPr
         {(() => {
           const withIssues = (dyn.rides || []).filter((r) => rideHasOpenIssue(r) && r.status !== "cancelled");
           if (withIssues.length === 0) return null;
-          const setIssueState = (rideId, st) => updateDyn((d) => {
-            const rr = d.rides.find((x) => x.id === rideId);
-            if (rr) { (rr.issues || []).filter(issueOpen).forEach((i) => { i.state = st; }); logRide(rr, st === "done" ? "problem_done" : "problem_progress", meBy); }
-            return d;
-          });
+          const setIssueState = async (rideId, st) => {
+            const res = await updateDyn((d) => {
+              const rr = d.rides.find((x) => x.id === rideId);
+              if (rr) { (rr.issues || []).filter(issueOpen).forEach((i) => { i.state = st; }); logRide(rr, st === "done" ? "problem_done" : "problem_progress", meBy); }
+              return d;
+            });
+            if (!res || !res.ok) notifyErr(res?.error || "Problemstatus konnte nicht gespeichert werden, bitte erneut versuchen.");
+          };
           const critical = withIssues.filter((r) => (r.issues || []).some((i) => issueOpen(i) && CRITICAL_ISSUES.includes(i.type)));
           return (
             <div className="mb-4 rounded-xl border border-red-500/40 bg-red-500/10 p-3">
@@ -3652,13 +3681,13 @@ function Dashboard({ setup, dyn, session, updateDyn, updateSetup, onLogout, onPr
           onEdit={(r) => { setDay(r.dayKey); setEditRide(r); }} onAssign={(r) => setAssignRide(r)} />}
         {tab === "timeline" && <TimelinePage setup={setup} dyn={dyn} day={day} updateDyn={updateDyn} by={meBy} onUndo={onUndo}
           onEdit={(r) => { setDay(r.dayKey); setEditRide(r); }} onAssign={(r) => setAssignRide(r)} />}
-        {tab === "returns" && <ReturnsTab setup={setup} dyn={dyn} day={day} updateDyn={updateDyn} by={meBy}
+        {tab === "returns" && <ReturnsTab setup={setup} dyn={dyn} day={day} updateDyn={updateDyn} by={meBy} onErr={notifyErr}
           onAssign={(r) => setAssignRide(r)} onWhatsApp={(r) => setWaRide(r)} onEdit={(r) => { setDay(r.dayKey); setEditRide(r); }}
           onNewReturn={(artistName) => setEditRide({ _new: true, dayKey: day, date: day, djName: artistName, fromId: "festival", toId: "" })} />}
-        {tab === "emergency" && <EmergencyTab setup={setup} dyn={dyn} day={day} updateDyn={updateDyn} by={meBy}
+        {tab === "emergency" && <EmergencyTab setup={setup} dyn={dyn} day={day} updateDyn={updateDyn} by={meBy} onErr={notifyErr}
           onAssign={(r) => setAssignRide(r)} onWhatsApp={(r) => setWaRide(r)} onEdit={(r) => { setDay(r.dayKey); setEditRide(r); }} />}
         {tab === "messages" && <MessagesInbox dyn={dyn} updateDyn={updateDyn} by={meBy} />}
-        {tab === "flights" && <FlightTab setup={setup} dyn={dyn} day={day} updateDyn={updateDyn} by={meBy} onEdit={(r) => { setDay(r.dayKey); setEditRide(r); }} />}
+        {tab === "flights" && <FlightTab setup={setup} dyn={dyn} day={day} updateDyn={updateDyn} by={meBy} onErr={notifyErr} onEdit={(r) => { setDay(r.dayKey); setEditRide(r); }} />}
         {tab === "map" && <MapTab setup={setup} dyn={dyn} day={day} onEdit={(r) => { setDay(r.dayKey); setEditRide(r); }} />}
         {tab === "drivers" && <DriversTab setup={setup} dyn={dyn} day={day} />}
         {tab === "settings" && <SettingsTab setup={setup} dyn={dyn} day={day} updateSetup={updateSetup} updateDyn={updateDyn} onPreviewGuest={onPreviewGuest} />}
@@ -5225,7 +5254,7 @@ function PresenceManager({ presence, manualOnly, onSetManual, onAdd, onSetNoRetu
   );
 }
 
-function ReturnsTab({ setup, dyn, day, updateDyn, by, onAssign, onWhatsApp, onEdit, onNewReturn }) {
+function ReturnsTab({ setup, dyn, day, updateDyn, by, onErr, onAssign, onWhatsApp, onEdit, onNewReturn }) {
   const [sort, setSort] = useState("time"); // time | dest
   const ln = (id, c) => setup.locations.find((l) => l.id === id)?.short || c || "—";
   const destName = (r) => ln(r.toId, r.toCustom);
@@ -5247,23 +5276,29 @@ function ReturnsTab({ setup, dyn, day, updateDyn, by, onAssign, onWhatsApp, onEd
   // Setzt/entfernt das "braucht keine Rückfahrt"-Flag pro Artist-Name.
   // Speichert über dieselbe geprüfte updateDyn-Kette wie alles andere (mit
   // by/Zeitstempel), kein separater Schreibweg.
-  const setNoReturn = (name, value) => updateDyn((d) => {
-    d.artistPresence = d.artistPresence || {};
-    const cur = d.artistPresence[name] || {};
-    d.artistPresence[name] = { ...cur, noReturn: value, by, at: Date.now() };
-    return d;
-  });
+  const setNoReturn = async (name, value) => {
+    const res = await updateDyn((d) => {
+      d.artistPresence = d.artistPresence || {};
+      const cur = d.artistPresence[name] || {};
+      d.artistPresence[name] = { ...cur, noReturn: value, by, at: Date.now() };
+      return d;
+    });
+    if ((!res || !res.ok) && onErr) onErr(res?.error || "Rueckfahrt-Status konnte nicht gespeichert werden, bitte erneut versuchen.");
+  };
 
   // Manuelle Präsenz-Übersteuerung (Schritt 2): "here" = ist da (auch ohne
   // erkannte Ankunft), "gone" = ist weg (auch ohne erledigte Rückfahrt),
   // null = zurück zur automatischen Erkennung aus den Fahrten.
-  const setManualPresence = (name, value) => updateDyn((d) => {
-    d.artistPresence = d.artistPresence || {};
-    const cur = d.artistPresence[name] || {};
-    if (value === null) { const { manual, ...rest } = cur; d.artistPresence[name] = { ...rest, by, at: Date.now() }; }
-    else d.artistPresence[name] = { ...cur, manual: value, by, at: Date.now() };
-    return d;
-  });
+  const setManualPresence = async (name, value) => {
+    const res = await updateDyn((d) => {
+      d.artistPresence = d.artistPresence || {};
+      const cur = d.artistPresence[name] || {};
+      if (value === null) { const { manual, ...rest } = cur; d.artistPresence[name] = { ...rest, by, at: Date.now() }; }
+      else d.artistPresence[name] = { ...cur, manual: value, by, at: Date.now() };
+      return d;
+    });
+    if ((!res || !res.ok) && onErr) onErr(res?.error || "Anwesenheit konnte nicht gespeichert werden, bitte erneut versuchen.");
+  };
 
   // Manuell jemanden als "vor Ort" hinzufügen, den die Automatik nicht kennt
   // (kein Fahrten-Eintrag mit diesem Namen). Legt einen artistPresence-Eintrag
@@ -5469,13 +5504,16 @@ function ReturnsTab({ setup, dyn, day, updateDyn, by, onAssign, onWhatsApp, onEd
 }
 
 /* -------------------------- Flughafen-Modul (Punkt 4/7) ------------------- */
-function FlightTab({ setup, dyn, day, updateDyn, by, onEdit }) {
+function FlightTab({ setup, dyn, day, updateDyn, by, onErr, onEdit }) {
   const [busy, setBusy] = useState(null); // rideId | "all"
   const [note, setNote] = useState(null);
   const rides = (dyn.rides || [])
     .filter((r) => r.dayKey === day && r.status !== "cancelled" && (r.fromId === "airport" || r.flightNo))
     .sort((a, b) => sortMin(a.scheduledArrival || a.time) - sortMin(b.scheduledArrival || b.time));
 
+  // Gibt das Schreibergebnis ({ok,...}) zurueck, damit updateOne/updateAll die
+  // "aktualisiert"-Notiz nur bei echtem Erfolg zeigen bzw. Fehlschlaege zaehlen
+  // koennen (statt still "aktualisiert" zu melden, obwohl das Speichern scheiterte).
   const applyResult = (rideId, res) => updateDyn((d) => {
     const r = d.rides.find((x) => x.id === rideId);
     if (!r) return d;
@@ -5513,8 +5551,9 @@ function FlightTab({ setup, dyn, day, updateDyn, by, onEdit }) {
     const res = await getFlightStatus(r.flightNo, r.dayKey);
     setBusy(null);
     if (!res.ok) { setNote({ id: r.id, ok: false, text: res.error }); return; }
-    applyResult(r.id, res);
-    setNote({ id: r.id, ok: true, text: "aktualisiert" });
+    const wr = await applyResult(r.id, res);
+    if (wr && wr.ok) setNote({ id: r.id, ok: true, text: "aktualisiert" });
+    else setNote({ id: r.id, ok: false, text: (wr && wr.error) || "Speichern fehlgeschlagen, bitte erneut versuchen" });
   };
   const updateAll = async () => {
     setBusy("all"); setNote(null);
@@ -5523,7 +5562,9 @@ function FlightTab({ setup, dyn, day, updateDyn, by, onEdit }) {
     let ok = 0, fail = 0;
     for (const r of due) {
       const res = await getFlightStatus(r.flightNo, r.dayKey);
-      if (res.ok) { applyResult(r.id, res); ok++; } else fail++;
+      if (!res.ok) { fail++; continue; }
+      const wr = await applyResult(r.id, res);
+      if (wr && wr.ok) ok++; else fail++;
     }
     setBusy(null);
     const skipNote = onCooldown > 0 ? ` · ${onCooldown} noch frisch übersprungen` : "";
@@ -5531,24 +5572,27 @@ function FlightTab({ setup, dyn, day, updateDyn, by, onEdit }) {
   };
 
   // schnelle manuelle Korrektur
-  const quickSet = (rideId, patch) => updateDyn((d) => {
-    const r = d.rides.find((x) => x.id === rideId);
-    if (r) {
-      Object.assign(r, patch);
-      r.manualOverride = true; r.flightUpdateSource = "manuell"; r.lastFlightUpdate = Date.now();
-      if (patch.flightStatus !== undefined) {
-        logRide(r, "flight", by, `Flug: ${flightStyle(patch.flightStatus).l}`);
-        if (r.assignedDriverId && ["verspätet", "gelandet", "annulliert"].includes(patch.flightStatus)) {
-          triggerPush(r.assignedDriverId, `Flug jetzt ${flightStyle(patch.flightStatus).l}`, `${r.flightNo || ""} · ${r.djName || "Fahrt"}`, `ride-${r.id}`);
+  const quickSet = async (rideId, patch) => {
+    const res = await updateDyn((d) => {
+      const r = d.rides.find((x) => x.id === rideId);
+      if (r) {
+        Object.assign(r, patch);
+        r.manualOverride = true; r.flightUpdateSource = "manuell"; r.lastFlightUpdate = Date.now();
+        if (patch.flightStatus !== undefined) {
+          logRide(r, "flight", by, `Flug: ${flightStyle(patch.flightStatus).l}`);
+          if (r.assignedDriverId && ["verspätet", "gelandet", "annulliert"].includes(patch.flightStatus)) {
+            triggerPush(r.assignedDriverId, `Flug jetzt ${flightStyle(patch.flightStatus).l}`, `${r.flightNo || ""} · ${r.djName || "Fahrt"}`, `ride-${r.id}`);
+          }
+          if (needsDispatcherFlightAlert(r)) {
+            triggerDispatcherPush(`Flug kritisch: ${flightAlert(r).label}`, `${r.flightNo || ""} · ${r.djName || "Fahrt"}`, `ride-${r.id}`);
+          }
         }
-        if (needsDispatcherFlightAlert(r)) {
-          triggerDispatcherPush(`Flug kritisch: ${flightAlert(r).label}`, `${r.flightNo || ""} · ${r.djName || "Fahrt"}`, `ride-${r.id}`);
-        }
+        if (r.scheduledArrival && (r.actualArrival || r.estimatedArrival)) r.delayMinutes = Math.max(0, sortMin(r.actualArrival || r.estimatedArrival) - sortMin(r.scheduledArrival));
       }
-      if (r.scheduledArrival && (r.actualArrival || r.estimatedArrival)) r.delayMinutes = Math.max(0, sortMin(r.actualArrival || r.estimatedArrival) - sortMin(r.scheduledArrival));
-    }
-    return d;
-  });
+      return d;
+    });
+    if ((!res || !res.ok) && onErr) onErr(res?.error || "Flug-Korrektur konnte nicht gespeichert werden, bitte erneut versuchen.");
+  };
 
   const ln = (id, c) => setup.locations.find((l) => l.id === id)?.short || c || "—";
 
@@ -5653,7 +5697,7 @@ function emergencyCases(setup, dyn, day) {
 }
 const CASE_ICON = { issue: AlertTriangle, flight: Plane, nodriver: Navigation, waiting: Clock };
 
-function EmergencyTab({ setup, dyn, day, updateDyn, by, onAssign, onWhatsApp, onEdit }) {
+function EmergencyTab({ setup, dyn, day, updateDyn, by, onErr, onAssign, onWhatsApp, onEdit }) {
   const cases = emergencyCases(setup, dyn, day);
   const ln = (id, c) => setup.locations.find((l) => l.id === id)?.short || c || "—";
   const freeDrivers = setup.drivers
@@ -5662,11 +5706,14 @@ function EmergencyTab({ setup, dyn, day, updateDyn, by, onAssign, onWhatsApp, on
     .sort((a, b) => a.s.drivingMin - b.s.drivingMin);
   const shiftable = (dyn.rides || []).filter((r) => r.dayKey === day && r.status !== "cancelled" && r.status !== "done" && r.onDemand);
 
-  const resolveIssues = (rideId) => updateDyn((d) => {
-    const r = d.rides.find((x) => x.id === rideId);
-    if (r) { (r.issues || []).filter(issueOpen).forEach((i) => { i.state = "done"; }); logRide(r, "problem_done", by); }
-    return d;
-  });
+  const resolveIssues = async (rideId) => {
+    const res = await updateDyn((d) => {
+      const r = d.rides.find((x) => x.id === rideId);
+      if (r) { (r.issues || []).filter(issueOpen).forEach((i) => { i.state = "done"; }); logRide(r, "problem_done", by); }
+      return d;
+    });
+    if ((!res || !res.ok) && onErr) onErr(res?.error || "Problem konnte nicht als erledigt gespeichert werden, bitte erneut versuchen.");
+  };
 
   const critCount = cases.filter((c) => c.sev === "critical").length;
 
