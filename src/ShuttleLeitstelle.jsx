@@ -3689,7 +3689,7 @@ function Dashboard({ setup, dyn, session, updateDyn, updateSetup, onLogout, onPr
       {editRide && (
         <RideForm setup={setup} ride={editRide}
           onClose={() => setEditRide(null)}
-          onSave={(data) => {
+          onSave={async (data) => {
             // Konflikt-Erkennung: hat sich die Fahrt geändert, seit das Formular geöffnet wurde
             // (z. B. Fahrer hat währenddessen den Status weitergesetzt, ein Kollege hat zugeteilt)?
             // Geprüft gegen den aktuell im Speicher vorliegenden (laufend synchronisierten) Stand.
@@ -3700,10 +3700,12 @@ function Dashboard({ setup, dyn, session, updateDyn, updateSetup, onLogout, onPr
                 const who = lastLog ? byLabel(setup, lastLog.by) : "jemand anderes";
                 const what = lastLog ? (LOG_LABEL[lastLog.event] || lastLog.event) : "eine Änderung";
                 const ok = window.confirm(`Diese Fahrt wurde inzwischen von ${who} geändert (${what}, ${fmtClock(live.updatedAt)} Uhr).\n\nStatus, Fahrer und Problemmeldungen bleiben in jedem Fall erhalten. Trotzdem mit deinen übrigen Eingaben speichern?`);
-                if (!ok) return;
+                // Abbruch im Konflikt-Dialog: nicht speichern, Formular offen lassen,
+                // aber KEIN Fehler (der Nutzer hat sich bewusst dagegen entschieden).
+                if (!ok) return { ok: false, cancelled: true };
               }
             }
-            updateDyn((d) => {
+            const res = await updateDyn((d) => {
               if (editRide._new) {
                 const nr = { id: "r" + Date.now() + Math.random().toString(36).slice(2, 6), assignedDriverId: null, ...data };
                 logRide(nr, "created", meBy, "");
@@ -3731,11 +3733,15 @@ function Dashboard({ setup, dyn, session, updateDyn, updateSetup, onLogout, onPr
               }
               return d;
             });
-            setEditRide(null);
+            // Nur bei bestätigtem Erfolg schließen. Bei Fehler bleibt das Formular
+            // offen (die Eingabe geht nicht verloren) und RideForm zeigt die Meldung.
+            if (res && res.ok) setEditRide(null);
+            return res;
           }}
-          onDelete={editRide._new ? null : () => {
-            updateDyn((d) => { const r = d.rides.find((x) => x.id === editRide.id); if (r) setRideStatus(r, "cancelled", meBy); return d; });
-            setEditRide(null);
+          onDelete={editRide._new ? null : async () => {
+            const res = await updateDyn((d) => { const r = d.rides.find((x) => x.id === editRide.id); if (r) setRideStatus(r, "cancelled", meBy); return d; });
+            if (res && res.ok) setEditRide(null);
+            return res;
           }} />
       )}
 
@@ -4167,6 +4173,9 @@ function AssignModal({ setup, dyn, ride, onClose, onAssign }) {
 /* ------------------------------ Fahrt-Formular --------------------------- */
 function RideForm({ setup, ride, onClose, onSave, onDelete }) {
   const isNew = ride._new;
+  const [saving, setSaving] = useState(false);   // Doppelklick-Schutz + Ladezustand Speichern
+  const [deleting, setDeleting] = useState(false); // Doppelklick-Schutz + Ladezustand Stornieren
+  const [saveErr, setSaveErr] = useState("");     // sichtbare Fehlermeldung, falls Speichern/Stornieren scheitert
   const [f, setF] = useState({
     date: ride.date || ride.dayKey || todayISO(),
     time: ride.time || "12:00",
@@ -4234,7 +4243,10 @@ function RideForm({ setup, ride, onClose, onSave, onDelete }) {
   const pax = Number(f.passengerCount) || 1;
   const tooBig = pax > 7; // größer als jede V-Klasse
 
-  const save = () => {
+  const save = async () => {
+    // Doppelklick-Schutz: laeuft schon ein Speicher-/Stornier-Vorgang, nichts tun,
+    // sonst wuerde eine neue Fahrt bei schnellem Doppelklick zweimal angelegt.
+    if (saving || deleting) return;
     const dayKey = festDayKey(f.date, f.time);
     const est = durKnown ? dur.min : (manualDur.trim() !== "" ? Number(manualDur) : null);
     const { _new, ...clean } = ride;
@@ -4242,20 +4254,55 @@ function RideForm({ setup, ride, onClose, onSave, onDelete }) {
     const flightTouched = f.flightStatus !== (ride.flightStatus || "") || f.actualArrival !== (ride.actualArrival || "") || f.estimatedArrival !== (ride.estimatedArrival || "") || f.terminal !== (ride.terminal || "");
     const delay = f.scheduledArrival && (f.actualArrival || f.estimatedArrival)
       ? Math.max(0, sortMin(f.actualArrival || f.estimatedArrival) - sortMin(f.scheduledArrival)) : (ride.delayMinutes || 0);
-    onSave({
-      ...clean, ...f,
-      passengerCount: pax,
-      zone: toIsFestival ? f.zone : "",
-      dayKey,
-      estDurationMin: Number.isFinite(est) ? est : null,
-      type: classify(f.fromId, f.toId, f.fromCustom, f.toCustom),
-      delayMinutes: delay,
-      manualOverride: flightTouched ? true : (ride.manualOverride || false),
-      lastFlightUpdate: flightTouched ? Date.now() : (ride.lastFlightUpdate || null),
-      flightUpdateSource: flightTouched ? "manuell" : (ride.flightUpdateSource || null),
-      contactPhones: extractContactPhones(f.passengers), // aus "Name (+49…)" im Passagiere-Text
-      updatedAt: Date.now(),
-    });
+    setSaveErr("");
+    setSaving(true);
+    try {
+      // onSave gibt jetzt das Speicher-Ergebnis zurueck ({ ok, error, cancelled? }).
+      // Bei Erfolg schliesst der Parent das Formular (setEditRide(null)); scheitert
+      // es, bleibt das Formular offen und die Eingabe erhalten.
+      const res = await onSave({
+        ...clean, ...f,
+        passengerCount: pax,
+        zone: toIsFestival ? f.zone : "",
+        dayKey,
+        estDurationMin: Number.isFinite(est) ? est : null,
+        type: classify(f.fromId, f.toId, f.fromCustom, f.toCustom),
+        delayMinutes: delay,
+        manualOverride: flightTouched ? true : (ride.manualOverride || false),
+        lastFlightUpdate: flightTouched ? Date.now() : (ride.lastFlightUpdate || null),
+        flightUpdateSource: flightTouched ? "manuell" : (ride.flightUpdateSource || null),
+        contactPhones: extractContactPhones(f.passengers), // aus "Name (+49…)" im Passagiere-Text
+        updatedAt: Date.now(),
+      });
+      // cancelled = Nutzer hat den Konflikt-Dialog bewusst abgebrochen -> keine Fehlermeldung.
+      if (res && res.ok === false && !res.cancelled) {
+        setSaveErr(res.error || "Die Fahrt konnte nicht gespeichert werden. Bitte Verbindung prüfen und erneut versuchen.");
+      }
+    } catch (e) {
+      console.error("RideForm.save", e);
+      setSaveErr("Die Fahrt konnte nicht gespeichert werden. Bitte erneut versuchen.");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  // Stornieren mit gleichem Schutz: Doppelklick unkritisch (idempotent), aber das
+  // Formular darf bei einem Schreibfehler nicht kommentarlos schliessen.
+  const doDelete = async () => {
+    if (!onDelete || saving || deleting) return;
+    setSaveErr("");
+    setDeleting(true);
+    try {
+      const res = await onDelete();
+      if (res && res.ok === false && !res.cancelled) {
+        setSaveErr(res.error || "Die Fahrt konnte nicht storniert werden. Bitte erneut versuchen.");
+      }
+    } catch (e) {
+      console.error("RideForm.delete", e);
+      setSaveErr("Die Fahrt konnte nicht storniert werden. Bitte erneut versuchen.");
+    } finally {
+      setDeleting(false);
+    }
   };
 
   return (
@@ -4366,10 +4413,17 @@ function RideForm({ setup, ride, onClose, onSave, onDelete }) {
         <RideHistory ride={ride} />
       )}
 
+      {saveErr && (
+        <div className="mt-4 text-sm text-red-300 bg-red-500/10 border border-red-500/25 rounded-lg px-3 py-2 flex items-center justify-between gap-3">
+          <span>{saveErr}</span>
+          <button onClick={save} disabled={saving || deleting} className="shrink-0 text-xs underline hover:text-red-200 disabled:opacity-40">Erneut versuchen</button>
+        </div>
+      )}
+
       <div className="flex items-center gap-2 mt-5">
-        <button onClick={save} className="bg-orange-600 hover:bg-orange-500 text-white px-4 py-2.5 rounded-lg text-sm font-medium">Speichern</button>
-        <button onClick={onClose} className="text-stone-400 hover:text-stone-200 px-4 py-2.5 text-sm">Abbrechen</button>
-        {onDelete && <button onClick={onDelete} className="ml-auto text-red-400 hover:text-red-300 text-sm flex items-center gap-1"><Ban className="w-4 h-4" />Stornieren</button>}
+        <button onClick={save} disabled={saving || deleting} className="bg-orange-600 hover:bg-orange-500 disabled:opacity-50 text-white px-4 py-2.5 rounded-lg text-sm font-medium">{saving ? "Speichere…" : "Speichern"}</button>
+        <button onClick={onClose} disabled={saving || deleting} className="text-stone-400 hover:text-stone-200 disabled:opacity-40 px-4 py-2.5 text-sm">Abbrechen</button>
+        {onDelete && <button onClick={doDelete} disabled={saving || deleting} className="ml-auto text-red-400 hover:text-red-300 disabled:opacity-40 text-sm flex items-center gap-1"><Ban className="w-4 h-4" />{deleting ? "Storniere…" : "Stornieren"}</button>}
       </div>
     </Modal>
   );
