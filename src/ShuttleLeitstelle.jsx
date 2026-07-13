@@ -4312,10 +4312,18 @@ function RideForm({ setup, ride, onClose, onSave, onDelete }) {
   const bothCustomSame = fromCustom && toCustom && f.fromCustom.trim() && f.fromCustom.trim().toLowerCase() === f.toCustom.trim().toLowerCase();
   const fromCustomEmpty = fromCustom && !f.fromCustom.trim();
   const toCustomEmpty = toCustom && !f.toCustom.trim();
+  // Datums-Tippfehler (falscher Monat/Tag) erkennen: der per Nachtmodus korrekt
+  // aufgeloeste Festival-Tag der Fahrt wird gegen die eingetragenen Festivaltage
+  // geprueft. Nur ein Hinweis - Abhol-/Rueckfahrten am Vor-/Nachtag sind legitim
+  // und bleiben erlaubt. Guard: nur wenn ueberhaupt Festivaltage hinterlegt sind.
+  const festDates = setup.config.festivalDates || [];
+  const effDayKey = festDayKey(f.date, f.time);
+  const dateOffFestival = festDates.length > 0 && effDayKey && !festDates.includes(effDayKey);
   const inputWarnings = [];
   if (sameLoc || bothCustomSame) inputWarnings.push("Start und Ziel sind identisch. Ist das so gewollt?");
   if (fromCustomEmpty) inputWarnings.push("Für „Von“ ist „Anderer Ort“ gewählt, aber kein Ort eingetragen.");
   if (toCustomEmpty) inputWarnings.push("Für „Nach“ ist „Anderer Ort“ gewählt, aber kein Ort eingetragen.");
+  if (dateOffFestival) inputWarnings.push("Dieses Datum liegt außerhalb der eingetragenen Festivaltage. Bitte Datum prüfen (Vor-/Nachtag ist ok).");
 
   const save = async () => {
     // Doppelklick-Schutz: laeuft schon ein Speicher-/Stornier-Vorgang, nichts tun,
