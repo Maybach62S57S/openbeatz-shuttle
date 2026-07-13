@@ -3667,8 +3667,8 @@ function Dashboard({ setup, dyn, session, updateDyn, updateSetup, onLogout, onPr
       {assignRide && (
         <AssignModal setup={setup} dyn={dyn} ride={assignRide}
           onClose={() => setAssignRide(null)}
-          onAssign={(driverId) => {
-            updateDyn((d) => {
+          onAssign={async (driverId) => {
+            const res = await updateDyn((d) => {
               const r = d.rides.find((x) => x.id === assignRide.id);
               if (r) {
                 const changed = r.assignedDriverId !== driverId;
@@ -3682,7 +3682,11 @@ function Dashboard({ setup, dyn, session, updateDyn, updateSetup, onLogout, onPr
               }
               return d;
             });
-            setAssignRide(null);
+            // Nur bei bestaetigtem Erfolg schliessen. Scheitert das Speichern
+            // (Netz/Konflikt), bleibt das Modal offen und AssignModal zeigt die
+            // Meldung -> keine still fehlgeschlagene Zuteilung mehr.
+            if (res && res.ok) setAssignRide(null);
+            return res;
           }} />
       )}
 
@@ -3812,8 +3816,8 @@ function MobileDispatcherView({ setup, dyn, session, updateDyn, onLogout, onSwit
   const locName = (id, txt) => setup.locations.find((l) => l.id === id)?.short || txt || "—";
   const msgOpenMobile = openMessages(dyn).length; // offene Nachrichten -> Badge am mobilen Nachrichten-Tab
 
-  const doAssign = (rideId, driverId) => {
-    updateDyn((d) => {
+  const doAssign = async (rideId, driverId) => {
+    const res = await updateDyn((d) => {
       const r = d.rides.find((x) => x.id === rideId);
       if (r) {
         const changed = r.assignedDriverId !== driverId;
@@ -3826,7 +3830,8 @@ function MobileDispatcherView({ setup, dyn, session, updateDyn, onLogout, onSwit
       }
       return d;
     });
-    setAssignRide(null);
+    if (res && res.ok) setAssignRide(null);
+    return res;
   };
 
   const RideCard = ({ r }) => {
@@ -4093,6 +4098,28 @@ function AssignModal({ setup, dyn, ride, onClose, onAssign }) {
   const suggestions = useMemo(() => suggestDrivers(setup, dyn, ride), [setup, dyn, ride]);
   const locName = (id, txt) => setup.locations.find((l) => l.id === id)?.short || txt || "—";
   const current = setup.drivers.find((d) => d.id === ride.assignedDriverId);
+  const [assigning, setAssigning] = useState(false); // Doppelklick-Schutz + Ladezustand
+  const [assignErr, setAssignErr] = useState("");     // sichtbare Meldung, falls die Zuteilung nicht gespeichert wird
+
+  // Alle Zuteilungs-Wege (Vorschlag, manuell, entfernen) laufen hier durch:
+  // sperrt gegen Doppelklick, awaitet das Ergebnis, zeigt bei echtem Fehler eine
+  // Meldung statt das Modal kommentarlos zu schliessen (Parent schliesst nur bei ok).
+  const doAssign = async (driverId) => {
+    if (assigning) return;
+    setAssignErr("");
+    setAssigning(true);
+    try {
+      const res = await onAssign(driverId);
+      if (res && res.ok === false && !res.cancelled) {
+        setAssignErr(res.error || "Die Zuteilung konnte nicht gespeichert werden. Bitte Verbindung prüfen und erneut versuchen.");
+      }
+    } catch (e) {
+      console.error("AssignModal.doAssign", e);
+      setAssignErr("Die Zuteilung konnte nicht gespeichert werden. Bitte erneut versuchen.");
+    } finally {
+      setAssigning(false);
+    }
+  };
 
   return (
     <Modal onClose={onClose} title="Fahrer zuteilen" wide>
@@ -4118,8 +4145,8 @@ function AssignModal({ setup, dyn, ride, onClose, onAssign }) {
         {suggestions.slice(0, 8).map((x, i) => {
           const best = i === 0 && x.feasible;
           return (
-            <button key={x.driver.id} onClick={() => onAssign(x.driver.id)}
-              className={`w-full text-left rounded-xl px-3 py-2.5 border transition flex items-center gap-3 ${best ? "border-orange-500/60 bg-orange-500/10 hover:bg-orange-500/15" : x.feasible ? "border-stone-800 bg-stone-900 hover:border-stone-700" : "border-orange-500/30 bg-orange-500/5 hover:border-orange-500/50"}`}>
+            <button key={x.driver.id} onClick={() => doAssign(x.driver.id)} disabled={assigning}
+              className={`w-full text-left rounded-xl px-3 py-2.5 border transition flex items-center gap-3 disabled:opacity-50 ${best ? "border-orange-500/60 bg-orange-500/10 hover:bg-orange-500/15" : x.feasible ? "border-stone-800 bg-stone-900 hover:border-stone-700" : "border-orange-500/30 bg-orange-500/5 hover:border-orange-500/50"}`}>
               <span className={`w-8 h-8 rounded-lg flex items-center justify-center text-xs font-mono shrink-0 ${x.driver.vehicleType === "Van" ? "bg-orange-500/20 text-orange-300" : "bg-sky-500/20 text-sky-300"}`}>{x.driver.vehicleType === "Van" ? "Van" : "Car"}</span>
               <div className="min-w-0 flex-1">
                 <div className="text-sm text-stone-100 flex items-center gap-2">
@@ -4146,11 +4173,11 @@ function AssignModal({ setup, dyn, ride, onClose, onAssign }) {
                 const ok = window.confirm(`${d.firstName} ${d.lastName} (${d.vehicleType === "Van" ? "Van" : "Car"}) hat einen Konflikt:\n\n• ${ev.problems.join("\n• ")}\n\nTrotzdem zuweisen?`);
                 if (!ok) return;
               }
-              onAssign(d.id);
+              doAssign(d.id);
             };
             return (
-              <button key={d.id} onClick={assignManual}
-                className={`text-xs rounded-lg px-2 py-1.5 text-left border ${!ev.eligible ? "bg-red-500/5 border-red-500/30" : !ev.feasible ? "bg-orange-500/5 border-orange-500/30" : "bg-stone-900 border-stone-800 hover:border-stone-600"}`}>
+              <button key={d.id} onClick={assignManual} disabled={assigning}
+                className={`text-xs rounded-lg px-2 py-1.5 text-left border disabled:opacity-50 ${!ev.eligible ? "bg-red-500/5 border-red-500/30" : !ev.feasible ? "bg-orange-500/5 border-orange-500/30" : "bg-stone-900 border-stone-800 hover:border-stone-600"}`}>
                 <div className="text-stone-200 truncate">{d.firstName} {d.lastName[0]}.</div>
                 <div className="flex items-center gap-1">
                   <span className="text-stone-500 font-mono text-[10px]">{d.vehicleType === "Van" ? "Van" : "Car"}</span>
@@ -4163,9 +4190,13 @@ function AssignModal({ setup, dyn, ride, onClose, onAssign }) {
           })}
         </div>
         {ride.assignedDriverId && (
-          <button onClick={() => onAssign(null)} className="mt-3 text-xs text-red-400 hover:text-red-300 flex items-center gap-1"><X className="w-3.5 h-3.5" />Zuteilung entfernen</button>
+          <button onClick={() => doAssign(null)} disabled={assigning} className="mt-3 text-xs text-red-400 hover:text-red-300 disabled:opacity-40 flex items-center gap-1"><X className="w-3.5 h-3.5" />Zuteilung entfernen</button>
         )}
       </div>
+
+      {assignErr && (
+        <div className="mt-4 text-sm text-red-300 bg-red-500/10 border border-red-500/25 rounded-lg px-3 py-2">{assignErr}</div>
+      )}
     </Modal>
   );
 }
