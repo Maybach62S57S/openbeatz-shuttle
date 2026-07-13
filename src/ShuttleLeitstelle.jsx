@@ -1741,6 +1741,20 @@ function friendlyError(raw, fallback) {
     return "Keine Verbindung zum Server. Die Änderung wurde nicht gespeichert, bitte gleich nochmal versuchen.";
   return fallback;
 }
+// Slice 8: passender leerer-Zustand-Text fuer Fahrtenlisten. Unterscheidet, ob am
+// Tag gar keine Fahrten sind (dann kein Reset, es fehlen Daten), ob eine Suche
+// nichts trifft (Reset "search") oder ob ein aktiver Filter alles ausblendet
+// (Reset "filter"). Suche hat Vorrang vor Filter, weil das Leeren der Suche der
+// kleinere Schritt ist. filterLabel ist leer/null, wenn der Standardfilter "alle"
+// aktiv ist; sonst der schon aufgeloeste, menschenlesbare Label (Desktop und Mobil
+// nutzen unterschiedliche Filter-Keys, daher loest der Aufrufer das Label auf).
+function rideListEmpty({ total, query, filterLabel }) {
+  const q = (query || "").trim();
+  if (!total) return { text: "Noch keine Fahrten an diesem Tag.", reset: null };
+  if (q) return { text: `Nichts gefunden für „${q}“.`, reset: "search" };
+  if (filterLabel) return { text: `Keine Fahrten im Filter „${filterLabel}“.`, reset: "filter" };
+  return { text: "Keine Fahrten in dieser Ansicht.", reset: null };
+}
 // Punkt 1: vollständige Problemtypen. „Notfall" ist kritisch (rot hervorgehoben).
 const ISSUE_TYPES = ["Gast nicht da", "Flug verspätet", "Stau", "falscher Treffpunkt", "mehr Personen als angegeben", "Auto zu klein", "Fahrzeugproblem", "Zufahrt gesperrt", "Notfall", "Sonstiges"];
 const CRITICAL_ISSUES = ["Notfall", "Fahrzeugproblem", "Zufahrt gesperrt"];
@@ -3675,7 +3689,8 @@ function Dashboard({ setup, dyn, session, updateDyn, updateSetup, onLogout, onPr
                 <div className="relative flex-1 max-w-xs">
                   <Search className="w-4 h-4 absolute left-2.5 top-2.5 text-stone-600" />
                   <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="DJ, Gast, Flug…"
-                    className="w-full bg-stone-900 border border-stone-800 rounded-lg pl-8 pr-3 py-2 text-sm placeholder-stone-600 focus:outline-none focus:border-orange-500" />
+                    className="w-full bg-stone-900 border border-stone-800 rounded-lg pl-8 pr-8 py-2 text-sm placeholder-stone-600 focus:outline-none focus:border-orange-500" />
+                  {q && <button onClick={() => setQ("")} aria-label="Suche leeren" className="absolute right-2 top-2.5 text-stone-500 hover:text-stone-300"><X className="w-4 h-4" /></button>}
                 </div>
                 <button onClick={() => setEditRide({ _new: true, dayKey: day, date: day })}
                   className="ml-auto bg-orange-600 hover:bg-orange-500 text-white text-sm px-3 py-2 rounded-lg flex items-center gap-1.5">
@@ -3684,7 +3699,16 @@ function Dashboard({ setup, dyn, session, updateDyn, updateSetup, onLogout, onPr
               </div>
 
               <div className="space-y-2">
-                {filtered.length === 0 && <div className="text-stone-500 text-sm py-10 text-center border border-dashed border-stone-800 rounded-xl">Keine Fahrten in dieser Ansicht.</div>}
+                {filtered.length === 0 && (() => {
+                  const es = rideListEmpty({ total: dayRides.length, query: q, filterLabel: filter === "all" ? null : ({ unassigned: "Offen", active: "Aktiv", done: "Erledigt" }[filter]) });
+                  return (
+                    <div className="text-stone-500 text-sm py-10 text-center border border-dashed border-stone-800 rounded-xl">
+                      {es.text}
+                      {es.reset === "search" && <button onClick={() => setQ("")} className="ml-2 text-orange-400 hover:text-orange-300 underline">Suche zurücksetzen</button>}
+                      {es.reset === "filter" && <button onClick={() => setFilter("all")} className="ml-2 text-orange-400 hover:text-orange-300 underline">Alle anzeigen</button>}
+                    </div>
+                  );
+                })()}
                 {filtered.map((r) => {
                   const drv = setup.drivers.find((d) => d.id === r.assignedDriverId);
                   return (
@@ -4054,6 +4078,7 @@ function MobileDispatcherView({ setup, dyn, session, updateDyn, onLogout, onSwit
               <Search className="w-3.5 h-3.5 text-stone-500 shrink-0" />
               <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Artist, Fahrer suchen…"
                 className="bg-transparent text-sm text-stone-200 placeholder-stone-600 flex-1 outline-none min-w-0" />
+              {q && <button onClick={() => setQ("")} aria-label="Suche leeren" className="shrink-0 text-stone-500 hover:text-stone-300"><X className="w-4 h-4" /></button>}
             </div>
           </div>
           <div className="shrink-0 flex gap-1.5 px-4 py-2.5 overflow-x-auto">
@@ -4071,7 +4096,16 @@ function MobileDispatcherView({ setup, dyn, session, updateDyn, onLogout, onSwit
             ))}
           </div>
           <div className="flex-1 min-h-0 overflow-y-auto px-4 pb-20 space-y-2">
-            {visibleRides.length === 0 && <div className="text-center text-stone-500 text-sm py-10">Keine Fahrten gefunden.</div>}
+            {visibleRides.length === 0 && (() => {
+              const es = rideListEmpty({ total: dayRides.length, query: q, filterLabel: filter === "all" ? null : ({ open: "Nicht zugeteilt", active: "Aktiv", critical: "Kritisch" }[filter]) });
+              return (
+                <div className="text-center text-stone-500 text-sm py-10">
+                  {es.text}
+                  {es.reset === "search" && <button onClick={() => setQ("")} className="ml-2 text-orange-400 underline">Suche zurücksetzen</button>}
+                  {es.reset === "filter" && <button onClick={() => setFilter("all")} className="ml-2 text-orange-400 underline">Alle anzeigen</button>}
+                </div>
+              );
+            })()}
             {visibleRides.map((r) => <RideCard key={r.id} r={r} />)}
           </div>
         </>
