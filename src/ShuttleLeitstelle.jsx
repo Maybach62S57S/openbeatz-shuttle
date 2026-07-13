@@ -213,6 +213,74 @@ async function saveGuestTokens(tokens) {
   });
   if (error) throw error;
 }
+/* -------- Zentrale Zugriffsschicht für dyn_data (Paket 2, Teil 5) ---------- *
+ * EINE Quelle der Wahrheit für die Top-Level-Felder von dyn_data. Bisher stand
+ * die Feldliste an fünf Stellen wörtlich (Default-Objekt an drei Orten, Lesen aus
+ * dyn_data, Lesen aus der RPC-Rückgabe) plus die camelCase<->snake_case-Übersetzung
+ * fürs RPC an zweien. Ein neues Feld musste man überall gleichzeitig ergänzen.
+ *
+ * WICHTIG: Die SQL-Funktion write_dyn_if_unchanged baut dyn_data per
+ * jsonb_build_object KOMPLETT aus genau diesen Feldern neu (siehe
+ * supabase-schema.sql). Ein neues Feld hier UND in der SQL-Signatur ergänzen,
+ * sonst geht es beim nächsten Schreiben still verloren (genau der Bug aus Commit
+ * da31fa8, der artistPresence/messages gelöscht hätte). assertKnownDynKeys()
+ * unten macht dieses Vergessen an der Schreibstelle laut, statt still zu löschen.
+ *
+ * rev ist bewusst NICHT Teil von DYN_FIELDS: es wird separat gehandhabt
+ * (p_expected_rev rein, dyn_rev von der DB hochgezählt), nie als Datenfeld
+ * übergeben.
+ * Defaults per Factory (() => [] / () => ({})), damit jeder Aufruf frische
+ * Referenzen bekommt, nie ein geteiltes Array/Objekt.                          */
+const DYN_FIELDS = [
+  { key: "rides",           db: "rides",            empty: () => [] },
+  { key: "driverState",     db: "driver_state",     empty: () => ({}) },
+  { key: "dispatcherState", db: "dispatcher_state", empty: () => ({}) },
+  { key: "artistPresence",  db: "artist_presence",  empty: () => ({}) },
+  { key: "messages",        db: "messages",         empty: () => [] },
+];
+// Leeres dyn-Objekt (rev default 0). Optionale Overrides, z. B. emptyDyn({ rides: seed }).
+function emptyDyn(overrides) {
+  const out = { rev: 0 };
+  for (const f of DYN_FIELDS) out[f.key] = f.empty();
+  return overrides ? { ...out, ...overrides } : out;
+}
+// Aus dem gespeicherten dyn_data-JSON (camelCase) normalisieren, mit Defaults.
+// Bildet exakt das bisherige "d.feld || default" ab (|| greift bei null/undefined;
+// gespeicherte [] / {} sind truthy und bleiben erhalten).
+function dynFromData(data, revRaw) {
+  const src = data || {};
+  const out = { rev: revRaw || 0 };
+  for (const f of DYN_FIELDS) out[f.key] = src[f.key] || f.empty();
+  return out;
+}
+// Aus der RPC-Rückgabe (snake_case) normalisieren. rev wird 1:1 übernommen
+// (kein || 0 — die RPC liefert immer eine Zahl, wie bisher).
+function dynFromRpcRow(row) {
+  const out = { rev: row.rev };
+  for (const f of DYN_FIELDS) out[f.key] = row[f.db] || f.empty();
+  return out;
+}
+// p_*-Parameterobjekt für write_dyn_if_unchanged (rev NICHT enthalten, siehe oben).
+function dynToRpcParams(val) {
+  const p = {};
+  for (const f of DYN_FIELDS) p["p_" + f.db] = val[f.key] || f.empty();
+  return p;
+}
+// Sicherheitsnetz gegen den da31fa8-Bug: ein Top-Level-Feld in dyn, das NICHT in
+// DYN_FIELDS steht, wird von write_dyn_if_unchanged still verworfen. Statt
+// stillem Datenverlust hier eine laute Fehlermeldung an der Schreibstelle.
+const KNOWN_DYN_KEYS = new Set([...DYN_FIELDS.map((f) => f.key), "rev"]);
+function assertKnownDynKeys(val) {
+  const unknown = Object.keys(val || {}).filter((k) => !KNOWN_DYN_KEYS.has(k));
+  if (unknown.length) {
+    console.error(
+      "dyn_data enthält unbekannte Top-Level-Felder, die write_dyn_if_unchanged NICHT speichert " +
+      "(in DYN_FIELDS UND die SQL-Signatur ergänzen, sonst gehen sie still verloren): " +
+      unknown.join(", ")
+    );
+  }
+}
+
 async function sbGetDyn() {
   const sb = window.__obfSupabase;
   const { data: row, error } = await sb.from("settings").select("dyn_data, dyn_rev").eq("id", 1).single();
@@ -222,8 +290,7 @@ async function sbGetDyn() {
     throw new Error("Supabase-Ladefehler (dyn_data): " + error.message);
   }
   if (!row) return null;
-  const d = row.dyn_data || {};
-  return { rides: d.rides || [], driverState: d.driverState || {}, dispatcherState: d.dispatcherState || {}, artistPresence: d.artistPresence || {}, messages: d.messages || [], rev: row.dyn_rev || 0 };
+  return dynFromData(row.dyn_data, row.dyn_rev);
 }
 // Atomares Compare-and-Swap statt blindem Überschreiben (siehe
 // write_dyn_if_unchanged in supabase-schema.sql, Nachtrag 3). baseRev ist
@@ -232,18 +299,17 @@ async function sbGetDyn() {
 // die Änderung durchgeschrieben wird.
 async function sbSetDyn(val, baseRev) {
   const sb = window.__obfSupabase;
+  // Guard direkt an der Schreibstelle: würde val ein Top-Level-Feld enthalten,
+  // das nicht in DYN_FIELDS/der SQL-Signatur steht, verwirft es die RPC still.
+  assertKnownDynKeys(val);
   const { data, error } = await sb.rpc("write_dyn_if_unchanged", {
     p_expected_rev: baseRev ?? 0,
-    p_rides: val.rides || [],
-    p_driver_state: val.driverState || {},
-    p_dispatcher_state: val.dispatcherState || {},
-    p_artist_presence: val.artistPresence || {},
-    p_messages: val.messages || [],
+    ...dynToRpcParams(val),
   });
   if (error) throw error;
   const row = Array.isArray(data) ? data[0] : data;
   if (!row) return { ok: false, value: null };
-  return { ok: row.ok, value: { rides: row.rides || [], driverState: row.driver_state || {}, dispatcherState: row.dispatcher_state || {}, artistPresence: row.artist_presence || {}, messages: row.messages || [], rev: row.rev } };
+  return { ok: row.ok, value: dynFromRpcRow(row) };
 }
 
 /* -------- Fahrer-GPS in eigener Tabelle (Paket 2, Teil 3) ----------------- *
@@ -750,7 +816,7 @@ export default function App() {
       let d = await sget(DYN_KEY);
       if (!d) {
         // Gleiche Begründung wie oben bei setup: bei Supabase nie automatisch schreiben.
-        d = hasSupabase() ? { rides: [], driverState: {}, dispatcherState: {}, artistPresence: {}, messages: [], rev: 0 } : { rides: seedExampleRides(s), driverState: {}, dispatcherState: {}, artistPresence: {}, messages: [], rev: 0 };
+        d = hasSupabase() ? emptyDyn() : emptyDyn({ rides: seedExampleRides(s) });
         if (!hasSupabase()) await sset(DYN_KEY, d);
       }
       setSetup(s); setDyn(d); setLoading(false);
@@ -864,7 +930,7 @@ export default function App() {
     let last = null;
     try {
       for (let attempt = 0; attempt < 6; attempt++) {
-        const cur = (await sget(DYN_KEY)) || { rides: [], driverState: {}, dispatcherState: {}, artistPresence: {}, messages: [], rev: 0 };
+        const cur = (await sget(DYN_KEY)) || emptyDyn();
         const baseRev = cur.rev || 0;
         const next = mutator(structuredClone(cur));
         next.rev = baseRev + 1;
