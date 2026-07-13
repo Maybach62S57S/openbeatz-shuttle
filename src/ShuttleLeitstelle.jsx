@@ -4699,6 +4699,17 @@ function WhatsAppModal({ ride, setup, onClose, onCopied }) {
 }
 
 /* -------- Fahrer-Telefonnummern (für Anruf/Weitergabe an Manager) --------- */
+// Weiche Telefon-Plausibilitaetspruefung fuer Eingabefelder: true, wenn etwas
+// eingetragen ist, das NICHT wie eine Telefonnummer aussieht. Leer gilt als ok
+// (Felder sind optional). Trennzeichen (Leerzeichen, - / . ( )) werden ignoriert,
+// danach muessen es +? und 6-15 Ziffern sein (gleiche Regel wie extractContactPhones).
+// Bewusst weich: nur ein Hinweis, blockiert nie das Speichern.
+function phoneLooksInvalid(raw) {
+  const s = String(raw || "").trim();
+  if (!s) return false;
+  const cleaned = s.replace(/[\s\-\/().]/g, "");
+  return !/^\+?[0-9]{6,15}$/.test(cleaned);
+}
 function DriverPhones({ setup, updateSetup }) {
   const [phones, setPhones] = useState(() => Object.fromEntries(setup.drivers.map((d) => [d.id, d.phone || ""])));
   const [plates, setPlates] = useState(() => Object.fromEntries(setup.drivers.map((d) => [d.id, d.plate || ""])));
@@ -4706,6 +4717,9 @@ function DriverPhones({ setup, updateSetup }) {
   const [saved, setSaved] = useState(false);
   const [saveError, setSaveError] = useState("");
   const dirty = setup.drivers.some((d) => (phones[d.id] || "") !== (d.phone || "") || (plates[d.id] || "") !== (d.plate || "") || (pins[d.id] || "") !== (d.pin || ""));
+  // Slice 3: weicher Hinweis auf ungewoehnliche Nummern (blockiert NICHT). Formate
+  // variieren (Auslandsvorwahlen etc.), daher nur ein Hinweis, kein Speicherblocker.
+  const oddPhones = setup.drivers.filter((d) => phoneLooksInvalid(phones[d.id])).map((d) => `${d.firstName} ${d.lastName[0]}.`);
   const save = async () => {
     setSaveError("");
     // "gespeichert" nur zeigen, wenn updateSetup wirklich ok meldet. Sonst
@@ -4738,6 +4752,9 @@ function DriverPhones({ setup, updateSetup }) {
         {saved && <span className="text-xs text-emerald-400 flex items-center gap-1"><Check className="w-3.5 h-3.5" />gespeichert</span>}
         {saveError && <span className="text-xs text-red-400">{saveError}</span>}
       </div>
+      {oddPhones.length > 0 && (
+        <div className="text-xs text-amber-300 mt-2">{oddPhones.length} Nummer(n) sehen ungewöhnlich aus ({oddPhones.slice(0, 4).join(", ")}{oddPhones.length > 4 ? " …" : ""}), bitte prüfen. Speichern geht trotzdem.</div>
+      )}
     </div>
   );
 }
@@ -4909,6 +4926,9 @@ function GuestLinksSection({ setup, dyn, updateSetup, onPreviewGuest }) {
             <button onClick={savePhone} disabled={coordPhone === (setup.config.coordinationPhone || "")} className="shrink-0 bg-orange-600 hover:bg-orange-500 disabled:opacity-40 text-white text-sm px-3 rounded-lg">Speichern</button>
           </div>
         </Field>
+        {phoneLooksInvalid(coordPhone) && (
+          <div className="text-xs text-amber-300 mt-1.5">Diese Nummer sieht ungewöhnlich aus. Für den WhatsApp-Link an Gäste sollten es nur + und Ziffern sein. Speichern geht trotzdem.</div>
+        )}
         {savedPhone && <span className="text-xs text-emerald-400 flex items-center gap-1 mt-1.5"><Check className="w-3.5 h-3.5" />gespeichert</span>}
       </div>
 
