@@ -10130,12 +10130,12 @@ function MissionStyles() {
         --mc-text-secondary: #9aa4b2;
         --mc-text-muted: #616d7c;
         /* Statusfarben: Akzent + weiche Fuellung */
-        --mc-st-new: #4b90f6;       --mc-st-new-soft: rgba(75,144,246,0.13);
-        --mc-st-assigned: #f5a524;  --mc-st-assigned-soft: rgba(245,165,36,0.13);
-        --mc-st-enroute: #9a7cf7;   --mc-st-enroute-soft: rgba(154,124,247,0.14);
-        --mc-st-done: #34d399;      --mc-st-done-soft: rgba(52,211,153,0.13);
-        --mc-st-problem: #f26d6d;   --mc-st-problem-soft: rgba(242,109,109,0.14);
-        --mc-st-idle: #7c8797;      --mc-st-idle-soft: rgba(124,135,151,0.13);
+        --mc-st-new: #4b90f6;       --mc-st-new-soft: rgba(75,144,246,0.30);
+        --mc-st-assigned: #f5a524;  --mc-st-assigned-soft: rgba(245,165,36,0.30);
+        --mc-st-enroute: #9a7cf7;   --mc-st-enroute-soft: rgba(154,124,247,0.30);
+        --mc-st-done: #34d399;      --mc-st-done-soft: rgba(52,211,153,0.30);
+        --mc-st-problem: #f26d6d;   --mc-st-problem-soft: rgba(242,109,109,0.30);
+        --mc-st-idle: #7c8797;      --mc-st-idle-soft: rgba(124,135,151,0.30);
         /* Tiefe / Schatten (subtil) */
         --mc-shadow-sm: 0 1px 2px rgba(0,0,0,0.40);
         --mc-shadow: 0 2px 10px rgba(0,0,0,0.35), 0 1px 2px rgba(0,0,0,0.40);
