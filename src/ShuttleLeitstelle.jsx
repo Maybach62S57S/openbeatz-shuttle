@@ -5,7 +5,7 @@ import {
   ArrowRight, Plus, Settings, Upload, LogOut, Radio, Navigation, AlertTriangle,
   RefreshCw, Search, X, Route, Timer, Gauge, ChevronRight, Play, Flag, Ban,
   MessageSquare, Copy, Check, Moon, LayoutGrid, BarChart3, Siren, History, Link2, Eye, Trash2,
-  Smartphone, Wifi, WifiOff, Phone,
+  Smartphone, Wifi, WifiOff, Phone, RotateCcw,
 } from "lucide-react";
 
 /* ============================================================================
@@ -1117,7 +1117,8 @@ export default function App() {
         updateDyn={updateDyn} updateSetup={updateSetup} onLogout={() => { unsubscribePush(session.dispatcherId, "dispatcherState", updateDyn); setSession(null); }}
         onPreviewGuest={setPreviewGuestToken} onUndo={undo} undoCount={undoCount}
         onSwitchToMobile={() => setViewMode("mobile")}
-        uiMode={uiMode} onSetUiMode={setUiModeSafe} />
+        uiMode={uiMode} onSetUiMode={setUiModeSafe}
+        offline={isOffline} connIssue={connIssue} />
     </>;
   }
   return <>
@@ -7882,14 +7883,460 @@ function Modal({ title, children, onClose, wide }) {
 // vorerst nur die Huelle (sichtbar am Umschalt-Button, der ueber onSetUiMode in den
 // Dashboard-Kopf gereicht wird). Eigenes Shell/KPI-Layout und die duplizierte Glue
 // nach Ansatz A folgen in Slice 2/3, ohne Classic anzufassen.
-function MissionControl(props) {
-  // Slice 1 + Designsystem (Session 3): die Design-Tokens werden geladen
-  // (MissionStyles, komplett auf .mc-scope gescopt, wirkt nie auf Classic).
-  // Die Ansicht selbst ist weiterhin ein Passthrough auf Dashboard — die
-  // Fachbereiche werden bewusst noch NICHT umgebaut. Das eigene Mission-
-  // Control-Layout mit den neuen Basiskomponenten folgt in einer spaeteren
-  // Scheibe, ohne Classic anzufassen.
-  return <><MissionStyles /><Dashboard {...props} /></>;
+function MissionControl({ setup, dyn, session, updateDyn, updateSetup, onLogout, onPreviewGuest, onUndo, undoCount, onSwitchToMobile, uiMode, onSetUiMode, offline, connIssue }) {
+  // Session 5 (Slice 5.2): Mission-Control-Shell. Ansatz A - die Controller-
+  // Glue ist eine EIGENE Kopie der Dashboard-Glue (bewusst dupliziert statt
+  // Hook-Extraktion, Stabilitaet vor Eleganz). Der Inhaltsbereich rendert die
+  // BESTEHENDEN Tab-Komponenten/Modals mit exakt denselben Props/Callbacks wie
+  // Dashboard - Dashboard selbst bleibt unveraendert. Alle Schreibwege laufen
+  // ueber updateDyn + logRide/setRideStatus/triggerPush, kein neues dyn-Feld.
+
+  // ---- Duplizierte Glue (1:1 aus Dashboard) ----
+  const me = (setup.dispatchers || []).find((p) => p.id === session?.dispatcherId);
+  const meBy = `dispo:${session?.dispatcherId || ""}`;
+  const push = usePushNotifications(session?.dispatcherId, "dispatcherState", updateDyn, setup.config.vapidPublicKey);
+  const days = dayTabs(setup, dyn);
+  const [day, setDay] = useState(days[0]?.key || "");
+  useEffect(() => {
+    if (days.length === 0) { if (day) setDay(""); return; }
+    if (!days.some((d) => d.key === day)) setDay(days[0].key);
+  }, [days, day]);
+
+  const [tab, setTab] = useState("overview");
+  const [filter, setFilter] = useState("all");
+  const [q, setQ] = useState("");
+  const [assignRide, setAssignRide] = useState(null);
+  const [editRide, setEditRide] = useState(null);
+  const [waRide, setWaRide] = useState(null);
+  const [clock, setClock] = useState(nowHM());
+  useEffect(() => { const t = setInterval(() => setClock(nowHM()), 20000); return () => clearInterval(t); }, []);
+  const [boardRef, boardWidth] = useElementWidth();
+
+  const [errToasts, setErrToasts] = useState([]);
+  const notifyErr = useCallback((text) => {
+    const id = Date.now() + Math.random();
+    setErrToasts((t) => [{ id, text }, ...t].slice(0, 4));
+    setTimeout(() => setErrToasts((cur) => cur.filter((x) => x.id !== id)), 8000);
+  }, []);
+
+  const dayRides = useMemo(() => (dyn.rides || [])
+    .filter((r) => r.dayKey === day)
+    .sort((a, b) => sortMin(a.time) - sortMin(b.time)), [dyn.rides, day]);
+
+  const filtered = dayRides.filter((r) => {
+    if (filter === "unassigned" && r.assignedDriverId) return false;
+    if (filter === "active" && !["accepted", "enroute_pickup", "onboard"].includes(r.status)) return false;
+    if (filter === "done" && r.status !== "done") return false;
+    if (r.status === "cancelled" && filter !== "all") return false;
+    if (q) {
+      const hay = `${r.djName} ${r.passengers} ${r.flightNo} ${r.zone}`.toLowerCase();
+      if (!hay.includes(q.toLowerCase())) return false;
+    }
+    return true;
+  });
+
+  const kpi = {
+    total: dayRides.filter((r) => r.status !== "cancelled").length,
+    unassigned: dayRides.filter((r) => !r.assignedDriverId && r.status !== "cancelled").length,
+    active: dayRides.filter((r) => ["accepted", "enroute_pickup", "onboard"].includes(r.status)).length,
+    done: dayRides.filter((r) => r.status === "done").length,
+  };
+
+  const locName = (id, txt) => setup.locations.find((l) => l.id === id)?.short || txt || "—";
+
+  const emCases = emergencyCases(setup, dyn, day);
+  const emCrit = emCases.filter((c) => c.sev === "critical").length;
+  const emCount = emCases.length;
+  const msgOpen = openMessages(dyn).length;
+
+  // ---- Rollenabhaengige Nav (Slice 5.1) ----
+  const navItems = mcNavForRole(session?.role);
+  // Ist der aktive Tab fuer die Rolle nicht (mehr) erlaubt, auf den ersten
+  // erlaubten zurueckfallen. Schuetzt zusaetzlich davor, dass jemals ein
+  // gesperrter Tab sichtbar wird (Stage-Read-only-Garantie).
+  useEffect(() => {
+    if (navItems.length && !navItems.some((n) => n.tab === tab)) setTab(navItems[0].tab);
+  }, [navItems, tab]);
+
+  const liveActive = hasSupabase() && !offline && !connIssue;
+  const roleLabel = ({ dispo: "Leitstelle", stage: "Stage Manager", driver: "Fahrer" })[session?.role] || "";
+
+  const navBtnStyle = (isActive) => isActive
+    ? { background: "var(--mc-hover)", color: "var(--mc-text)" }
+    : { color: "var(--mc-text-secondary)" };
+
+  return (
+    <div className="mc-scope min-h-screen" style={{ background: "var(--mc-bg)", color: "var(--mc-text)" }}>
+      <MissionStyles />
+
+      {/* Fehler-Hinweise (fehlgeschlagenes Speichern kleinerer Aktionen) */}
+      {errToasts.length > 0 && (
+        <div className="fixed left-1/2 -translate-x-1/2 z-50 px-3 space-y-1.5 w-full max-w-md" style={{ top: "max(0.75rem, env(safe-area-inset-top))" }}>
+          {errToasts.map((t) => (
+            <div key={t.id} onClick={() => setErrToasts((cur) => cur.filter((x) => x.id !== t.id))}
+              className="bg-red-600 text-white text-sm px-3.5 py-2.5 rounded-xl shadow-lg flex items-center gap-2 cursor-pointer">
+              <AlertTriangle className="w-4 h-4 shrink-0" /><span className="flex-1">{t.text}</span><X className="w-4 h-4 shrink-0 opacity-70" />
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* ---- Obere Statusleiste ---- */}
+      <header className="sticky top-0 z-20 backdrop-blur" style={{ background: "color-mix(in srgb, var(--mc-bg) 92%, transparent)", borderBottom: "1px solid var(--mc-border)" }}>
+        <div className="px-4 py-2.5 flex items-center gap-3">
+          <div className="flex items-center gap-2.5 shrink-0">
+            <span className="ob-pulse inline-block w-2 h-2 rounded-full bg-orange-500 shrink-0" />
+            <img src={OB_HORIZ} alt="Open Beatz" style={obInvert} className="h-7 w-auto shrink-0" />
+            <div className="hidden md:block text-[10px] font-mono tracking-[0.15em] leading-tight pl-2.5" style={{ color: "var(--mc-text-secondary)", borderLeft: "1px solid var(--mc-border)" }}>MISSION CONTROL</div>
+            <span className="text-[9px] font-bold px-1.5 py-0.5 rounded uppercase tracking-wide" style={{ background: "var(--mc-st-assigned-soft)", color: "var(--mc-st-assigned)" }}>Beta</span>
+          </div>
+          <div className="flex items-center gap-1.5 text-sm font-mono" style={{ color: "var(--mc-text-muted)" }}><Clock className="w-4 h-4" />{clock}</div>
+          <div className="flex-1" />
+          <LiveIndicator active={liveActive} label={liveActive ? "Live" : offline ? "Offline" : "Sync"} className="hidden sm:inline-flex" />
+          {(roleLabel || me) && <span className="hidden md:inline text-xs" style={{ color: "var(--mc-text-muted)" }}>{roleLabel}{me ? ` · ${me.name}` : ""}</span>}
+          {push.status !== "unconfigured" && (
+            <button onClick={push.enable} title={push.status === "active" ? `${PUSH_STATUS_LABEL[push.status]} · antippen zum erneuten Synchronisieren` : PUSH_STATUS_LABEL[push.status]}
+              className="hidden sm:flex items-center gap-1.5 text-[11px] px-1.5" style={{ color: "var(--mc-text-muted)" }}>
+              <span className={`w-2 h-2 rounded-full shrink-0 ${push.status === "active" ? "bg-emerald-400" : push.status === "denied" || push.status === "error" ? "bg-red-400" : "bg-stone-600"}`} />
+              Push{push.status === "idle" ? " · antippen" : ""}
+            </button>
+          )}
+          <button onClick={onUndo} disabled={undoCount === 0} title={undoCount > 0 ? "Letzte Änderung rückgängig machen" : "Nichts zum Rückgängigmachen"}
+            className="flex items-center gap-1.5 text-sm px-2.5 py-1.5 rounded-lg disabled:cursor-not-allowed"
+            style={undoCount > 0 ? { color: "var(--mc-text-secondary)" } : { color: "var(--mc-text-muted)", opacity: 0.5 }}>
+            <RefreshCw className="w-4 h-4 -scale-x-100" /><span className="hidden lg:inline">Rückgängig{undoCount > 1 ? ` (${undoCount})` : ""}</span>
+          </button>
+          {onSwitchToMobile && (
+            <button onClick={onSwitchToMobile} title="Zur schlanken Handy-Ansicht wechseln" className="p-2 rounded-lg hover:bg-white/5" style={{ color: "var(--mc-text-muted)" }}><Smartphone className="w-4 h-4" /></button>
+          )}
+          {/* "Zu Classic" immer erreichbar - sicherer Rueckweg aus der Beta */}
+          <button onClick={() => onSetUiMode && onSetUiMode("classic")} title="Zurück zur Classic-Oberfläche"
+            className="flex items-center gap-1.5 text-xs px-2.5 py-1.5 rounded-lg hover:bg-white/5"
+            style={{ color: "var(--mc-text-secondary)", border: "1px solid var(--mc-border)" }}>
+            <RotateCcw className="w-3.5 h-3.5" /><span className="hidden md:inline">Zu Classic</span>
+          </button>
+          <button onClick={onLogout} className="p-2 rounded-lg hover:bg-white/5" style={{ color: "var(--mc-text-muted)" }}><LogOut className="w-5 h-5" /></button>
+        </div>
+
+        {/* Tage + KPIs */}
+        <div className="px-4 pb-2.5 flex items-center gap-3 flex-wrap" style={{ borderTop: "1px solid var(--mc-border)" }}>
+          <div className="flex gap-1.5 pt-2.5">
+            {days.length === 0 && <span className="text-sm" style={{ color: "var(--mc-text-muted)" }}>Noch keine Tage – Fahrten importieren oder anlegen.</span>}
+            {days.map((d) => (
+              <button key={d.key} onClick={() => setDay(d.key)}
+                className="px-3 py-1.5 rounded-lg text-sm"
+                style={day === d.key ? { background: "var(--mc-text)", color: "var(--mc-bg)", fontWeight: 500 } : { background: "var(--mc-inset)", color: "var(--mc-text-secondary)", border: "1px solid var(--mc-border)" }}>
+                {d.label}
+              </button>
+            ))}
+          </div>
+          <div className="flex-1" />
+          <div className="flex gap-2 pt-2.5">
+            {[["Fahrten", kpi.total, null], ["Offen", kpi.unassigned, kpi.unassigned ? "assigned" : null], ["Aktiv", kpi.active, "enroute"], ["Erledigt", kpi.done, "done"]].map(([l, v, st]) => (
+              <div key={l} className="px-3 py-1.5 rounded-lg text-center min-w-[68px]" style={{ background: "var(--mc-panel)", border: "1px solid var(--mc-border)" }}>
+                <div className="text-[10px] uppercase tracking-wide" style={{ color: "var(--mc-text-muted)" }}>{l}</div>
+                <div className="text-lg font-semibold leading-none mt-0.5" style={{ color: st && MC_STATUS[st] ? `var(--mc-st-${MC_STATUS[st].key})` : "var(--mc-text)" }}>{v}</div>
+              </div>
+            ))}
+          </div>
+        </div>
+      </header>
+
+      {/* ---- Rumpf: linke Nav + Hauptinhalt ---- */}
+      <div className="flex items-stretch">
+        {/* Linke Hauptnavigation (Desktop) - rollengefiltert */}
+        <nav className="shrink-0 w-56 py-3 self-stretch" style={{ borderRight: "1px solid var(--mc-border)", background: "var(--mc-panel)" }}>
+          {MC_NAV_GROUPS.map((g) => {
+            const items = navItems.filter((n) => n.group === g);
+            if (items.length === 0) return null;
+            return (
+              <div key={g} className="px-3 mb-3">
+                <div className="mc-eyebrow px-2 mb-1">{g}</div>
+                <div className="space-y-0.5">
+                  {items.map((it) => {
+                    const Icon = it.icon;
+                    const isActive = tab === it.tab;
+                    const badge = it.tab === "emergency" ? emCount : it.tab === "messages" ? msgOpen : 0;
+                    const crit = it.tab === "emergency" && emCrit > 0;
+                    return (
+                      <button key={it.tab} onClick={() => setTab(it.tab)}
+                        className={`w-full flex items-center gap-2.5 px-2.5 py-2 rounded-lg text-sm text-left transition-colors ${isActive ? "" : "hover:bg-white/5"}`}
+                        style={navBtnStyle(isActive)}>
+                        <Icon className="w-4 h-4 shrink-0" />
+                        <span className="flex-1 truncate">{it.label}</span>
+                        {badge > 0 && (
+                          <span className="min-w-[1.1rem] h-[1.1rem] px-1 inline-flex items-center justify-center rounded-full text-[10px] font-bold"
+                            style={it.tab === "emergency"
+                              ? (crit ? { background: "var(--mc-st-problem)", color: "#fff" } : { background: "var(--mc-st-assigned)", color: "var(--mc-bg)" })
+                              : { background: "var(--mc-st-new)", color: "#fff" }}>
+                            {badge}
+                          </span>
+                        )}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            );
+          })}
+        </nav>
+
+        {/* Hauptinhalt = bestehende Tabs/Board/Modals (identische Props wie Dashboard) */}
+        <main className="flex-1 min-w-0 px-5 py-5">
+          {(() => {
+            const withIssues = (dyn.rides || []).filter((r) => rideHasOpenIssue(r) && r.status !== "cancelled");
+            if (withIssues.length === 0) return null;
+            const setIssueState = async (rideId, st) => {
+              const res = await updateDyn((d) => {
+                const rr = d.rides.find((x) => x.id === rideId);
+                if (rr) { (rr.issues || []).filter(issueOpen).forEach((i) => { i.state = st; }); logRide(rr, st === "done" ? "problem_done" : "problem_progress", meBy); }
+                return d;
+              });
+              if (!res || !res.ok) notifyErr(res?.error || "Problemstatus konnte nicht gespeichert werden, bitte erneut versuchen.");
+            };
+            const critical = withIssues.filter((r) => (r.issues || []).some((i) => issueOpen(i) && CRITICAL_ISSUES.includes(i.type)));
+            return (
+              <div className="mb-4 rounded-xl border border-red-500/40 bg-red-500/10 p-3">
+                <div className="text-sm text-red-200 font-medium mb-2 flex items-center gap-2">
+                  <AlertTriangle className="w-4 h-4" />{withIssues.length} offene Problem-Meldung{withIssues.length > 1 ? "en" : ""}
+                  {critical.length > 0 && <span className="text-[10px] bg-red-500 text-white px-1.5 py-0.5 rounded-full uppercase tracking-wide">{critical.length}× kritisch</span>}
+                </div>
+                <div className="space-y-1.5">
+                  {withIssues.map((r) => {
+                    const drv = setup.drivers.find((d) => d.id === r.assignedDriverId);
+                    const iss = (r.issues || []).filter(issueOpen);
+                    const inProgress = iss.every((i) => i.state === "progress");
+                    const isCrit = iss.some((i) => CRITICAL_ISSUES.includes(i.type));
+                    return (
+                      <div key={r.id} className={`flex items-center flex-wrap gap-x-3 gap-y-1 text-sm rounded-lg px-3 py-2 ${isCrit ? "bg-red-500/15 border border-red-500/30" : "bg-stone-950/40"}`}>
+                        <span className="font-mono text-stone-300">{r.time}</span>
+                        <span className="text-stone-300">{drv ? `${drv.firstName} ${drv.lastName[0]}. (${drv.vehicleType === "Van" ? "Van" : "Car"})` : "kein Fahrer"}</span>
+                        <span className="text-orange-300 font-medium truncate max-w-[140px]">{r.djName || locName(r.fromId, r.fromCustom)}</span>
+                        <span className="text-red-300 truncate flex items-center gap-1.5">
+                          {isCrit && <span className="text-[9px] bg-red-500 text-white px-1 rounded uppercase">!</span>}
+                          {iss.map((i) => i.type + (i.note ? `: ${i.note}` : "")).join(" · ")}
+                        </span>
+                        <span className="text-[10px] text-stone-500">{iss[0] && fmtClock(iss[0].at)}</span>
+                        <span className={`text-[10px] px-1.5 py-0.5 rounded ${inProgress ? "bg-amber-500/20 text-amber-300" : "bg-red-500/20 text-red-300"}`}>{inProgress ? "in Bearbeitung" : "offen"}</span>
+                        <div className="ml-auto flex items-center gap-1.5 shrink-0">
+                          <button onClick={() => setTab("emergency")} className="text-xs text-orange-300 hover:text-orange-200">Notfall</button>
+                          <button onClick={() => { setDay(r.dayKey); setEditRide(r); }} className="text-xs text-stone-400 hover:text-stone-200">öffnen</button>
+                          {!inProgress && <button onClick={() => setIssueState(r.id, "progress")} className="text-xs bg-amber-600/80 hover:bg-amber-600 text-white px-2 py-1 rounded">in Arbeit</button>}
+                          <button onClick={() => setIssueState(r.id, "done")} className="text-xs bg-stone-800 hover:bg-stone-700 text-stone-200 px-2 py-1 rounded">erledigt</button>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            );
+          })()}
+          {tab === "board" && (() => {
+            const wide = boardWidth >= 960;    // Liste + Fahrer + Karte
+            const twoCol = boardWidth >= 640;  // Liste + Fahrer
+            const cols = wide ? "minmax(360px,1.7fr) minmax(160px,0.8fr) minmax(360px,1.5fr)" : twoCol ? "minmax(300px,2fr) minmax(160px,1fr)" : "1fr";
+            return (
+            <div ref={boardRef} className="grid gap-5" style={{ gridTemplateColumns: cols }}>
+              {/* Fahrtenliste */}
+              <section>
+                <div className="flex items-center gap-2 mb-3">
+                  <div className="flex gap-1 bg-stone-900 rounded-lg p-1 border border-stone-800">
+                    {[["all", "Alle"], ["unassigned", "Offen"], ["active", "Aktiv"], ["done", "Erledigt"]].map(([f, l]) => (
+                      <button key={f} onClick={() => setFilter(f)}
+                        className={`px-2.5 py-1 rounded text-sm ${filter === f ? "bg-stone-700 text-stone-100" : "text-stone-400"}`}>{l}</button>
+                    ))}
+                  </div>
+                  <div className="relative flex-1 max-w-xs">
+                    <Search className="w-4 h-4 absolute left-2.5 top-2.5 text-stone-600" />
+                    <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="DJ, Gast, Flug…"
+                      className="w-full bg-stone-900 border border-stone-800 rounded-lg pl-8 pr-8 py-2 text-sm placeholder-stone-600 focus:outline-none focus:border-orange-500" />
+                    {q && <button onClick={() => setQ("")} aria-label="Suche leeren" className="absolute right-2 top-2.5 text-stone-500 hover:text-stone-300"><X className="w-4 h-4" /></button>}
+                  </div>
+                  <button onClick={() => setEditRide({ _new: true, dayKey: day, date: day })}
+                    className="ml-auto bg-orange-600 hover:bg-orange-500 text-white text-sm px-3 py-2 rounded-lg flex items-center gap-1.5">
+                    <Plus className="w-4 h-4" />Fahrt
+                  </button>
+                </div>
+
+                <div className="space-y-2">
+                  {filtered.length === 0 && (() => {
+                    const es = rideListEmpty({ total: dayRides.length, query: q, filterLabel: filter === "all" ? null : ({ unassigned: "Offen", active: "Aktiv", done: "Erledigt" }[filter]) });
+                    return (
+                      <div className="text-stone-500 text-sm py-10 text-center border border-dashed border-stone-800 rounded-xl">
+                        {es.text}
+                        {es.reset === "search" && <button onClick={() => setQ("")} className="ml-2 text-orange-400 hover:text-orange-300 underline">Suche zurücksetzen</button>}
+                        {es.reset === "filter" && <button onClick={() => setFilter("all")} className="ml-2 text-orange-400 hover:text-orange-300 underline">Alle anzeigen</button>}
+                      </div>
+                    );
+                  })()}
+                  {filtered.map((r) => {
+                    const drv = setup.drivers.find((d) => d.id === r.assignedDriverId);
+                    return (
+                      <div key={r.id} className="bg-stone-900 border border-stone-800 rounded-xl px-4 py-3 flex items-center gap-4 hover:border-stone-700 transition">
+                        <div className="text-center min-w-[52px]">
+                          <div className="font-mono text-lg font-semibold leading-none">{r.time}</div>
+                          <div className={`text-[10px] mt-1 ${r.estDurationMin == null ? "text-orange-400" : "text-stone-500"}`}>{r.estDurationMin != null ? `${r.estDurationMin}′` : "?′"}</div>
+                        </div>
+                        <div className="w-px self-stretch bg-stone-800" />
+                        <div className="flex-1 min-w-0">
+                          {r.djName && <div className="text-base font-semibold text-orange-300 truncate mb-0.5">{r.djName}</div>}
+                          <div className="flex items-center gap-2 text-sm">
+                            <span className="text-stone-400">{locName(r.fromId, r.fromCustom)}</span>
+                            <ArrowRight className="w-3.5 h-3.5 text-stone-600 shrink-0" />
+                            <span className="text-stone-100 font-medium truncate">{locName(r.toId, r.toCustom)}</span>
+                            {r.zone && <ZoneChip zone={r.zone} className="shrink-0" />}
+                            {rideHasOpenIssue(r) && <span className="text-[10px] bg-red-500/20 text-red-300 px-1.5 py-0.5 rounded shrink-0 flex items-center gap-0.5"><AlertTriangle className="w-2.5 h-2.5" />Problem</span>}
+                            {flightDelayed(r) && <span className="text-[10px] bg-red-500/20 text-red-300 px-1.5 py-0.5 rounded shrink-0 flex items-center gap-0.5"><Plane className="w-2.5 h-2.5" />Flug {flightStyle(r.flightStatus).l}</span>}
+                          </div>
+                          <div className="flex items-center gap-3 mt-1 text-xs text-stone-500">
+                            <span className="flex items-center gap-1"><Users className="w-3 h-3" />{r.passengerCount}</span>
+                            {r.flightNo && <span className={`flex items-center gap-1 ${flightDelayed(r) ? "text-red-400 font-medium" : "text-sky-400"}`}><Plane className="w-3 h-3" />{r.flightNo}{r.flightStatus ? ` · ${flightStyle(r.flightStatus).l}` : ""}{flightDelayed(r) && " ⚠"}</span>}
+                            {r.onDemand && <span className="text-orange-400">on demand</span>}
+                          </div>
+                        </div>
+                        <div className="shrink-0"><StatusPill status={r.status} /></div>
+                        <div className="w-[150px] shrink-0">
+                          {drv ? (
+                            <button onClick={() => setAssignRide(r)} className="w-full text-left group">
+                              <div className="text-sm text-stone-200 flex items-center gap-1.5">
+                                <span className={`w-2 h-2 rounded-full ${drv.vehicleType === "Van" ? "bg-orange-400" : "bg-sky-400"}`} />
+                                {drv.firstName} {drv.lastName[0]}.
+                              </div>
+                              <div className="text-[10px] text-stone-500 font-mono">{drv.vehicleType === "Van" ? "Van" : "Car"}</div>
+                            </button>
+                          ) : (
+                            <button onClick={() => setAssignRide(r)}
+                              className="w-full bg-orange-500/15 hover:bg-orange-500/25 text-orange-300 text-sm px-2.5 py-1.5 rounded-lg flex items-center justify-center gap-1">
+                              <Navigation className="w-3.5 h-3.5" />Zuteilen
+                            </button>
+                          )}
+                        </div>
+                        <button onClick={() => setWaRide(r)} title="WhatsApp-Text" className="text-stone-600 hover:text-emerald-400 shrink-0"><MessageSquare className="w-4 h-4" /></button>
+                        <button onClick={() => setEditRide(r)} className="text-stone-600 hover:text-stone-300 shrink-0"><ChevronRight className="w-5 h-5" /></button>
+                      </div>
+                    );
+                  })}
+                </div>
+              </section>
+
+              {/* Fahrer-Live-Spalte */}
+              <section>
+                <h3 className="text-sm font-medium text-stone-400 mb-3 flex items-center gap-2"><Radio className="w-4 h-4" />Fahrer live</h3>
+                <div className="space-y-1.5">
+                  {setup.drivers.map((d) => {
+                    const s = computeDriverStats(setup, dyn, d.id, day);
+                    return <DriverRow key={d.id} setup={setup} driver={d} stats={s} />;
+                  })}
+                </div>
+              </section>
+
+              {/* Live-Karte (nur wenn genug Platz gemessen wurde, mitscrollend) */}
+              {wide && (
+                <section>
+                  <div className="sticky top-4">
+                    <BoardMiniMap setup={setup} dyn={dyn} day={day} onEdit={(r) => { setDay(r.dayKey); setEditRide(r); }} />
+                  </div>
+                </section>
+              )}
+            </div>
+            );
+          })()}
+
+          {tab === "overview" && <OverviewTab setup={setup} dyn={dyn} day={day} setTab={setTab}
+            onEdit={(r) => { setDay(r.dayKey); setEditRide(r); }} onAssign={(r) => setAssignRide(r)} />}
+          {tab === "timeline" && <TimelinePage setup={setup} dyn={dyn} day={day} updateDyn={updateDyn} by={meBy} onUndo={onUndo}
+            onEdit={(r) => { setDay(r.dayKey); setEditRide(r); }} onAssign={(r) => setAssignRide(r)} />}
+          {tab === "returns" && <ReturnsTab setup={setup} dyn={dyn} day={day} updateDyn={updateDyn} by={meBy} onErr={notifyErr}
+            onAssign={(r) => setAssignRide(r)} onWhatsApp={(r) => setWaRide(r)} onEdit={(r) => { setDay(r.dayKey); setEditRide(r); }}
+            onNewReturn={(artistName) => setEditRide({ _new: true, dayKey: day, date: day, djName: artistName, fromId: "festival", toId: "" })} />}
+          {tab === "emergency" && <EmergencyTab setup={setup} dyn={dyn} day={day} updateDyn={updateDyn} by={meBy} onErr={notifyErr}
+            onAssign={(r) => setAssignRide(r)} onWhatsApp={(r) => setWaRide(r)} onEdit={(r) => { setDay(r.dayKey); setEditRide(r); }} />}
+          {tab === "messages" && <MessagesInbox dyn={dyn} updateDyn={updateDyn} by={meBy} />}
+          {tab === "flights" && <FlightTab setup={setup} dyn={dyn} day={day} updateDyn={updateDyn} by={meBy} onErr={notifyErr} onEdit={(r) => { setDay(r.dayKey); setEditRide(r); }} />}
+          {tab === "map" && <MapTab setup={setup} dyn={dyn} day={day} onEdit={(r) => { setDay(r.dayKey); setEditRide(r); }} />}
+          {tab === "drivers" && <DriversTab setup={setup} dyn={dyn} day={day} />}
+          {tab === "settings" && <SettingsTab setup={setup} dyn={dyn} day={day} updateSetup={updateSetup} updateDyn={updateDyn} onPreviewGuest={onPreviewGuest} />}
+        </main>
+      </div>
+
+      {assignRide && (
+        <AssignModal setup={setup} dyn={dyn} ride={assignRide}
+          onClose={() => setAssignRide(null)}
+          onAssign={async (driverId) => {
+            const res = await updateDyn((d) => {
+              const r = d.rides.find((x) => x.id === assignRide.id);
+              if (r) {
+                const changed = r.assignedDriverId !== driverId;
+                const drvName = (id) => { const dr = setup.drivers.find((x) => x.id === id); return dr ? `${dr.firstName} ${dr.lastName[0]}. (${dr.vehicleType === "Van" ? "Van" : "Car"})` : "—"; };
+                if (changed) logRide(r, r.assignedDriverId ? "reassigned" : "assigned", meBy, driverId ? `→ ${drvName(driverId)}` : "Zuteilung entfernt");
+                r.assignedDriverId = driverId;
+                if ((!driverId || changed) && r.status !== "planned") setRideStatus(r, "planned", meBy);
+                else r.updatedAt = Date.now();
+                if (changed && driverId) triggerPush(driverId, "Neue Fahrt zugeteilt", `${r.time} · ${r.djName || "Fahrt"}`, `ride-${r.id}`);
+              }
+              return d;
+            });
+            if (res && res.ok) setAssignRide(null);
+            return res;
+          }} />
+      )}
+
+      {editRide && (
+        <RideForm setup={setup} ride={editRide}
+          onClose={() => setEditRide(null)}
+          onSave={async (data) => {
+            if (!editRide._new) {
+              const live = dyn.rides.find((x) => x.id === editRide.id);
+              if (live && editRide.updatedAt && live.updatedAt && live.updatedAt !== editRide.updatedAt) {
+                const lastLog = (live.log || [])[(live.log || []).length - 1];
+                const who = lastLog ? byLabel(setup, lastLog.by) : "jemand anderes";
+                const what = lastLog ? (LOG_LABEL[lastLog.event] || lastLog.event) : "eine Änderung";
+                const ok = window.confirm(`Diese Fahrt wurde inzwischen von ${who} geändert (${what}, ${fmtClock(live.updatedAt)} Uhr).\n\nStatus, Fahrer und Problemmeldungen bleiben in jedem Fall erhalten. Trotzdem mit deinen übrigen Eingaben speichern?`);
+                if (!ok) return { ok: false, cancelled: true };
+              }
+            }
+            const res = await updateDyn((d) => {
+              if (editRide._new) {
+                const nr = { id: "r" + Date.now() + Math.random().toString(36).slice(2, 6), assignedDriverId: null, ...data };
+                logRide(nr, "created", meBy, "");
+                setRideStatus(nr, "planned", meBy);
+                d.rides.push(nr);
+              } else {
+                const r = d.rides.find((x) => x.id === editRide.id);
+                if (r) {
+                  const timeChanged = data.time !== r.time || data.date !== r.date;
+                  const routeChanged = data.fromId !== r.fromId || data.toId !== r.toId || data.fromCustom !== r.fromCustom || data.toCustom !== r.toCustom;
+                  const meetChanged = (data.meetingPoint || "") !== (r.meetingPoint || "");
+                  if (timeChanged) logRide(r, "time", meBy, `${r.time} → ${data.time}`);
+                  if (routeChanged) logRide(r, "route", meBy, "Route geändert");
+                  if ((data.flightStatus || "") !== (r.flightStatus || "")) logRide(r, "flight", meBy, `Flug: ${flightStyle(data.flightStatus).l}`);
+                  const { status, assignedDriverId, issues, log, statusHistory, acceptedAt, enrouteAt, onboardAt, doneAt, cancelledAt, plannedAt, id, ...safeData } = data;
+                  Object.assign(r, safeData);
+                  if ((timeChanged || routeChanged || meetChanged) && r.assignedDriverId) {
+                    triggerPush(r.assignedDriverId, "Fahrt geändert", `${r.djName || "Fahrt"} · ${r.time}${meetChanged ? " · neuer Treffpunkt" : ""}`, `ride-${r.id}`);
+                  }
+                }
+              }
+              return d;
+            });
+            if (res && res.ok) setEditRide(null);
+            return res;
+          }}
+          onDelete={editRide._new ? null : async () => {
+            const res = await updateDyn((d) => { const r = d.rides.find((x) => x.id === editRide.id); if (r) setRideStatus(r, "cancelled", meBy); return d; });
+            if (res && res.ok) setEditRide(null);
+            return res;
+          }} />
+      )}
+
+      {waRide && (
+        <WhatsAppModal ride={waRide} setup={setup} onClose={() => setWaRide(null)}
+          onCopied={(which) => updateDyn((d) => { const r = d.rides.find((x) => x.id === waRide.id); if (r) logRide(r, "whatsapp", meBy, which); return d; })} />
+      )}
+
+      <ChatPanel setup={setup} dyn={dyn} day={day} updateDyn={updateDyn} by={meBy} />
+    </div>
+  );
 }
 
 /* ======================================================================== *
