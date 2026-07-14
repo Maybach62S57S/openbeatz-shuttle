@@ -9542,7 +9542,7 @@ function MissionControl({ setup, dyn, session, updateDyn, updateSetup, onLogout,
             <div className="md:hidden fixed inset-0 z-30" onClick={() => setMoreOpen(false)}>
               <div className="absolute inset-0 bg-black/50 backdrop-blur-sm" />
               <div className="absolute left-0 right-0 p-3" style={{ bottom: "calc(56px + env(safe-area-inset-bottom))" }} onClick={(e) => e.stopPropagation()}>
-                <div className="mx-auto max-w-md rounded-2xl overflow-hidden" style={{ background: "var(--mc-panel-raised)", border: "1px solid var(--mc-border)", boxShadow: "var(--mc-shadow-lg)" }}>
+                <div className="mc-sheet-in mx-auto max-w-md rounded-2xl overflow-hidden" style={{ background: "var(--mc-panel-raised)", border: "1px solid var(--mc-border)", boxShadow: "var(--mc-shadow-lg)" }}>
                   <div className="px-4 py-2.5 flex items-center justify-between" style={{ borderBottom: "1px solid var(--mc-border)" }}>
                     <span className="mc-eyebrow">Mehr</span>
                     <button onClick={() => setMoreOpen(false)} aria-label="Schließen" className="p-1 rounded-lg hover:bg-white/5" style={{ color: "var(--mc-text-muted)" }}><X className="w-4 h-4" /></button>
@@ -9585,9 +9585,9 @@ function MissionControl({ setup, dyn, session, updateDyn, updateSetup, onLogout,
               const label = MC_MOBILE_LABEL[it.tab] || it.label;
               return (
                 <button key={it.tab} onClick={() => { setTab(it.tab); setMoreOpen(false); }}
-                  className="relative flex-1 flex flex-col items-center justify-center gap-0.5 py-2 text-[11px]"
+                  className="mc-navbtn relative flex-1 flex flex-col items-center justify-center gap-0.5 py-2 text-[11px]"
                   style={isActive ? { color: "var(--mc-text)" } : { color: "var(--mc-text-muted)" }}>
-                  {isActive && <span className="absolute top-0 left-1/4 right-1/4 h-0.5 rounded-full" style={{ background: "var(--mc-st-new)" }} />}
+                  {isActive && <span className="mc-nav-ind absolute top-0 left-1/4 right-1/4 h-0.5 rounded-full" style={{ background: "var(--mc-st-new)" }} />}
                   <Icon className="w-5 h-5" />
                   <span className="leading-none truncate max-w-full">{label}</span>
                 </button>
@@ -9595,9 +9595,9 @@ function MissionControl({ setup, dyn, session, updateDyn, updateSetup, onLogout,
             })}
             {mobileMore.length > 0 && (
               <button onClick={() => setMoreOpen((v) => !v)} aria-expanded={moreOpen}
-                className="relative flex-1 flex flex-col items-center justify-center gap-0.5 py-2 text-[11px]"
+                className="mc-navbtn relative flex-1 flex flex-col items-center justify-center gap-0.5 py-2 text-[11px]"
                 style={(moreActive || moreOpen) ? { color: "var(--mc-text)" } : { color: "var(--mc-text-muted)" }}>
-                {moreActive && <span className="absolute top-0 left-1/4 right-1/4 h-0.5 rounded-full" style={{ background: "var(--mc-st-new)" }} />}
+                {moreActive && <span className="mc-nav-ind absolute top-0 left-1/4 right-1/4 h-0.5 rounded-full" style={{ background: "var(--mc-st-new)" }} />}
                 <MoreHorizontal className="w-5 h-5" />
                 <span className="leading-none">Mehr</span>
                 {moreBadge > 0 && (
@@ -9827,9 +9827,11 @@ function MissionStyles() {
         /* Abstaende */
         --mc-space-1: 4px; --mc-space-2: 8px; --mc-space-3: 12px;
         --mc-space-4: 16px; --mc-space-5: 24px; --mc-space-6: 32px;
-        /* Animationszeiten */
+        /* Animationszeiten (Transitions) */
         --mc-dur-fast: 120ms; --mc-dur: 200ms; --mc-dur-slow: 340ms;
         --mc-ease: cubic-bezier(0.4, 0, 0.2, 1);
+        /* Mikroanimationen (Keyframes, Slice 9): schnell 160 / normal 240 / langsam 380 ms */
+        --mc-anim-fast: 160ms; --mc-anim: 240ms; --mc-anim-slow: 380ms;
         /* Fokus */
         --mc-focus: 0 0 0 2px var(--mc-bg), 0 0 0 4px rgba(75,144,246,0.55);
         /* Disabled */
@@ -9854,6 +9856,12 @@ function MissionStyles() {
         border: 1px solid var(--mc-border);
         border-radius: var(--mc-r-lg);
         box-shadow: var(--mc-shadow), var(--mc-ring-inset);
+        animation: mc-panel-in var(--mc-anim) var(--mc-ease) both;
+      }
+      /* Effekt 1: Panels erscheinen weich beim Mount (Tab-Wechsel/Erststart) */
+      @keyframes mc-panel-in {
+        from { opacity: 0; transform: translateY(6px); }
+        to   { opacity: 1; transform: translateY(0); }
       }
 
       /* SectionHeader-Eyebrow */
@@ -9864,6 +9872,8 @@ function MissionStyles() {
         display: inline-flex; align-items: center; gap: 6px;
         padding: 3px 9px; border-radius: var(--mc-r-pill);
         font-size: 12px; font-weight: 500; line-height: 1; white-space: nowrap;
+        /* Effekt 3: weicher Uebergang, wenn sich die Statusklasse (Farbe/Fuellung) aendert */
+        transition: color var(--mc-anim) var(--mc-ease), background-color var(--mc-anim) var(--mc-ease);
       }
       .mc-badge .mc-dot { width: 6px; height: 6px; border-radius: 999px; background: currentColor; }
       .mc-badge--new      { color: var(--mc-st-new);      background: var(--mc-st-new-soft); }
@@ -9902,9 +9912,10 @@ function MissionStyles() {
         background: var(--mc-panel);
         border: 1px solid var(--mc-border);
         border-radius: var(--mc-r-lg);
-        transition: background var(--mc-dur) var(--mc-ease), border-color var(--mc-dur) var(--mc-ease), box-shadow var(--mc-dur) var(--mc-ease);
+        transition: background var(--mc-dur) var(--mc-ease), border-color var(--mc-dur) var(--mc-ease), box-shadow var(--mc-dur) var(--mc-ease), transform var(--mc-anim-fast) var(--mc-ease);
       }
-      .mc-ride-card:hover { background: var(--mc-panel-raised); border-color: var(--mc-border-strong); }
+      /* Effekt 2: Karte hebt sich minimal beim Hover (nur transform, kein Layout-Shift) */
+      .mc-ride-card:hover { background: var(--mc-panel-raised); border-color: var(--mc-border-strong); transform: translateY(-1px); }
 
       /* Sucheingabe */
       .mc-input {
@@ -9941,9 +9952,17 @@ function MissionStyles() {
       .mc-live-dot { width: 8px; height: 8px; border-radius: 999px; background: var(--mc-st-done); animation: mc-pulse-ring 2.4s ease-out infinite; }
       .mc-live-dot--off { background: var(--mc-st-idle); animation: none; }
 
+      /* Effekt 9: Mobil-Navigation reagiert fluessig */
+      .mc-navbtn { transition: color var(--mc-anim-fast) var(--mc-ease); }
+      @keyframes mc-nav-ind-in { from { opacity: 0; transform: scaleX(0.35); } to { opacity: 1; transform: scaleX(1); } }
+      .mc-nav-ind { animation: mc-nav-ind-in var(--mc-anim-fast) var(--mc-ease) both; transform-origin: center; }
+      @keyframes mc-sheet-in { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
+      .mc-sheet-in { animation: mc-sheet-in var(--mc-anim) var(--mc-ease) both; }
+
       @media (prefers-reduced-motion: reduce) {
         .mc-live-dot { animation: none; }
-        .mc-scope * { transition: none !important; }
+        /* Alle MC-Mikroanimationen und Transitions aus; Elemente stehen sofort im Endzustand */
+        .mc-scope *, .mc-scope *::before, .mc-scope *::after { animation: none !important; transition: none !important; }
       }
 
       /* Ab md gibt es keine untere Mobil-Leiste mehr -> Chat-FAB nicht mehr anheben. */
