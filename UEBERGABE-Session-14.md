@@ -200,3 +200,50 @@ AUFTRAG SESSION 14 (klein, beides MC-only):
    timeline, Label war falsch).
 Danach Diff-Beleg, dass Classic nicht getroffen ist.
 ```
+
+---
+
+## NACHTRAG (14.07., aus Jordans Live-Test): Bug im Feld "Festival-Tage"
+
+**Befund:** `setup.config.festivalDates` war in der Produktivdatenbank **leer**.
+Die Tagesleiste zeigte Do–So nur deshalb, weil `dayTabs()` zusaetzlich alle
+`dayKey`s aus vorhandenen Fahrten einsammelt. Der Montag fehlte, weil er weder
+in der Liste stand noch Fahrten hatte. Jordan traegt die fuenf Tage per
+Kalender-Picker nach (Workaround, siehe unten).
+
+**Zwei echte Bugs im Abschnitt "Festival-Tage" (Einstellungen, ~9007):**
+
+1. **Sortieren bei jedem Tastendruck zerstoert andere Eintraege.**
+   Der Edit-Handler macht:
+   ```js
+   const arr = [...(s.config.festivalDates || [])]; arr[i] = e.target.value;
+   s.config.festivalDates = [...new Set(arr.filter(Boolean))].sort();
+   ```
+   `<input type="date">` feuert onChange pro Segment. Beim Tippen der Jahreszahl
+   entstehen unterwegs gueltige Zwischen-Daten (Jahr 2 -> 20 -> 202 -> 2026).
+   Jede Zwischenstufe wird uebernommen UND neu sortiert -> der bearbeitete
+   Eintrag wandert auf eine andere Position, `i` zeigt danach auf einen ANDEREN
+   Tag, der naechste Tastendruck ueberschreibt den. So frisst das Feld beim
+   Tippen fremde Eintraege.
+   **Fix-Richtung:** nicht bei jedem onChange schreiben/sortieren, sondern erst
+   onBlur (oder lokalen Entwurfs-State pro Zeile halten und erst beim Verlassen
+   committen). Sortieren nur beim Commit, nicht waehrend der Eingabe.
+
+2. **Das Hinzufuegen-Feld leert sich nicht.**
+   ```jsx
+   <input type="date" value="" onChange={...} />
+   ```
+   Der `value=""` ist konstant, React sieht zwischen den Renders keine
+   Aenderung und fasst das DOM nicht an -> der vom Nutzer gewaehlte Wert bleibt
+   sichtbar stehen, obwohl er schon in der Liste ist. Verwirrend, aber harmlos.
+   **Fix-Richtung:** eigener State fuer das Feld, nach erfolgreichem Hinzufuegen
+   auf "" zuruecksetzen (oder `key` hochzaehlen, um das Feld neu zu mounten).
+
+**Workaround bis zum Fix:** Datum ausschliesslich per Kalender-Picker auswaehlen,
+nie tippen. Der Picker feuert ein einziges Ereignis mit vollstaendigem Datum.
+Bestehendes Datum aendern: loeschen und neu anlegen statt editieren.
+
+**Prioritaet:** niedrig fuers Festival (einmal korrekt eingetragen, fasst es
+niemand mehr an), aber der Datenverlust beim Tippen ist haesslich. Achtung: das
+ist die GETEILTE `SettingsTab`, also Classic UND MC. Kein MC-only-Fix, deshalb
+Risikoabwaegung mit Jordan vor dem Bauen.
