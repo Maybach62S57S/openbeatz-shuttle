@@ -5543,6 +5543,92 @@ function MessagesInbox({ dyn, updateDyn, by }) {
   );
 }
 
+// MC-Kopie von MessagesInbox (Tab "Chat" im Mission-Control-Modus). Etappe A:
+// byte-genaue Kopie, nur Funktionsname geaendert. Classic MessagesInbox bleibt
+// unangetastet. Render + Sende-/Fehler-Feedback folgen in Etappe B.
+function MissionMessagesInbox({ dyn, updateDyn, by }) {
+  const [sort, setSort] = useState("open"); // open | all
+  const [drafts, setDrafts] = useState({}); // messageId -> Freitext-Entwurf
+  const all = (dyn.messages || []).slice().sort((a, b) => b.at - a.at);
+  const open = all.filter((m) => !m.reply);
+  const shown = sort === "open" ? open : all;
+
+  const reply = (id, status) => {
+    const text = (drafts[id] || "").trim();
+    updateDyn((d) => {
+      const m = (d.messages || []).find((x) => x.id === id);
+      if (m) m.reply = { status, text: text || null, by, at: Date.now() };
+      return d;
+    });
+    setDrafts((cur) => { const n = { ...cur }; delete n[id]; return n; });
+  };
+  // Antwort zurücknehmen (falls man sich vertan hat) -> wieder offen.
+  const undoReply = (id) => updateDyn((d) => {
+    const m = (d.messages || []).find((x) => x.id === id);
+    if (m) m.reply = null;
+    return d;
+  });
+
+  const fromStyle = (from) => from?.startsWith("stage:") ? "text-purple-300 bg-purple-500/10 border-purple-500/30" : "text-sky-300 bg-sky-500/10 border-sky-500/30";
+  const fromKind = (from) => from?.startsWith("stage:") ? "Stage" : "Fahrer";
+  const replyStyle = { confirmed: "text-emerald-300 border-emerald-500/40 bg-emerald-500/10", declined: "text-red-300 border-red-500/40 bg-red-500/10", info: "text-sky-300 border-sky-500/40 bg-sky-500/10" };
+  const replyLabel = { confirmed: "Bestätigt", declined: "Nicht bestätigt", info: "Info" };
+
+  return (
+    <div>
+      <div className="flex items-center gap-3 mb-4 flex-wrap">
+        <h3 className="text-lg font-semibold text-stone-100 flex items-center gap-2"><MessageSquare className="w-5 h-5 text-orange-400" />Nachrichten</h3>
+        {open.length > 0 && <span className="text-xs bg-orange-500/15 text-orange-300 px-2 py-1 rounded-full">{open.length} offen</span>}
+        <div className="flex items-center gap-1 bg-stone-900 border border-stone-800 rounded-lg p-0.5 ml-auto">
+          <button onClick={() => setSort("open")} className={`text-xs px-2.5 py-1 rounded ${sort === "open" ? "bg-orange-600 text-white" : "text-stone-400"}`}>Offen</button>
+          <button onClick={() => setSort("all")} className={`text-xs px-2.5 py-1 rounded ${sort === "all" ? "bg-orange-600 text-white" : "text-stone-400"}`}>Alle</button>
+        </div>
+      </div>
+
+      {shown.length === 0 && (
+        <div className="text-stone-500 text-sm py-12 text-center border border-dashed border-stone-800 rounded-xl">
+          <MessageSquare className="w-8 h-8 mx-auto mb-2 opacity-40" />
+          {sort === "open" ? "Keine offenen Nachrichten." : "Noch keine Nachrichten eingegangen."}
+        </div>
+      )}
+
+      <div className="space-y-3 max-w-3xl">
+        {shown.map((m) => (
+          <div key={m.id} className={`rounded-xl border p-3.5 ${m.reply ? "border-stone-800 bg-stone-900" : "border-orange-500/40 bg-orange-500/5"}`}>
+            <div className="flex items-center gap-2 mb-1.5 flex-wrap">
+              <span className={`text-[10px] font-medium px-1.5 py-0.5 rounded border ${fromStyle(m.from)}`}>{fromKind(m.from)}</span>
+              <span className="text-sm font-medium text-stone-200">{m.fromLabel}</span>
+              {m.artist && <span className="text-xs text-orange-300/80">· {m.artist}</span>}
+              <span className="text-[11px] text-stone-500 font-mono ml-auto">{new Date(m.at).toLocaleString("de-DE", { weekday: "short", hour: "2-digit", minute: "2-digit" })}</span>
+            </div>
+            <div className="text-sm text-stone-100 mb-2">{m.text}</div>
+
+            {m.reply ? (
+              <div className="flex items-center gap-2 flex-wrap">
+                <div className={`text-xs border rounded-lg px-2.5 py-1.5 ${replyStyle[m.reply.status] || replyStyle.info}`}>
+                  <span className="font-medium">{replyLabel[m.reply.status] || "Antwort"}</span>{m.reply.text ? `: ${m.reply.text}` : ""}
+                </div>
+                <button onClick={() => undoReply(m.id)} className="text-[11px] text-stone-500 hover:text-stone-300">Antwort zurücknehmen</button>
+              </div>
+            ) : (
+              <div>
+                <input value={drafts[m.id] || ""} onChange={(e) => setDrafts((c) => ({ ...c, [m.id]: e.target.value }))}
+                  placeholder="Antworttext (optional)"
+                  className="w-full mb-2 bg-stone-950 border border-stone-800 rounded-lg px-2.5 py-1.5 text-sm text-stone-200 placeholder-stone-600 focus:outline-none focus:border-orange-500" />
+                <div className="flex items-center gap-2 flex-wrap">
+                  <button onClick={() => reply(m.id, "confirmed")} className="text-sm bg-emerald-600/90 hover:bg-emerald-500 text-white px-3 py-1.5 rounded-lg flex items-center gap-1.5"><Check className="w-4 h-4" />Bestätigt</button>
+                  <button onClick={() => reply(m.id, "declined")} className="text-sm bg-red-600/80 hover:bg-red-500 text-white px-3 py-1.5 rounded-lg flex items-center gap-1.5"><X className="w-4 h-4" />Nicht bestätigt</button>
+                  <button onClick={() => reply(m.id, "info")} className="text-sm bg-stone-800 hover:bg-stone-700 text-stone-100 px-3 py-1.5 rounded-lg">Nur Info senden</button>
+                </div>
+              </div>
+            )}
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 /* --------------------- Rückfahrt- / Nachtmodus (Punkt 7) ----------------- */
 // Wer ist gerade auf dem Festival-Gelände und braucht noch eine Rückfahrt?
 // Bewusst über ALLE Tage berechnet (nicht nur den gerade angezeigten), weil ein Artist
@@ -9172,7 +9258,7 @@ function MissionControl({ setup, dyn, session, updateDyn, updateSetup, onLogout,
             onNewReturn={(artistName) => setEditRide({ _new: true, dayKey: day, date: day, djName: artistName, fromId: "festival", toId: "" })} />}
           {tab === "emergency" && <EmergencyTab setup={setup} dyn={dyn} day={day} updateDyn={updateDyn} by={meBy} onErr={notifyErr}
             onAssign={(r) => setAssignRide(r)} onWhatsApp={(r) => setWaRide(r)} onEdit={(r) => { setDay(r.dayKey); setEditRide(r); }} />}
-          {tab === "messages" && <MessagesInbox dyn={dyn} updateDyn={updateDyn} by={meBy} />}
+          {tab === "messages" && <MissionMessagesInbox dyn={dyn} updateDyn={updateDyn} by={meBy} />}
           {tab === "flights" && <FlightTab setup={setup} dyn={dyn} day={day} updateDyn={updateDyn} by={meBy} onErr={notifyErr} onEdit={(r) => { setDay(r.dayKey); setEditRide(r); }} />}
           {tab === "map" && <MapTab setup={setup} dyn={dyn} day={day} onEdit={(r) => { setDay(r.dayKey); setEditRide(r); }} />}
           {tab === "drivers" && <MissionDriversTab setup={setup} dyn={dyn} day={day} />}
