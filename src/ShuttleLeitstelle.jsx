@@ -9454,6 +9454,7 @@ function MissionControl({ setup, dyn, session, updateDyn, updateSetup, onLogout,
   const kpi = {
     total: dayRides.filter((r) => r.status !== "cancelled").length,
     unassigned: dayRides.filter((r) => !r.assignedDriverId && r.status !== "cancelled").length,
+    pending: dayRides.filter((r) => r.status === "planned").length,
     active: dayRides.filter((r) => ["accepted", "enroute_pickup", "onboard"].includes(r.status)).length,
     done: dayRides.filter((r) => r.status === "done").length,
   };
@@ -9587,7 +9588,7 @@ function MissionControl({ setup, dyn, session, updateDyn, updateSetup, onLogout,
           </div>
           <div className="flex-1" />
           <div className="flex gap-2 pt-2.5">
-            {[["Fahrten", kpi.total, null], ["Offen", kpi.unassigned, kpi.unassigned ? "assigned" : null], ["Aktiv", kpi.active, "enroute"], ["Erledigt", kpi.done, "done"]].map(([l, v, st]) => (
+            {[["Fahrten", kpi.total, null], ["Offen", kpi.unassigned, kpi.unassigned ? "assigned" : null], ["Anstehend", kpi.pending, "new"], ["Aktiv", kpi.active, "enroute"], ["Erledigt", kpi.done, "done"]].map(([l, v, st]) => (
               <div key={l} className="px-3 py-1.5 rounded-lg text-center min-w-[68px]" style={{ background: "var(--mc-panel)", border: "1px solid var(--mc-border)" }}>
                 <div className="text-[10px] uppercase tracking-wide" style={{ color: "var(--mc-text-muted)" }}>{l}</div>
                 <div className="text-lg font-semibold leading-none mt-0.5" style={{ color: st && MC_STATUS[st] ? `var(--mc-st-${MC_STATUS[st].key})` : "var(--mc-text)" }}><MissionCount value={v} /></div>
