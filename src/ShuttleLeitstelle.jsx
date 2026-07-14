@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, useRef, useCallback } from "react";
+import { useState, useEffect, useMemo, useRef, useCallback, useLayoutEffect } from "react";
 import * as XLSX from "xlsx";
 import {
   Car, Clock, Users, Plane, Coffee, CheckCircle2, Map as MapIcon, MapPin,
@@ -8222,6 +8222,121 @@ function SchematicMap({ nodes, positions, openRides, selected, hovered, onSelect
   );
 }
 
+// --- Mission-Control-Variante der Schema-Karte (Effekt 10) -----------------
+// Nur fuer uiMode "mission-control". Classic nutzt weiter SchematicMap/DriverMarker
+// byte-genau unveraendert. Einziger Unterschied: Fahrer-Marker gleiten bei kleiner
+// Positionsaenderung weich (CSS-transform-Transition) statt hart zu springen; bei
+// grossen Spruengen / erster Erscheinung teleportieren sie weiterhin. Reduced-motion
+// greift automatisch ueber den ".mc-scope * { transition: none }"-Block (10035).
+// KEINE Daten-/GPS-/Statuslogik: wir LESEN nur pos.xy (identisch zu DriverMarker).
+const MC_GLIDE_MAX_JUMP = 90; // SVG-Nutzereinheiten; groesserer Sprung -> teleportieren statt gleiten
+function mcMarkerAnimate(prev, cur) {
+  if (!prev || !cur) return false;               // erste Erscheinung -> teleportieren (kein Gleiten)
+  const dx = cur.x - prev.x, dy = cur.y - prev.y;
+  return (dx * dx + dy * dy) <= MC_GLIDE_MAX_JUMP * MC_GLIDE_MAX_JUMP;
+}
+
+// Wie DriverMarker, aber die Position sitzt als CSS-transform am aeusseren <g>
+// (Kinder relativ zu 0,0), damit sie per CSS-Transition weich wandern kann.
+// cx/cy lassen sich nicht zuverlaessig transitionen, transform schon.
+function MissionDriverMarker({ pos, selected, animate, onSelect, onHover }) {
+  if (!pos.xy) return null;
+  const stl = STATUS_STYLE[pos.mode] || STATUS_STYLE.free;
+  const r = selected ? 16 : 13;
+  const warn = pos.problem || pos.lateMin > 0 || pos.uncertain;
+  const warnColor = pos.problem ? "#ef4444" : pos.lateMin > 0 ? "#ef4444" : "#f59e0b";
+  return (
+    <g
+      style={{
+        cursor: "pointer",
+        transform: `translate(${pos.xy.x}px, ${pos.xy.y}px)`,
+        transition: animate ? "transform var(--mc-anim-slow) var(--mc-ease)" : "none",
+      }}
+      onClick={() => onSelect(selected ? null : pos.driver.id)}
+      onMouseEnter={() => onHover(pos.driver.id)} onMouseLeave={() => onHover(null)}>
+      {selected && <circle cx={0} cy={0} r={r + 5} fill="none" stroke="#fdba74" strokeWidth="2.5" />}
+      {/* GPS exakt = voll, geschätzt = gestrichelter Ring (Punkt 16) */}
+      {pos.positionSource !== "gps" && <circle cx={0} cy={0} r={r + 2.5} fill="none" stroke={stl.fill} strokeWidth="1.5" strokeDasharray="2 2.5" opacity="0.6" />}
+      <circle cx={0} cy={0} r={r} fill={stl.fill} stroke="#0c0a09" strokeWidth="2" />
+      <text x={0} y={3.8} textAnchor="middle" fontSize={selected ? "11.5" : "10.5"} fill="#0c0a09" fontWeight="800">{driverInitials(pos.driver)}</text>
+      {warn && (
+        <g>
+          <circle cx={r - 1} cy={-r + 1} r="6.5" fill={warnColor} stroke="#0c0a09" strokeWidth="1.2" />
+          <text x={r - 1} y={-r + 4.5} textAnchor="middle" fontSize="9.5" fill="#fff" fontWeight="800">!</text>
+        </g>
+      )}
+    </g>
+  );
+}
+
+// Wie SchematicMap, aber mit gleitenden Fahrer-Markern. Zwei bewusste Unterschiede
+// gegenueber der Classic-Variante, damit CSS-Transitionen ueberhaupt feuern:
+//  1) EIN Knoten je Fahrer mit stabilem, positions-unabhaengigem Key (Identitaet
+//     bleibt ueber Renders erhalten). Der ausgewaehlte wird NICHT als zweites
+//     Element gedoppelt, sondern nur zuletzt gezeichnet (oben).
+//  2) Sprung-vs-Gleiten-Heuristik: kleine Schritte gleiten, grosse teleportieren.
+function MissionSchematicMap({ nodes, positions, openRides, selected, hovered, onSelect, onHover, activeOpen, onOpenClick }) {
+  const nodeList = Object.values(nodes);
+  const festival = nodes.festival;
+  const zoneNodes = nodeList.filter((n) => n.type === "zone");
+  const hoveredPos = positions.find((p) => p.driver.id === hovered);
+  const movers = positions.filter((p) => (p.mode === "onboard" || p.mode === "toPickup") && p.fromXY && p.toXY);
+
+  // letzte gerenderte x/y je Fahrer merken (rein fuer die Anzeige, keine
+  // Fach-/Schreiblogik). Update nach dem Commit, damit der Vergleich beim
+  // naechsten Render gegen den zuletzt gezeichneten Stand laeuft.
+  const lastXY = useRef({});
+  const animateMap = {};
+  positions.forEach((p) => { if (p.xy) animateMap[p.driver.id] = mcMarkerAnimate(lastXY.current[p.driver.id], p.xy); });
+  useLayoutEffect(() => {
+    const next = {};
+    positions.forEach((p) => { if (p.xy) next[p.driver.id] = { x: p.xy.x, y: p.xy.y }; });
+    lastXY.current = next;
+  });
+
+  // Ein Knoten je Fahrer; ausgewaehlter zuletzt (= oben). Sortierung aendert nur
+  // die Zeichenreihenfolge, dank stabilem Key bleibt die Identitaet erhalten.
+  const orderedMarkers = positions.filter((p) => p.xy)
+    .sort((a, b) => (a.driver.id === selected ? 1 : 0) - (b.driver.id === selected ? 1 : 0));
+
+  return (
+    <svg viewBox={`0 0 ${MAP_VW} ${MAP_VH}`} className="w-full h-auto" style={{ maxHeight: 640 }}>
+      {/* Basis-Netz */}
+      {MAP_EDGES.map(([a, b], i) => nodes[a] && nodes[b] && <RoutePath key={i} a={nodes[a]} b={nodes[b]} color="#292524" width="3" />)}
+      {festival && zoneNodes.map((z) => <RoutePath key={z.id} a={festival} b={z} color="#292524" width="2.5" />)}
+
+      {/* aktive Fahrer-Routen (Punkt 6) */}
+      {movers.map((p) => {
+        const isSel = p.driver.id === selected;
+        const col = p.mode === "onboard" ? "#f97316" : "#3b82f6";
+        return <RoutePath key={"r" + p.driver.id} a={nodes[p.fromId]} b={nodes[p.toId]} color={col} dashed={p.mode === "toPickup"} width={isSel ? 4 : 2.5} opacity={isSel ? 1 : 0.75} />;
+      })}
+
+      {/* offene Fahrten (Punkt 14) */}
+      {activeOpen && nodes[activeOpen.fromNode] && nodes[activeOpen.toNode] && (
+        <RoutePath a={nodes[activeOpen.fromNode]} b={nodes[activeOpen.toNode]} color="#a8a29e" dashed width="2" opacity="0.8" />
+      )}
+      {openRides.map((o, i) => nodes[o.fromNode] && (
+        <OpenRideMarker key={i} x={nodes[o.fromNode].x + o.ox} y={nodes[o.fromNode].y + o.oy} color={o.color}
+          active={activeOpen === o} onClick={() => onOpenClick(activeOpen === o ? null : o)} />
+      ))}
+
+      {/* Knoten */}
+      {nodeList.map((n) => <MapNode key={n.id} node={n} />)}
+
+      {/* Fahrer-Marker: EIN Knoten je Fahrer, stabiler Key (Transition-Identitaet),
+          ausgewaehlter zuletzt gezeichnet = oben (SVG kennt kein z-index). */}
+      {orderedMarkers.map((p) => (
+        <MissionDriverMarker key={p.driver.id} pos={p} selected={p.driver.id === selected}
+          animate={animateMap[p.driver.id]} onSelect={onSelect} onHover={onHover} />
+      ))}
+
+      {/* Tooltip */}
+      {hoveredPos && hovered !== selected && <MapTooltip pos={hoveredPos} setup={null} nodes={nodes} />}
+    </svg>
+  );
+}
+
 // Gemeinsame Berechnung (von großer Karte und Board-Minikarte genutzt).
 function computeMapPositions(setup, dyn, day, nowMin, mode, nodes) {
   const ctx = { setup, dyn, dayKey: day, nowMin, mode, nodes };
@@ -8259,7 +8374,7 @@ function computeOpenRides(setup, dyn, day, nodes) {
 }
 
 // Kompakte Live-Karte für die Board-Ansicht (breite Bildschirme, mitscrollend).
-function BoardMiniMap({ setup, dyn, day, onEdit }) {
+function BoardMiniMap({ setup, dyn, day, onEdit, SchematicComponent = SchematicMap }) {
   const isToday = dayNowMin(day) >= 0 && dayNowMin(day) < 90000;
   const [simMin, setSimMin] = useState(isToday ? dayNowMin(day) : 1080);
   const [selected, setSelected] = useState(null);
@@ -8287,7 +8402,7 @@ function BoardMiniMap({ setup, dyn, day, onEdit }) {
         )}
         {isToday && <span className="text-[10px] text-emerald-400 ml-auto">live</span>}
       </div>
-      <SchematicMap nodes={nodes} positions={positions} openRides={openRides}
+      <SchematicComponent nodes={nodes} positions={positions} openRides={openRides}
         selected={selected} hovered={hovered} onSelect={setSelected} onHover={setHovered}
         activeOpen={null} onOpenClick={() => {}} />
       <div className="flex flex-wrap gap-x-3 gap-y-1 px-1 pt-1.5 text-[10px] text-stone-400">
@@ -8458,7 +8573,7 @@ function NoGpsSharingPanel({ setup, dyn, day }) {
   );
 }
 
-function MapTab({ setup, dyn, day, onEdit }) {
+function MapTab({ setup, dyn, day, onEdit, SchematicComponent = SchematicMap }) {
   const isToday = dayNowMin(day) >= 0 && dayNowMin(day) < 90000;
   const [mode, setMode] = useState(isToday ? "live" : "sim");   // 'live' | 'sim' (Punkt 8)
   const [simMin, setSimMin] = useState(isToday ? dayNowMin(day) : 1080);
@@ -8532,7 +8647,7 @@ function MapTab({ setup, dyn, day, onEdit }) {
             <LiveGoogleMap setup={setup} dyn={dyn} />
           ) : (
             <>
-              <SchematicMap nodes={nodes} positions={shown} openRides={openRides}
+              <SchematicComponent nodes={nodes} positions={shown} openRides={openRides}
                 selected={selected} hovered={hovered} onSelect={setSelected} onHover={setHovered}
                 activeOpen={activeOpen} onOpenClick={setActiveOpen} />
               <MapLegend counts={counts} />
@@ -9540,7 +9655,7 @@ function MissionControl({ setup, dyn, session, updateDyn, updateSetup, onLogout,
               {wide && (
                 <section>
                   <div className="sticky top-4">
-                    <BoardMiniMap setup={setup} dyn={dyn} day={day} onEdit={(r) => { setDay(r.dayKey); setEditRide(r); }} />
+                    <BoardMiniMap setup={setup} dyn={dyn} day={day} SchematicComponent={MissionSchematicMap} onEdit={(r) => { setDay(r.dayKey); setEditRide(r); }} />
                   </div>
                 </section>
               )}
@@ -9559,7 +9674,7 @@ function MissionControl({ setup, dyn, session, updateDyn, updateSetup, onLogout,
             onAssign={(r) => setAssignRide(r)} onWhatsApp={(r) => setWaRide(r)} onEdit={(r) => { setDay(r.dayKey); setEditRide(r); }} />}
           {tab === "messages" && <MissionMessagesInbox dyn={dyn} updateDyn={updateDyn} by={meBy} />}
           {tab === "flights" && <FlightTab setup={setup} dyn={dyn} day={day} updateDyn={updateDyn} by={meBy} onErr={notifyErr} onEdit={(r) => { setDay(r.dayKey); setEditRide(r); }} />}
-          {tab === "map" && <MapTab setup={setup} dyn={dyn} day={day} onEdit={(r) => { setDay(r.dayKey); setEditRide(r); }} />}
+          {tab === "map" && <MapTab setup={setup} dyn={dyn} day={day} SchematicComponent={MissionSchematicMap} onEdit={(r) => { setDay(r.dayKey); setEditRide(r); }} />}
           {tab === "drivers" && <MissionDriversTab setup={setup} dyn={dyn} day={day} />}
           {tab === "settings" && <SettingsTab setup={setup} dyn={dyn} day={day} updateSetup={updateSetup} updateDyn={updateDyn} onPreviewGuest={onPreviewGuest} />}
         </main>
