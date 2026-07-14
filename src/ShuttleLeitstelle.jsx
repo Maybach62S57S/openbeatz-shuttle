@@ -4850,6 +4850,142 @@ function DriversTab({ setup, dyn, day }) {
   );
 }
 
+/* -------- Mission-Control-Variante der Fahrer-Uebersicht (Session 8, Teil 1) --
+ * Eigenstaendige Kopie von DriversTab, nur fuer uiMode === "mission-control".
+ * DATENABLEITUNG + SORTIERUNG SIND VERBATIM aus DriversTab uebernommen
+ * (computeDriverStats, maxMin, live, freeCount/busyCount, Sortierregel). Es wird
+ * KEINE Fahrer-, Status-, Rollen-, Zuteilungs- oder GPS-SCHREIBLOGIK veraendert.
+ * Neu ist ausschliesslich der Render (MC-Design). Online/Offline + letzter
+ * Kontakt werden NUR GELESEN aus driverState[id].gps mit derselben Frische-Regel
+ * wie die Live-Karte (GPS_MAX_AGE_MS, fmtAgo) - exakt wie an den bestehenden
+ * Lesestellen. Der aktuelle Auftrag ist die von computeDriverStats ohnehin schon
+ * berechnete laufende Fahrt (s.active), nur bisher nicht angezeigt. Classic
+ * DriversTab bleibt byte-genau unveraendert. */
+function MissionDriversTab({ setup, dyn, day }) {
+  const [, setTick] = useState(0);
+  useEffect(() => { const t = setInterval(() => setTick((x) => x + 1), 30000); return () => clearInterval(t); }, []);
+
+  // ---- Datenableitung: VERBATIM aus DriversTab (keine Logikaenderung) ----
+  const rows = setup.drivers.map((d) => ({ d, s: computeDriverStats(setup, dyn, d.id, day) }));
+  const maxMin = Math.max(1, ...rows.map((r) => r.s.drivingMin));
+  const now = dayNowMin(day);
+  const live = now >= 0 && now < 90000;
+  const ln = (id) => setup.locations.find((l) => l.id === id)?.short || null;
+  const freeCount = rows.filter((r) => r.s.availability === "free").length;
+  const busyCount = rows.length - freeCount;
+  const sorted = rows.slice().sort((a, b) => {
+    // Beim Zuteilen sind freie Fahrer am interessantesten -> zuerst die freien
+    // (nach geringster Auslastung), dann die belegten. (identisch zu DriversTab)
+    if (live && a.s.availability !== b.s.availability) return a.s.availability === "free" ? -1 : 1;
+    if (live && a.s.availability === "free" && b.s.availability === "free") return a.s.drivingMin - b.s.drivingMin;
+    return b.s.drivingMin - a.s.drivingMin;
+  });
+
+  // ---- rein PRAESENTATIONAL (neu, keine Logikaenderung) ----
+  // Online/letzter Kontakt: nur Lesen, gleiche Frische-Regel wie die Live-Karte.
+  const gpsInfo = (id) => {
+    const fix = dyn.driverState?.[id]?.gps;
+    if (!fix || fix.at == null) return { has: false, online: false, ago: null };
+    return { has: true, online: (Date.now() - fix.at) <= GPS_MAX_AGE_MS, ago: fmtAgo(fix.at) };
+  };
+  // Aktueller Auftrag = laufende Fahrt (s.active): Zeit + Route, reine Anzeige.
+  const activeRoute = (r) => r ? { time: r.time, from: ln(r.fromId) || r.fromCustom || "?", to: ln(r.toId) || r.toCustom || "?" } : null;
+
+  if (!setup.drivers.length) {
+    return (
+      <div className="mc-scope">
+        <MissionPanel icon={Users} title="Fahrer" subtitle={`Auslastung ${fmtDate(day)}`}>
+          <EmptyState icon={Users} title="Keine Fahrer geladen"
+            hint="Sobald Fahrer in den Stammdaten stehen, erscheinen sie hier mit Status, Auslastung und Live-Kontakt." />
+        </MissionPanel>
+      </div>
+    );
+  }
+
+  return (
+    <div className="mc-scope space-y-3">
+      <MissionPanel
+        icon={Users}
+        title="Fahrer"
+        subtitle={`Auslastung ${fmtDate(day)} · gleichmäßiger Einsatz`}
+        actions={live ? (
+          <div className="flex items-center gap-2">
+            <StatusBadge status="done" label={`${freeCount} frei`} />
+            <StatusBadge status="enroute" label={`${busyCount} auf Fahrt`} />
+          </div>
+        ) : null}
+      >
+        <div className="grid grid-cols-1 xl:grid-cols-2 gap-2">
+          {sorted.map(({ d, s }) => {
+            const loc = live ? ln(s.locNow) : null;
+            const freeAtTxt = live && s.availability === "busy" && s.freeAt != null ? fromMin(s.freeAt) : null;
+            const overload = s.drivingMin >= setup.config.softHoursMin;
+            const gi = gpsInfo(d.id);
+            const ar = live ? activeRoute(s.active) : null;
+            const pct = Math.round((s.drivingMin / maxMin) * 100);
+            const isVan = d.vehicleType === "Van";
+            return (
+              <div key={d.id} className="mc-ride-card" style={{ padding: "12px 14px" }}>
+                {/* Kopf: Fahrzeug + Name + Online + Status */}
+                <div className="flex items-center gap-3">
+                  <span className="inline-flex items-center gap-1 text-[11px] font-mono px-1.5 py-0.5 rounded shrink-0"
+                    style={{ background: isVan ? "var(--mc-st-assigned-soft)" : "var(--mc-st-new-soft)", color: isVan ? "var(--mc-st-assigned)" : "var(--mc-st-new)" }}>
+                    <Car className="w-3 h-3" />{isVan ? "Van" : "Car"}
+                  </span>
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-center gap-2">
+                      <span className="text-sm font-semibold truncate" style={{ color: "var(--mc-text)" }}>{d.firstName} {d.lastName}</span>
+                      {gi.has && (
+                        <span className="inline-flex items-center gap-1 text-[10px] shrink-0"
+                          style={{ color: gi.online ? "var(--mc-st-done)" : "var(--mc-text-muted)" }}>
+                          {gi.online ? <Wifi className="w-3 h-3" /> : <WifiOff className="w-3 h-3" />}
+                          {gi.online ? "Online" : "Offline"}
+                        </span>
+                      )}
+                    </div>
+                    {gi.has && (
+                      <div className="text-[10px] mt-0.5" style={{ color: "var(--mc-text-muted)" }}>letzter Kontakt {gi.ago}</div>
+                    )}
+                  </div>
+                  {live && (
+                    s.availability === "free"
+                      ? <StatusBadge status="done" label={`Frei${loc ? ` · ${loc}` : ""}`} />
+                      : <StatusBadge status="enroute" label={`Auf Fahrt${freeAtTxt ? ` · frei ${freeAtTxt}` : ""}`} />
+                  )}
+                </div>
+
+                {/* Aktueller Auftrag (laufende Fahrt) */}
+                {ar && (
+                  <div className="mt-2 flex items-center gap-1.5 text-xs rounded-md px-2 py-1"
+                    style={{ background: "var(--mc-inset)", color: "var(--mc-text-secondary)" }}>
+                    <Navigation className="w-3.5 h-3.5 shrink-0" style={{ color: "var(--mc-st-enroute)" }} />
+                    <span className="font-mono shrink-0" style={{ color: "var(--mc-text)" }}>{ar.time}</span>
+                    <span className="truncate">{ar.from}</span>
+                    <ArrowRight className="w-3 h-3 shrink-0" />
+                    <span className="truncate">{ar.to}</span>
+                  </div>
+                )}
+
+                {/* Auslastung: Balken + Fahrten-Count + Fahrzeit */}
+                <div className="mt-2 flex items-center gap-3">
+                  <div className="flex-1" style={{ height: 6, borderRadius: 999, background: "var(--mc-inset)", overflow: "hidden" }}>
+                    <div style={{ height: "100%", width: `${pct}%`, borderRadius: 999, background: overload ? "var(--mc-st-problem)" : "var(--mc-st-assigned)" }} />
+                  </div>
+                  <span className="text-xs font-mono shrink-0" style={{ color: "var(--mc-text-secondary)" }}>{s.count}×</span>
+                  <span className="text-xs font-mono shrink-0 inline-flex items-center gap-1"
+                    style={{ color: overload ? "var(--mc-st-problem)" : "var(--mc-text-secondary)" }}>
+                    <Gauge className="w-3.5 h-3.5" />{fmtDur(s.drivingMin)}
+                  </span>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      </MissionPanel>
+    </div>
+  );
+}
+
 /* -------- Punkt 5: WhatsApp-Texte (nur generieren + kopieren) ------------- */
 function waLoc(setup, id, custom) { return setup.locations.find((l) => l.id === id)?.name || custom || "—"; }
 function waDriverText(setup, ride) {
@@ -8612,7 +8748,7 @@ function MissionControl({ setup, dyn, session, updateDyn, updateSetup, onLogout,
           {tab === "messages" && <MessagesInbox dyn={dyn} updateDyn={updateDyn} by={meBy} />}
           {tab === "flights" && <FlightTab setup={setup} dyn={dyn} day={day} updateDyn={updateDyn} by={meBy} onErr={notifyErr} onEdit={(r) => { setDay(r.dayKey); setEditRide(r); }} />}
           {tab === "map" && <MapTab setup={setup} dyn={dyn} day={day} onEdit={(r) => { setDay(r.dayKey); setEditRide(r); }} />}
-          {tab === "drivers" && <DriversTab setup={setup} dyn={dyn} day={day} />}
+          {tab === "drivers" && <MissionDriversTab setup={setup} dyn={dyn} day={day} />}
           {tab === "settings" && <SettingsTab setup={setup} dyn={dyn} day={day} updateSetup={updateSetup} updateDyn={updateDyn} onPreviewGuest={onPreviewGuest} />}
         </main>
       </div>
