@@ -287,3 +287,53 @@ zweitrangig — Jordan koennte dann vor dem Festival keine Einstellung aendern.
 Montags-Fahrten importieren. `dayTabs()` sammelt alle `dayKey`s aus den Fahrten
 ein, der Tag erscheint dann automatisch — ohne dass dieses Feld je funktionieren
 muss. Die festivalDates-Liste ist nur fuer Tage OHNE Fahrten noetig.
+
+### Nachtrag 3 (14.07., 21:16) — BESTAETIGT per Netzwerk-Antwort aus der Produktivdatenbank
+
+Die Hypothese aus Nachtrag 2 ist **verifiziert**. Rohantwort von
+`settings` (Supabase), Abschnitt `config`:
+
+```json
+"config": {
+  "stagePin": "",
+  "defaultPin": "1234",
+  "festivalDates": [
+    ""
+  ],
+  "vapidPublicKey": "BBWE...",
+  "coordinationPhone": ""
+},
+"updated_at": "2026-07-14T19:09:35.806465+00:00"
+```
+
+**`festivalDates` enthaelt genau einen Eintrag, und der ist ein leerer String.**
+
+Damit ist jede Beobachtung erklaert:
+- `.map()` rendert eine Zeile inkl. X (Liste hat ein Element).
+- Deren `<input type="date" value="">` ist leer; Safari stellt beim Reload den
+  zuletzt eingegebenen Formularwert wieder her -> "14.07.2026" ist ein
+  Browser-Geisterwert, KEINE Daten.
+- `dayTabs()` filtert per `.filter(Boolean)` -> kein Tab fuer den leeren Eintrag.
+- Jordan klickt gegen die Browser-Anzeige, nicht gegen echte Werte.
+
+**Ebenfalls bestaetigt: `updateSetup` funktioniert.** `updated_at` 21:09 Ortszeit,
+und Jordans Aenderung in der Fahrzeit-Matrix (3/1 -> 4/1) hat den Reload
+ueberlebt. Netzwerk sauber (settings ~7 KB, 60-170 ms, keine Fehler). Die
+Sorge aus Nachtrag 2, dass setup-Writes generell scheitern, ist **ausgeraeumt**.
+
+**Damit praezisiert sich der Fix (Prioritaet weiterhin niedrig, aber jetzt klar):**
+1. **Beim Laden bereinigen:** `festivalDates` defensiv durch `.filter(Boolean)`
+   schicken (in der Migration/Normalisierung beim Setup-Load), damit leere
+   Eintraege gar nicht erst als Zeile erscheinen. Das ist der eigentliche Fix.
+2. `autoComplete="off"` an beide Datumsfelder -> kein Geisterwert nach Reload.
+3. Hinzufuegen-Feld: eigener State + Reset nach Erfolg (statt konstantem
+   `value=""`, das React nicht ins DOM zurueckschreibt).
+4. Edit-Handler: erst onBlur committen statt bei jedem onChange sortieren
+   (siehe Nachtrag 1).
+
+**Woher der leere Eintrag stammt, ist unklar** und wurde nicht weiter verfolgt.
+Kandidat: der Edit-Handler oder ein frueherer Migrationsschritt. Punkt 1 macht
+das robust, unabhaengig von der Ursache.
+
+**Achtung:** `SettingsTab` ist mit Classic geteilt. Kein MC-only-Fix, also
+Risikoabwaegung + Diff-Beleg + Rollencheck vor dem Bauen.
