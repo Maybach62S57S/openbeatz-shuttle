@@ -7113,6 +7113,400 @@ function TimelinePage({ setup, dyn, day, onEdit, onAssign, updateDyn, by, onUndo
   );
 }
 
+function MissionTimelinePage({ setup, dyn, day, onEdit, onAssign, updateDyn, by, onUndo }) {
+  const ln = (id, c) => setup.locations.find((l) => l.id === id)?.short || c || "—";
+  const [, setTick] = useState(0);
+  useEffect(() => { const t = setInterval(() => setTick((x) => x + 1), 30000); return () => clearInterval(t); }, []);
+  const [filter, setFilter] = useState("all");
+  const [selectedId, setSelectedId] = useState(null);
+  const gridRef = useRef(null);
+  const scrollRef = useRef(null); // die horizontal scrollbare Zeitraster-Fläche (für Zoom + Ziehen-Berechnung)
+  const [drag, setDrag] = useState(null);
+  const dragRef = useRef(null);
+  // Bestätigung vor dem eigentlichen Verschieben: erst nach Loslassen wird nichts
+  // sofort übernommen, sondern ein Hinweis an der Zielposition eingeblendet.
+  // Reines Antippen (kein echtes Ziehen) braucht weiterhin keine Bestätigung.
+  const [pendingDrop, setPendingDrop] = useState(null);
+  // Kurzer "Rückgängig"-Hinweis direkt an der Fahrt, nachdem eine Verschiebung
+  // bestätigt wurde — verschwindet nach ein paar Sekunden von selbst.
+  const [recentlyMoved, setRecentlyMoved] = useState(null);
+  useEffect(() => {
+    if (!recentlyMoved) return;
+    const t = setTimeout(() => setRecentlyMoved((r) => (r && r.at === recentlyMoved.at ? null : r)), 8000);
+    return () => clearTimeout(t);
+  }, [recentlyMoved]);
+  useEffect(() => {
+    if (!pendingDrop) return;
+    const onKey = (e) => { if (e.key === "Escape") setPendingDrop(null); };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [pendingDrop]);
+
+  const nowMin = dayNowMin(day);
+  const live = nowMin >= 0 && nowMin < 90000;
+  const allRides = (dyn.rides || []).filter((r) => r.dayKey === day && r.status !== "cancelled");
+
+  const start = (r) => sortMin(r.time);
+  const end = (r) => sortMin(r.time) + effDur(setup.config, r);
+  const barColor = (r) => r.status === "done" ? "bg-emerald-600/80 border-emerald-400"
+    : r.status === "onboard" ? "bg-orange-500/90 border-orange-300"
+      : r.status === "enroute_pickup" ? "bg-blue-500/90 border-blue-300"
+        : r.status === "accepted" ? "bg-blue-500/50 border-blue-400"
+          : "bg-stone-600/70 border-stone-400";
+  const hasConflict = (rs, i) => rs.some((o, j) => j !== i && start(o) < end(rs[i]) && end(o) > start(rs[i]));
+
+  let winStart = 720, winEnd = 1620, hours = [];
+  if (allRides.length > 0) {
+    winStart = Math.floor((Math.min(...allRides.map(start)) - 20) / 30) * 30;
+    winEnd = Math.ceil((Math.max(...allRides.map(end)) + 20) / 30) * 30;
+  }
+  const span = Math.max(60, winEnd - winStart);
+  const pct = (m) => ((m - winStart) / span) * 100;
+  for (let m = Math.ceil(winStart / 60) * 60; m <= winEnd; m += 60) hours.push(m);
+  const showNowLine = live && nowMin >= winStart && nowMin <= winEnd;
+
+  // Zoom: Zeitraster bekommt eine feste Pixelbreite statt sich immer auf die
+  // verfügbare Breite zu strecken -> "Passend" misst die tatsächlich
+  // verfügbare Breite und setzt den Zoom so, dass alles ohne Scrollen reinpasst
+  // (das ist der bisherige, einzige Zustand gewesen). +/- weicht davon ab,
+  // wird bei Bedarf horizontal scrollbar. Läuft automatisch neu beim
+  // Tageswechsel, NICHT bei jeder kleinen Datenänderung — sonst würde ein
+  // manuell gewählter Zoom ständig überschrieben.
+  const [zoom, setZoom] = useState(1);
+  const ZOOM_MIN = 0.4, ZOOM_MAX = 5;
+  const BASE_PX_PER_MIN = 1.3;
+  const fitToScreen = useCallback(() => {
+    const el = scrollRef.current;
+    const available = el ? el.clientWidth - TL_LABEL_W : 0;
+    if (available <= 0) { setZoom(1); return; }
+    const needed = available / (span * BASE_PX_PER_MIN);
+    setZoom(Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, needed)));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [span]);
+  useEffect(() => { fitToScreen(); }, [day]); // eslint-disable-line react-hooks/exhaustive-deps
+  const pxPerMin = BASE_PX_PER_MIN * zoom;
+  const contentW = Math.max(280, span * pxPerMin);
+  // Konflikt-Zähler: über den kompletten (ungefilterten) Tag, nicht nur die sichtbare Auswahl.
+  const withDriverAll = setup.drivers.map((d) => ({ d, rs: allRides.filter((r) => r.assignedDriverId === d.id).sort((a, b) => start(a) - start(b)) }));
+  let conflictCount = 0;
+  withDriverAll.forEach(({ rs }) => rs.forEach((r, i) => { if (hasConflict(rs, i)) conflictCount++; }));
+
+  // Status-Filter — filtert welche FAHRTEN gezeigt werden (Alle/Unterwegs/...).
+  // Fahrer-ZEILEN bleiben unabhängig davon immer alle sichtbar (siehe withDriver
+  // unten), auch wenn der Filter gerade keine ihrer Fahrten zeigt.
+  const FILTERS = [["all", "Alle"], ["active", "Unterwegs"], ["problem", "Problem"], ["done", "Erledigt"], ["unassigned", "Ohne Fahrer"]];
+  const passesFilter = (r) => {
+    if (filter === "active") return ["enroute_pickup", "onboard"].includes(r.status);
+    if (filter === "problem") return rideHasOpenIssue(r);
+    if (filter === "done") return r.status === "done";
+    if (filter === "unassigned") return !r.assignedDriverId;
+    return true;
+  };
+  const rides = allRides.filter(passesFilter);
+  // Auf Jordans Wunsch: ALLE Fahrer sichtbar, auch ohne Fahrten heute (vorher
+  // .filter((x) => x.rs.length > 0) rausgenommen), UND feste Reihenfolge, die
+  // sich nicht mit Zuteilungen verschiebt (vorher nach Beginn der ersten
+  // Fahrt sortiert -> Zeilen sprangen um). Reihenfolge jetzt einfach wie in
+  // den Fahrer-Stammdaten (Einstellungen → Fahrer), bleibt stabil.
+  const withDriver = setup.drivers
+    .map((d) => ({ d, rs: rides.filter((r) => r.assignedDriverId === d.id).sort((a, b) => start(a) - start(b)) }));
+  const unassigned = rides.filter((r) => !r.assignedDriverId).sort((a, b) => start(a) - start(b));
+
+  // Lücken-Hervorhebung: offene Fahrt anklicken -> passende Fahrer leuchten in der
+  // Timeline auf, Klick auf deren Zeile weist sofort zu (ohne Dialog).
+  const selectedRide = selectedId ? allRides.find((r) => r.id === selectedId) : null;
+  const evalFor = (driverId) => selectedRide ? evaluateInsertion(setup, dyn, setup.drivers.find((d) => d.id === driverId), selectedRide) : null;
+
+  const quickAssign = (driverId) => {
+    if (!selectedRide) return;
+    updateDyn((d) => {
+      const r = d.rides.find((x) => x.id === selectedRide.id);
+      if (r) {
+        logRide(r, "assigned", by, "Schnellzuteilung über Timeline");
+        r.assignedDriverId = driverId;
+        if (r.status !== "planned") setRideStatus(r, "planned", by); else r.updatedAt = Date.now();
+      }
+      return d;
+    });
+    triggerPush(driverId, "Neue Fahrt zugeteilt", `${selectedRide.time} · ${selectedRide.djName || "Fahrt"}`, `ride-${selectedRide.id}`);
+    setSelectedId(null);
+  };
+
+  // ---- Ziehen: Zeit ändern (horizontal) und/oder Fahrer wechseln (Zeile) --------
+  // Nutzt jetzt scrollRef (die tatsächliche Zeitraster-Fläche, feste Pixel-
+  // breite bei Zoom) statt gridRef (das war vorher der ganze Seiten-Wrapper,
+  // hat nur zufällig gepasst weil er dieselbe Breite wie das Raster hatte —
+  // stimmt seit dem horizontalen Scrollen bei Zoom nicht mehr). scrollLeft
+  // wird mit eingerechnet, sonst stimmt die Zielzeit beim Ziehen nicht mehr,
+  // sobald nach rechts gescrollt wurde.
+  const timeFromClientX = (clientX) => {
+    const el = scrollRef.current; if (!el || contentW <= 0) return null;
+    const rect = el.getBoundingClientRect();
+    const contentX = (clientX - rect.left - TL_LABEL_W) + el.scrollLeft;
+    const relX = Math.min(1, Math.max(0, contentX / contentW));
+    return Math.round((winStart + relX * span) / 5) * 5;
+  };
+  const driverIdFromClientY = (clientX, clientY) => {
+    const el = document.elementFromPoint(clientX, clientY);
+    const rowEl = el && el.closest ? el.closest("[data-row-driver]") : null;
+    if (!rowEl) return undefined; // kein gültiges Ziel -> Fahrer nicht ändern
+    const v = rowEl.getAttribute("data-row-driver");
+    return v === "unassigned" ? null : v;
+  };
+  const applyDrop = (rideId, newStartMin, newDriverIdOrUndefined) => {
+    const cur = allRides.find((x) => x.id === rideId);
+    if (!cur || newStartMin == null) return;
+    const newTime = fromMin(newStartMin);
+    const timeChanged = newTime !== cur.time;
+    const driverChanged = newDriverIdOrUndefined !== undefined && newDriverIdOrUndefined !== (cur.assignedDriverId || null);
+    if (!timeChanged && !driverChanged) return;
+    updateDyn((d) => {
+      const r = d.rides.find((x) => x.id === rideId);
+      if (!r) return d;
+      if (timeChanged) { logRide(r, "time", by, `${r.time} → ${newTime} (Timeline gezogen)`); r.date = dateForNightTime(day, newTime); r.time = newTime; }
+      if (driverChanged) {
+        logRide(r, newDriverIdOrUndefined ? (cur.assignedDriverId ? "reassigned" : "assigned") : "reassigned", by, "Timeline: Fahrer per Ziehen geändert");
+        r.assignedDriverId = newDriverIdOrUndefined;
+      }
+      if (driverChanged && r.status !== "planned") setRideStatus(r, "planned", by); else r.updatedAt = Date.now();
+      return d;
+    });
+    if (driverChanged && newDriverIdOrUndefined) triggerPush(newDriverIdOrUndefined, "Neue Fahrt zugeteilt", `${newTime} · ${cur.djName || "Fahrt"}`, `ride-${rideId}`);
+    else if (timeChanged && cur.assignedDriverId) triggerPush(cur.assignedDriverId, "Fahrt geändert", `${cur.djName || "Fahrt"} · neue Zeit ${newTime}`, `ride-${rideId}`);
+  };
+
+  const beginDrag = (e, r) => {
+    if (e.pointerType === "mouse" && e.button !== 0) return;
+    e.stopPropagation();
+    const rect = e.currentTarget.getBoundingClientRect();
+    const st = { rideId: r.id, ride: r, x0: e.clientX, y0: e.clientY, x: e.clientX, y: e.clientY, grabDx: e.clientX - rect.left, w: rect.width, moved: false };
+    dragRef.current = st; setDrag(st);
+  };
+  useEffect(() => {
+    if (!drag) return;
+    const onMove = (e) => {
+      const st = dragRef.current; if (!st) return;
+      const moved = st.moved || Math.hypot(e.clientX - st.x0, e.clientY - st.y0) > TL_DRAG_THRESHOLD;
+      const next = { ...st, x: e.clientX, y: e.clientY, moved };
+      dragRef.current = next; setDrag(next);
+    };
+    const onUp = (e) => {
+      const st = dragRef.current; dragRef.current = null; setDrag(null);
+      if (!st) return;
+      if (!st.moved) {
+        // wie ein normaler Tap behandeln
+        if (!st.ride.assignedDriverId) setSelectedId((s) => (s === st.rideId ? null : st.rideId));
+        else onAssign && onAssign(st.ride);
+        return;
+      }
+      const newStart = timeFromClientX(e.clientX - st.grabDx + st.w / 2);
+      const newDriver = driverIdFromClientY(e.clientX, e.clientY);
+      if (newStart == null) return;
+      const newTime = fromMin(newStart);
+      const timeChanged = newTime !== st.ride.time;
+      const driverChanged = newDriver !== undefined && newDriver !== (st.ride.assignedDriverId || null);
+      if (!timeChanged && !driverChanged) return; // an derselben Stelle losgelassen -> nichts zu bestätigen
+      setPendingDrop({ rideId: st.rideId, ride: st.ride, newStartMin: newStart, newDriverIdOrUndefined: newDriver, x: e.clientX, y: e.clientY });
+    };
+    window.addEventListener("pointermove", onMove);
+    window.addEventListener("pointerup", onUp);
+    return () => { window.removeEventListener("pointermove", onMove); window.removeEventListener("pointerup", onUp); };
+  }, [drag]);
+
+  const confirmPendingDrop = () => {
+    if (!pendingDrop) return;
+    applyDrop(pendingDrop.rideId, pendingDrop.newStartMin, pendingDrop.newDriverIdOrUndefined);
+    setRecentlyMoved({ rideId: pendingDrop.rideId, at: Date.now(), x: pendingDrop.x, y: pendingDrop.y });
+    setPendingDrop(null);
+  };
+  const cancelPendingDrop = () => setPendingDrop(null);
+
+  const NowLine = () => showNowLine ? (
+    <div className="absolute top-0 bottom-0 w-0.5 bg-orange-500 z-10 pointer-events-none" style={{ left: `${pct(nowMin)}%` }}>
+      <div className="absolute -top-4 -translate-x-1/2 text-[9px] font-mono text-orange-400 whitespace-nowrap">{fromMin(nowMin % 1440)}</div>
+    </div>
+  ) : null;
+
+  // Ziel während des Ziehens EINMAL pro Render berechnen (nicht pro Zeile) — spart
+  // wiederholte elementFromPoint-Aufrufe bei vielen Fahrern.
+  const dragActive = drag && drag.moved;
+  const dropNewStart = dragActive ? timeFromClientX(drag.x - drag.grabDx + drag.w / 2) : null;
+  const dropDriverId = dragActive ? driverIdFromClientY(drag.x, drag.y) : undefined;
+
+  const Block = ({ r, warn, conflict }) => {
+    const to = ln(r.toId, r.toCustom), from = ln(r.fromId, r.fromCustom);
+    const isOpen = !r.assignedDriverId;
+    const selected = selectedId === r.id;
+    const problem = rideHasOpenIssue(r);
+    const dragging = drag && drag.rideId === r.id && drag.moved;
+    return (
+      <div onPointerDown={(e) => beginDrag(e, r)} onClick={(e) => e.stopPropagation()}
+        title={`${r.time} · ${from} → ${to}${r.djName ? " · " + r.djName : ""} — ziehen zum Verschieben, ${isOpen ? "tippen: passende Fahrer anzeigen" : "tippen: Fahrer ändern"}`}
+        style={{ left: `${pct(start(r))}%`, width: `${Math.max(9, pct(end(r)) - pct(start(r)))}%`, minWidth: 92, touchAction: "none", opacity: dragging ? 0.25 : 1 }}
+        className={`absolute top-1.5 bottom-1.5 rounded-lg border px-2 py-1 overflow-hidden cursor-grab active:cursor-grabbing text-white ${warn ? "bg-orange-500/30 border-orange-500" : barColor(r)} ${conflict ? "ring-2 ring-red-500" : ""} ${selected ? "ring-2 ring-white" : ""}`}>
+        <div className="text-[11px] font-semibold leading-tight truncate">{r.djName || "—"}</div>
+        <div className="text-[9px] leading-tight truncate opacity-85">{from} → {to}</div>
+        <div className="text-[9px] font-mono leading-tight opacity-70">{r.time}</div>
+        {problem && (
+          <span title="Offene Problemmeldung" className="absolute top-0.5 left-0.5 w-4 h-4 rounded-full bg-red-500 flex items-center justify-center">
+            <AlertTriangle className="w-2.5 h-2.5 text-white" />
+          </span>
+        )}
+        <button onPointerDown={(e) => e.stopPropagation()} onClick={(e) => { e.stopPropagation(); onEdit && onEdit(r); }} title="Fahrt bearbeiten"
+          className="absolute top-0.5 right-0.5 w-5 h-5 rounded-md bg-black/25 hover:bg-black/45 flex items-center justify-center">
+          <ChevronRight className="w-3 h-3" />
+        </button>
+      </div>
+    );
+  };
+
+  const Row = ({ driverId, label, sub, rs, conflictCheck, warn }) => {
+    const ev = selectedRide && driverId ? evalFor(driverId) : null;
+    const clickable = ev && ev.eligible && !ev.overlap;
+    const isDropTarget = dragActive && dropDriverId !== undefined && dropDriverId === (driverId || null);
+    const rowTone = isDropTarget ? "bg-orange-500/20" : !selectedRide ? "" : clickable ? (ev.feasible ? "bg-emerald-500/10" : "bg-amber-500/10") : "opacity-40";
+    return (
+      <div data-row-driver={driverId || "unassigned"} onClick={() => clickable && quickAssign(driverId)}
+        className={`flex items-stretch border-b border-stone-800/60 transition bg-stone-900 ${rowTone} ${clickable ? "cursor-pointer hover:bg-emerald-500/20" : ""}`}>
+        <div className="w-40 shrink-0 px-3 py-2.5 sticky left-0 z-10 bg-stone-900">
+          <div className={`text-sm font-medium truncate ${warn ? "text-orange-400" : "text-stone-100"}`}>{label}</div>
+          {sub && <div className="text-[10px] font-mono text-stone-500 truncate mt-0.5">{sub}</div>}
+          {clickable && <div className={`text-[9px] mt-0.5 ${ev.feasible ? "text-emerald-400" : "text-amber-400"}`}>{ev.feasible ? "passt · antippen" : "knapp · antippen"}</div>}
+        </div>
+        <div className="relative shrink-0 h-16" style={{ width: contentW }}>
+          {hours.map((m) => <div key={m} className="absolute top-0 bottom-0 w-px bg-stone-800" style={{ left: `${pct(m)}%` }} />)}
+          <NowLine />
+          {rs.map((r, i) => <Block key={r.id} r={r} warn={warn} conflict={conflictCheck && hasConflict(rs, i)} />)}
+        </div>
+      </div>
+    );
+  };
+
+  // Schwebende Vorschau während des Ziehens: zeigt Zielzeit + Zielfahrer live an.
+  const DragGhost = () => {
+    if (!dragActive) return null;
+    const targetLabel = dropDriverId === undefined ? "kein gültiges Ziel"
+      : dropDriverId === null ? "Ohne Fahrer"
+        : (() => { const dd = setup.drivers.find((x) => x.id === dropDriverId); return dd ? `${dd.firstName} ${dd.lastName}` : "—"; })();
+    return (
+      <div className="fixed z-50 pointer-events-none px-3 py-2 rounded-lg bg-stone-950 border border-orange-500 text-white shadow-lg"
+        style={{ left: drag.x + 14, top: drag.y + 14 }}>
+        <div className="text-sm font-semibold">{dropNewStart != null ? fromMin(dropNewStart) : "—"}</div>
+        <div className="text-[10px] text-stone-400">{targetLabel}</div>
+      </div>
+    );
+  };
+
+  // Bestätigung nach dem Loslassen: nichts wird direkt übernommen, sondern erst
+  // hier freigegeben oder verworfen — schützt vor versehentlichem Verschieben.
+  const PendingDropConfirm = () => {
+    if (!pendingDrop) return null;
+    const { ride, newStartMin, newDriverIdOrUndefined } = pendingDrop;
+    const newTime = fromMin(newStartMin);
+    const timeChanged = newTime !== ride.time;
+    const driverChanged = newDriverIdOrUndefined !== undefined && newDriverIdOrUndefined !== (ride.assignedDriverId || null);
+    const driverLabel = (id) => { if (!id) return "Ohne Fahrer"; const d = setup.drivers.find((x) => x.id === id); return d ? `${d.firstName} ${d.lastName[0]}.` : "?"; };
+    const left = Math.min(Math.max(pendingDrop.x - 110, 8), window.innerWidth - 228);
+    const top = Math.min(pendingDrop.y + 16, window.innerHeight - 140);
+    return (
+      <>
+        <div className="fixed inset-0 z-40" onPointerDown={cancelPendingDrop} />
+        <div className="fixed z-50 w-56 bg-stone-950 border border-orange-500 rounded-xl shadow-lg p-3" style={{ left, top }}
+          onPointerDown={(e) => e.stopPropagation()}>
+          <div className="text-sm font-semibold text-orange-300 truncate mb-1.5">{ride.djName || "Fahrt"} wirklich verschieben?</div>
+          {timeChanged && <div className="text-xs text-stone-300 mb-1">Zeit: <span className="text-stone-500">{ride.time}</span> → <span className="font-medium text-stone-100">{newTime}</span></div>}
+          {driverChanged && <div className="text-xs text-stone-300 mb-1">Fahrer: <span className="text-stone-500">{driverLabel(ride.assignedDriverId)}</span> → <span className="font-medium text-stone-100">{driverLabel(newDriverIdOrUndefined)}</span></div>}
+          <div className="flex gap-2 mt-2">
+            <button onClick={cancelPendingDrop} className="flex-1 text-xs bg-stone-800 hover:bg-stone-700 text-stone-200 py-1.5 rounded-lg">Abbrechen</button>
+            <button onClick={confirmPendingDrop} className="flex-1 text-xs bg-orange-600 hover:bg-orange-500 text-white py-1.5 rounded-lg font-medium">Verschieben</button>
+          </div>
+        </div>
+      </>
+    );
+  };
+
+  // Kurzer Hinweis direkt an der Fahrt, nachdem eine Verschiebung bestätigt wurde.
+  const RecentlyMovedHint = () => {
+    if (!recentlyMoved) return null;
+    const left = Math.min(Math.max(recentlyMoved.x - 60, 8), window.innerWidth - 180);
+    const top = Math.min(recentlyMoved.y + 16, window.innerHeight - 60);
+    return (
+      <div className="fixed z-40 flex items-center gap-2 px-2.5 py-1.5 rounded-lg bg-stone-950 border border-stone-700 shadow-lg text-[11px] text-stone-300"
+        style={{ left, top }}>
+        <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
+        Verschoben
+        <button onClick={() => { onUndo && onUndo(); setRecentlyMoved(null); }} className="text-orange-300 hover:text-orange-200 font-medium">Rückgängig</button>
+      </div>
+    );
+  };
+
+  return (
+    <div ref={gridRef} onPointerMove={() => {}}>
+      <div className="flex flex-wrap items-center justify-between gap-2 mb-3">
+        <div className="flex items-center gap-2.5">
+          <h3 className="text-lg font-semibold text-stone-100 flex items-center gap-2"><Gauge className="w-5 h-5 text-orange-400" />Timeline · wer ist wann belegt</h3>
+          {conflictCount > 0 && (
+            <span className="text-xs bg-red-500/20 text-red-300 px-2 py-1 rounded-full flex items-center gap-1"><AlertTriangle className="w-3 h-3" />{conflictCount} Konflikt{conflictCount > 1 ? "e" : ""}</span>
+          )}
+        </div>
+        <div className="flex items-center gap-3">
+          <div className="flex items-center gap-0.5 bg-stone-900 border border-stone-800 rounded-lg p-0.5">
+            <button onClick={() => setZoom((z) => Math.max(ZOOM_MIN, z / 1.3))} title="Kleiner"
+              className="w-7 h-7 flex items-center justify-center text-stone-300 hover:bg-stone-800 rounded text-base font-medium leading-none">−</button>
+            <button onClick={fitToScreen} title="An Bildschirmbreite anpassen"
+              className="px-2 h-7 flex items-center text-[11px] text-stone-400 hover:bg-stone-800 rounded whitespace-nowrap">Passend</button>
+            <button onClick={() => setZoom((z) => Math.min(ZOOM_MAX, z * 1.3))} title="Größer"
+              className="w-7 h-7 flex items-center justify-center text-stone-300 hover:bg-stone-800 rounded text-base font-medium leading-none">+</button>
+          </div>
+          <div className="flex items-center gap-3 text-xs text-stone-500">
+            <span className="flex items-center gap-1.5"><span className="w-3 h-3 rounded bg-orange-500/90" />unterwegs</span>
+            <span className="flex items-center gap-1.5"><span className="w-3 h-3 rounded bg-emerald-600/80" />erledigt</span>
+            <span className="flex items-center gap-1.5"><span className="w-3 h-3 rounded ring-2 ring-red-500" />Konflikt</span>
+          </div>
+        </div>
+      </div>
+
+      <div className="flex flex-wrap items-center gap-1.5 mb-3">
+        {FILTERS.map(([k, l]) => (
+          <button key={k} onClick={() => setFilter(k)}
+            className={`text-xs px-2.5 py-1 rounded-lg border ${filter === k ? "bg-stone-100 text-stone-900 border-stone-100 font-medium" : "bg-stone-900 text-stone-400 border-stone-800"}`}>{l}</button>
+        ))}
+      </div>
+
+      <p className="text-xs text-stone-500 mb-3">
+        {selectedRide
+          ? <>Offene Fahrt <b className="text-stone-300">{selectedRide.djName || selectedRide.time}</b> ausgewählt — grüne/gelbe Zeilen antippen zum Zuteilen, oder nochmal auf die Fahrt tippen zum Abbrechen.</>
+          : "Fahrt ziehen = Zeit ändern / in eine andere Zeile ziehen = Fahrer wechseln, wird erst nach Bestätigung übernommen · Tippen ohne Ziehen = offene Fahrt: passende Fahrer anzeigen, zugeteilte Fahrt: Fahrer ändern · Stift = Details bearbeiten."}
+      </p>
+
+      {rides.length === 0 ? (
+        <div className="text-stone-500 text-sm py-16 text-center border border-dashed border-stone-800 rounded-xl">Keine Fahrten in dieser Ansicht.</div>
+      ) : (
+        <div className="bg-stone-900 border border-stone-800 rounded-xl overflow-hidden">
+          {/* Eigener scrollbarer Bereich (statt der ganzen Seite): so bleiben
+              Kopfzeile (oben) UND Fahrer-Namen (links) beim Scrollen stehen,
+              ohne mit dem Dashboard-Header oben in der Seite zu kollidieren. */}
+          <div ref={scrollRef} className="overflow-auto max-h-[65vh] bg-stone-900">
+            <div className="flex border-b border-stone-800 bg-stone-950/95 sticky top-0 z-20">
+              <div className="w-40 shrink-0 sticky left-0 z-30 bg-stone-950/95" />
+              <div className="relative shrink-0 h-6" style={{ width: contentW }}>
+                {hours.map((m) => <div key={m} className="absolute text-[10px] text-stone-500 top-1.5" style={{ left: `${pct(m)}%`, transform: "translateX(-50%)" }}>{fromMin(m % 1440)}</div>)}
+              </div>
+            </div>
+            <div>
+              {unassigned.length > 0 && <Row label="Ohne Fahrer" sub={`${unassigned.length} Fahrt(en)`} rs={unassigned} warn />}
+              {withDriver.map(({ d, rs }) => <Row key={d.id} driverId={d.id} label={`${d.firstName} ${d.lastName}`} sub={d.vehicleType === "Van" ? "Van" : "Car"} rs={rs} conflictCheck />)}
+            </div>
+          </div>
+        </div>
+      )}
+      <DragGhost />
+      <PendingDropConfirm />
+      <RecentlyMovedHint />
+    </div>
+  );
+}
+
 /* ---------------------------- Timeline (Punkt 13) ------------------------ */
 function TimelineView({ setup, dyn, day, onEdit }) {
   const ln = (id, c) => setup.locations.find((l) => l.id === id)?.short || c || "—";
@@ -8738,7 +9132,7 @@ function MissionControl({ setup, dyn, session, updateDyn, updateSetup, onLogout,
 
           {tab === "overview" && <OverviewTab setup={setup} dyn={dyn} day={day} setTab={setTab}
             onEdit={(r) => { setDay(r.dayKey); setEditRide(r); }} onAssign={(r) => setAssignRide(r)} />}
-          {tab === "timeline" && <TimelinePage setup={setup} dyn={dyn} day={day} updateDyn={updateDyn} by={meBy} onUndo={onUndo}
+          {tab === "timeline" && <MissionTimelinePage setup={setup} dyn={dyn} day={day} updateDyn={updateDyn} by={meBy} onUndo={onUndo}
             onEdit={(r) => { setDay(r.dayKey); setEditRide(r); }} onAssign={(r) => setAssignRide(r)} />}
           {tab === "returns" && <MissionReturnsTab setup={setup} dyn={dyn} day={day} updateDyn={updateDyn} by={meBy} onErr={notifyErr}
             onAssign={(r) => setAssignRide(r)} onWhatsApp={(r) => setWaRide(r)} onEdit={(r) => { setDay(r.dayKey); setEditRide(r); }}
