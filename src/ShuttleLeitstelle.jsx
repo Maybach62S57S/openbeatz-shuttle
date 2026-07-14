@@ -7910,6 +7910,58 @@ const MC_STATUS = {
   idle:     { label: "Inaktiv",    key: "idle" },     // Grau
 };
 
+/* ---- Mission-Control-Navigation (Session 5, Slice 5.1) ----------------- *
+ * Reine Datenstruktur + Rollenfilter. Wird in DIESEM Slice noch NICHT
+ * gerendert (MissionControl bleibt Passthrough). Jeder Eintrag zeigt auf
+ * einen BESTEHENDEN Dashboard-Tab-Key (siehe Nav-Array im Dashboard) -
+ * es werden keine neuen Views erfunden und keine Tabs entfernt. Die Gruppen
+ * dienen nur der spaeteren Desktop-Darstellung; die Mobile-Leiste (Slice 5.3)
+ * nutzt eine Teilmenge derselben Items. Icons sind bereits importierte
+ * lucide-react-Komponenten, keine neuen Imports.
+ * ----------------------------------------------------------------------- */
+
+// Kanonische Gruppen-Reihenfolge (fuer die Desktop-Nav in Slice 5.2).
+const MC_NAV_GROUPS = ["MISSION CONTROL", "FAHRTEN", "BETRIEB", "PLANUNG & KOMMUNIKATION", "SYSTEM"];
+
+// Flaches Item-Array; jedes Item traegt sein group-Feld selbst.
+const MC_NAV = [
+  // MISSION CONTROL
+  { tab: "overview",  label: "Mission Control", icon: LayoutGrid,    group: "MISSION CONTROL" },
+  { tab: "map",       label: "Karte",           icon: MapIcon,       group: "MISSION CONTROL" },
+  // FAHRTEN
+  { tab: "board",     label: "Fahrten",         icon: Route,         group: "FAHRTEN" },
+  { tab: "returns",   label: "Rückfahrten",     icon: Moon,          group: "FAHRTEN" },
+  { tab: "flights",   label: "Flughafen",       icon: Plane,         group: "FAHRTEN" },
+  // BETRIEB
+  { tab: "drivers",   label: "Fahrer",          icon: Users,         group: "BETRIEB" },
+  { tab: "emergency", label: "Probleme",        icon: Siren,         group: "BETRIEB" },
+  // PLANUNG & KOMMUNIKATION
+  { tab: "timeline",  label: "Kalender",        icon: Gauge,         group: "PLANUNG & KOMMUNIKATION" },
+  { tab: "messages",  label: "Chat",            icon: MessageSquare, group: "PLANUNG & KOMMUNIKATION" },
+  // SYSTEM
+  { tab: "settings",  label: "Einstellungen",   icon: Settings,      group: "SYSTEM" },
+];
+
+// Pro Rolle exakt der erlaubte Satz an Tab-Keys. Quelle ist ausschliesslich
+// session.role (dispo|stage|driver) - KEINE neue, unabhaengige Rollenlogik.
+//   dispo  = komplette Nav (null = alle)
+//   stage  = strikt nur Live-Ansicht (overview) + Probleme melden (emergency),
+//            damit die Stage-Read-only-Garantie unangetastet bleibt
+//   driver = minimal (overview), falls je in den Shell geroutet
+// Unbekannte/fehlende Rolle => leer (sicherer Default, zeigt nichts).
+const MC_ROLE_TABS = {
+  dispo:  null,
+  stage:  ["overview", "emergency"],
+  driver: ["overview"],
+};
+
+function mcNavForRole(role) {
+  const allow = MC_ROLE_TABS[role];
+  if (allow === null) return MC_NAV.slice();            // dispo: alles
+  if (!Array.isArray(allow)) return [];                 // unbekannte Rolle: nichts
+  return MC_NAV.filter((it) => allow.includes(it.tab)); // stage/driver: Teilmenge
+}
+
 function MissionStyles() {
   return (
     <style>{`
