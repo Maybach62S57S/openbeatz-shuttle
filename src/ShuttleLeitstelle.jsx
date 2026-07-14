@@ -8856,6 +8856,7 @@ function SettingsTab({ setup, dyn, day, updateSetup, updateDyn, onPreviewGuest }
   const [imp, setImp] = useState(null);
   const [matchDrivers, setMatchDrivers] = useState(true);
   const [importing, setImporting] = useState(false); // Doppelklick-/Mehrfachimport-Schutz
+  const [newFestDate, setNewFestDate] = useState(""); // Hinzufuegen-Feld "Festival-Tage" (kontrolliert, damit es sich nach dem Speichern leert)
 
   // Punkt 14: robustere Signatur – zusätzlich Flug, Passagiere, Treffpunkt (oder Zeilen-ID)
   const rideSig = (r) => r.srcId ? `src:${r.srcId}` :
@@ -9009,23 +9010,37 @@ function SettingsTab({ setup, dyn, day, updateSetup, updateDyn, onPreviewGuest }
         <h3 className="font-medium text-stone-200 mb-1 flex items-center gap-2"><Clock className="w-4 h-4" />Festival-Tage</h3>
         <p className="text-xs text-stone-500 mb-3">Fahrten von 00–06 Uhr zählen zur Nacht des Vortags. Tag hinzufügen über das leere Feld unten.</p>
         <div className="space-y-2">
-          {(setup.config.festivalDates || []).map((d, i) => (
-            <div key={i} className="flex items-center gap-2">
+          {/* Leere/ungueltige Eintraege werden nicht angezeigt: sie erzeugen ohnehin
+              keinen Tag (dayTabs filtert per Boolean), wuerden hier aber als
+              "Geisterzeile" erscheinen, die sich scheinbar nicht loeschen laesst.
+              Alle Handler arbeiten ueber den WERT statt ueber den Index, damit das
+              Sortieren beim Schreiben nicht auf den falschen Eintrag zeigt. */}
+          {(setup.config.festivalDates || []).filter(Boolean).map((d) => (
+            <div key={d} className="flex items-center gap-2">
               <span className="text-xs text-stone-500 w-10 shrink-0">{fmtDate(d)}</span>
-              <input type="date" className={inp} value={d}
+              <input type="date" className={inp} value={d} autoComplete="off"
                 onChange={(e) => updateSetup((s) => {
-                  const arr = [...(s.config.festivalDates || [])]; arr[i] = e.target.value;
+                  const arr = (s.config.festivalDates || []).map((x) => (x === d ? e.target.value : x));
                   s.config.festivalDates = [...new Set(arr.filter(Boolean))].sort(); return s;
                 })} />
               <button onClick={() => updateSetup((s) => {
-                s.config.festivalDates = (s.config.festivalDates || []).filter((_, j) => j !== i); return s;
+                s.config.festivalDates = (s.config.festivalDates || []).filter(Boolean).filter((x) => x !== d); return s;
               })} className="text-stone-600 hover:text-red-400 p-1 shrink-0"><X className="w-4 h-4" /></button>
             </div>
           ))}
-          <input type="date" className={inp} value=""
-            onChange={(e) => e.target.value && updateSetup((s) => {
-              s.config.festivalDates = [...new Set([...(s.config.festivalDates || []), e.target.value])].sort(); return s;
-            })} />
+          {/* Eigener State statt konstantem value="": nur so setzt React das Feld
+              nach dem Hinzufuegen wirklich zurueck. autoComplete="off" verhindert,
+              dass der Browser beim Neuladen einen alten Wert wieder einsetzt. */}
+          <input type="date" className={inp} value={newFestDate} autoComplete="off"
+            onChange={async (e) => {
+              const v = e.target.value;
+              setNewFestDate(v);
+              if (!v) return;
+              await updateSetup((s) => {
+                s.config.festivalDates = [...new Set([...(s.config.festivalDates || []), v].filter(Boolean))].sort(); return s;
+              });
+              setNewFestDate("");
+            }} />
         </div>
       </section>
 
