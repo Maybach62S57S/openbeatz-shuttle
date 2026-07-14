@@ -8445,16 +8445,52 @@ function driverInfoWindowHtml(driver, fix) {
     <div style="color:#78716c;margin-top:4px;font-size:11px;">Position ${ageTxt} aktualisiert</div>
   </div>`;
 }
-function LiveGoogleMap({ setup, dyn }) {
+// Weiches Gleiten der Google-Marker (Effekt 10, Teil 2). Reine Helfer, damit sie
+// testbar sind. GOOGLE_GLIDE_MS orientiert sich an --mc-anim-slow. Grosse Spruenge
+// (keine Ausgangsposition, GPS-Fix weit weg) werden hart gesetzt statt ueber die
+// halbe Karte zu fliegen.
+const GOOGLE_GLIDE_MS = 380;
+const GOOGLE_GLIDE_MAX_JUMP_DEG = 0.02; // ~2 km; groesserer Sprung -> hart setzen
+function googleMarkerBigJump(from, to) {
+  if (!from || !to) return true;
+  const dLat = to.lat - from.lat, dLng = to.lng - from.lng;
+  return (dLat * dLat + dLng * dLng) > GOOGLE_GLIDE_MAX_JUMP_DEG * GOOGLE_GLIDE_MAX_JUMP_DEG;
+}
+
+function LiveGoogleMap({ setup, dyn, glide = false }) {
   const containerRef = useRef(null);
   const mapRef = useRef(null);
   const markersRef = useRef({}); // driverId -> google.maps.Marker
+  const animRef = useRef({}); // driverId -> laufende rAF-Id (weiches Gleiten, nur MC)
   const infoWindowRef = useRef(null); // ein einziges, wiederverwendetes Info-Fenster
   const driverDataRef = useRef({}); // driverId -> { driver, fix } - immer der aktuelle Stand,
   // damit ein Klick auf einen älteren Marker keine veralteten Daten zeigt
   // (der Klick-Handler wird nur EINMAL beim Anlegen des Markers gesetzt).
   const [status, setStatus] = useState(hasGoogleMaps() ? "loading" : "no-key"); // loading|ready|error|no-key
   const [errorMsg, setErrorMsg] = useState("");
+
+  // Weiches Gleiten (nur MC): alte -> neue Position per rAF ueber GOOGLE_GLIDE_MS
+  // interpolieren. Pro Marker nur EIN Loop; ein neuer Aufruf bricht den laufenden
+  // ab (kein Ueberlagern). Kein Dauerloop: bei t=1 wird die rAF-Id geloescht.
+  const animateMarkerTo = (id, marker, to) => {
+    if (animRef.current[id]) { cancelAnimationFrame(animRef.current[id]); delete animRef.current[id]; }
+    const p0 = marker.getPosition();
+    const from = p0 ? { lat: p0.lat(), lng: p0.lng() } : to;
+    const t0 = (typeof performance !== "undefined" ? performance.now() : Date.now());
+    const step = (now) => {
+      const t = Math.min(1, (now - t0) / GOOGLE_GLIDE_MS);
+      marker.setPosition({ lat: from.lat + (to.lat - from.lat) * t, lng: from.lng + (to.lng - from.lng) * t });
+      if (t < 1) { animRef.current[id] = requestAnimationFrame(step); }
+      else { delete animRef.current[id]; }
+    };
+    animRef.current[id] = requestAnimationFrame(step);
+  };
+
+  // beim Unmount alle laufenden Interpolationen abraeumen (kein Loop nach Ende)
+  useEffect(() => () => {
+    Object.values(animRef.current).forEach((raf) => cancelAnimationFrame(raf));
+    animRef.current = {};
+  }, []);
 
   useEffect(() => {
     if (!hasGoogleMaps()) { setStatus("no-key"); return; }
@@ -8499,8 +8535,16 @@ function LiveGoogleMap({ setup, dyn }) {
       const initials = `${(d.firstName || "?")[0] || "?"}${(d.lastName || "")[0] || ""}`.toUpperCase();
       const markerLabel = { text: initials, color: "#0c0a09", fontSize: "10px", fontWeight: "700" };
       if (markersRef.current[d.id]) {
-        markersRef.current[d.id].setPosition(pos);
-        markersRef.current[d.id].setLabel(markerLabel);
+        const marker = markersRef.current[d.id];
+        const p0 = marker.getPosition();
+        const from = p0 ? { lat: p0.lat(), lng: p0.lng() } : null;
+        if (glide && !prefersReducedMotion() && !googleMarkerBigJump(from, pos)) {
+          animateMarkerTo(d.id, marker, pos);   // weich per rAF (nur MC)
+        } else {
+          if (animRef.current[d.id]) { cancelAnimationFrame(animRef.current[d.id]); delete animRef.current[d.id]; }
+          marker.setPosition(pos);              // hart: Classic, reduced-motion oder grosser Sprung
+        }
+        marker.setLabel(markerLabel);
       } else {
         const marker = new maps.Marker({
           position: pos, map: mapRef.current, title, label: markerLabel,
@@ -8519,7 +8563,10 @@ function LiveGoogleMap({ setup, dyn }) {
     });
     // Marker für Fahrer ohne (mehr) frische GPS-Position entfernen
     Object.keys(markersRef.current).forEach((id) => {
-      if (!seen.has(id)) { markersRef.current[id].setMap(null); delete markersRef.current[id]; }
+      if (!seen.has(id)) {
+        if (animRef.current[id]) { cancelAnimationFrame(animRef.current[id]); delete animRef.current[id]; }
+        markersRef.current[id].setMap(null); delete markersRef.current[id];
+      }
     });
   }, [status, setup.drivers, dyn.driverState]);
 
@@ -8573,7 +8620,7 @@ function NoGpsSharingPanel({ setup, dyn, day }) {
   );
 }
 
-function MapTab({ setup, dyn, day, onEdit, SchematicComponent = SchematicMap }) {
+function MapTab({ setup, dyn, day, onEdit, SchematicComponent = SchematicMap, glideMarkers = false }) {
   const isToday = dayNowMin(day) >= 0 && dayNowMin(day) < 90000;
   const [mode, setMode] = useState(isToday ? "live" : "sim");   // 'live' | 'sim' (Punkt 8)
   const [simMin, setSimMin] = useState(isToday ? dayNowMin(day) : 1080);
@@ -8644,7 +8691,7 @@ function MapTab({ setup, dyn, day, onEdit, SchematicComponent = SchematicMap }) 
       <div className="grid grid-cols-1 lg:grid-cols-4 gap-4">
         <div className="lg:col-span-3 bg-stone-900 border border-stone-800 rounded-xl p-2">
           {mapView === "google" ? (
-            <LiveGoogleMap setup={setup} dyn={dyn} />
+            <LiveGoogleMap setup={setup} dyn={dyn} glide={glideMarkers} />
           ) : (
             <>
               <SchematicComponent nodes={nodes} positions={shown} openRides={openRides}
@@ -9674,7 +9721,7 @@ function MissionControl({ setup, dyn, session, updateDyn, updateSetup, onLogout,
             onAssign={(r) => setAssignRide(r)} onWhatsApp={(r) => setWaRide(r)} onEdit={(r) => { setDay(r.dayKey); setEditRide(r); }} />}
           {tab === "messages" && <MissionMessagesInbox dyn={dyn} updateDyn={updateDyn} by={meBy} />}
           {tab === "flights" && <FlightTab setup={setup} dyn={dyn} day={day} updateDyn={updateDyn} by={meBy} onErr={notifyErr} onEdit={(r) => { setDay(r.dayKey); setEditRide(r); }} />}
-          {tab === "map" && <MapTab setup={setup} dyn={dyn} day={day} SchematicComponent={MissionSchematicMap} onEdit={(r) => { setDay(r.dayKey); setEditRide(r); }} />}
+          {tab === "map" && <MapTab setup={setup} dyn={dyn} day={day} SchematicComponent={MissionSchematicMap} glideMarkers onEdit={(r) => { setDay(r.dayKey); setEditRide(r); }} />}
           {tab === "drivers" && <MissionDriversTab setup={setup} dyn={dyn} day={day} />}
           {tab === "settings" && <SettingsTab setup={setup} dyn={dyn} day={day} updateSetup={updateSetup} updateDyn={updateDyn} onPreviewGuest={onPreviewGuest} />}
         </main>
