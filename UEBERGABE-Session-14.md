@@ -247,3 +247,43 @@ Bestehendes Datum aendern: loeschen und neu anlegen statt editieren.
 niemand mehr an), aber der Datenverlust beim Tippen ist haesslich. Achtung: das
 ist die GETEILTE `SettingsTab`, also Classic UND MC. Kein MC-only-Fix, deshalb
 Risikoabwaegung mit Jordan vor dem Bauen.
+
+### Nachtrag 2 (14.07., 20:30) — Befunde aus Jordans Live-Test am echten Deployment
+
+**Beobachtung:** Im Kasten "Festival-Tage" steht EINE Zeile mit X, das Feld zeigt
+"14.07.2026" (= heutiges Datum). In der Tagesleiste erscheint aber KEIN Tab
+"Di 14.07." Jordan kann die Zeile nicht auf ein anderes Datum aendern; nach
+Reload steht wieder "14.07.2026" da. Ein Klick im Kalender des UNTEREN Feldes
+legt eine ZWEITE Zeile an, statt die erste zu aendern (das untere Feld ist das
+Hinzufuegen-Feld, kein Editierfeld — so gewollt, aber missverstaendlich).
+
+**Beste Hypothese (erklaert alle Beobachtungen widerspruchsfrei):**
+`config.festivalDates` enthaelt EINEN LEEREN/ungueltigen Eintrag (z.B. `""`).
+- Die `.map()` rendert dafuer eine Zeile inkl. X -> Zeile sichtbar.
+- `<input type="date" value="">` ist leer; der Browser stellt beim Reload den
+  zuletzt eingegebenen Formularwert wieder her -> "14.07.2026" ist ein
+  BROWSER-Geisterwert, keine Daten.
+- `dayTabs()` macht `.filter(Boolean)` -> leerer Eintrag erzeugt keinen Tab.
+  Das erklaert, warum kein "Di 14.07." in der Leiste steht.
+- Folge: Jordan klickt gegen eine Browser-Anzeige, nicht gegen echte Daten.
+
+**NICHT verifiziert und offen — bitte zuerst klaeren:**
+Ob `updateSetup` ueberhaupt persistiert. Test: einen Wert in der Fahrzeit-Matrix
+aendern, Seite neu laden, prueft ob er haelt. Falls setup-Writes generell nicht
+ankommen (RLS auf `settings`? Schreibkonflikt-Schleife? `write_setup_and_drivers_
+if_unchanged` schlaegt fehl?), ist DAS das eigentliche Problem und alles andere
+zweitrangig — Jordan koennte dann vor dem Festival keine Einstellung aendern.
+`updateSetup` (1072) loggt bei Fehlern "mehrfacher Schreibkonflikt" bzw.
+"Speicherfehler" in die Konsole. Konsole pruefen.
+
+**Zusaetzlicher Fix-Bedarf im Feld (zu den zwei Bugs aus Nachtrag 1):**
+3. **Leere/ungueltige Eintraege werden gerendert.** Die `.map()` sollte defensiv
+   sein bzw. beim Laden bereinigt werden (`festivalDates.filter(Boolean)`),
+   sonst entstehen Zeilen, die keinen Tab erzeugen und nicht editierbar wirken.
+4. **Autocomplete/Formular-Restore:** `autoComplete="off"` an den Datumsfeldern
+   verhindert den Geisterwert nach Reload.
+
+**Umgehung, die Jordans eigentliches Ziel loest (Montag im Tab):**
+Montags-Fahrten importieren. `dayTabs()` sammelt alle `dayKey`s aus den Fahrten
+ein, der Tag erscheint dann automatisch — ohne dass dieses Feld je funktionieren
+muss. Die festivalDates-Liste ist nur fuer Tage OHNE Fahrten noetig.
