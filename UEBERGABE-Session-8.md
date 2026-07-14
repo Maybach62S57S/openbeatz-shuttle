@@ -9,7 +9,7 @@ dann nach OK bauen.
 ---
 
 ## Repo / Setup
-- Repo: `Maybach62S57S/openbeatz-shuttle`, Branch **`feature/mission-control-beta`**, letzter Commit `ea69768`
+- Repo: `Maybach62S57S/openbeatz-shuttle`, Branch **`feature/mission-control-beta`**, letzter Commit `07bdfb9` (Session 8 Teil 1: drivers)
 - Gesicherter Rückweg: Tag `stabil-vor-design-2026-07-13`, Branch `backup/paket-3-fertig`
 - Hauptdatei: `src/ShuttleLeitstelle.jsx` (~9160 Zeilen)
 - PAT hier einfügen: `<DEIN_FINE_GRAINED_PAT>`
@@ -53,30 +53,49 @@ dann nach OK bauen.
   IconButton/EmptyState/LoadingState/ErrorState/LiveIndicator`, plus Klassen
   `.mc-ride-card/.mc-input/.mc-btn-primary/.mc-btn-assign`.
 
-## Kandidaten für Session 8 (mit Jordan priorisieren, erst Risikoabwägung)
-1. **Nächsten Tab auf MC-Design** - genau EINEN pro Scheibe. Kandidaten: `emergency`
-   (Probleme), `flights` (Flughafen), `drivers` (Fahrer), `settings`, oder eine echte
-   `overview`-Landing (KPIs/Live). Jeweils prüfen: Inline-Block in MC oder gemeinsame
-   Komponente? -> passendes Muster oben.
+## Session 8 Fortschritt (4 Teile geplant)
+- **Teil 1 fertig (`07bdfb9`):** `drivers`-Tab als eigene `MissionDriversTab`
+  (Z.~4853, direkt nach `DriversTab`). Read-only Tab, daher reiner Render-Tausch,
+  keine Schreib-Handler. Datenableitung + Sortierung VERBATIM aus `DriversTab`
+  (per Diff belegt byte-identisch). Neu sichtbar: aktueller Auftrag (`s.active`),
+  Online/Offline + letzter Kontakt (nur gelesen aus `driverState[id].gps` mit
+  `GPS_MAX_AGE_MS`/`fmtAgo`, exakt wie Live-Karte). MC-Design: Fahrzeug-Badge,
+  Status-Badge frei/auf Fahrt, Auslastungsbalken (rot ab `softHoursMin`),
+  `EmptyState`, 2 Spalten ab `xl`. Classic `DriversTab` byte-genau unverändert,
+  nur MC-Zweig-Zeile umgestellt. Node-Tests: `gpsInfo`/`activeRoute` + Grenzfall.
+- **Teil 2-4 offen:** konkreten Tab jeweils frisch mit Jordan festlegen. Jede
+  Scheibe in EIGENEM Chat starten (Crash-Risiko bei langen Chats). Kandidaten
+  siehe unten.
+
+## Kandidaten für die restlichen Teile (mit Jordan priorisieren, erst Risikoabwägung)
+1. **Nächsten Tab auf MC-Design** - genau EINEN pro Scheibe. Offene Kandidaten:
+   `emergency` (Probleme), `flights` (Flughafen), `settings`, oder eine echte
+   `overview`-Landing (KPIs/Live). `drivers` ist in Teil 1 erledigt. Alle vier
+   offenen rendern im MC-Zweig noch die gemeinsame Klassik-Komponente -> `returns`/
+   `drivers`-Muster (eigene `Mission…Tab`-Kopie). Achtung `settings` ~288 Zeilen
+   (Brocken), `emergency` speist Nav-Badge `emCount`/`emCrit` (in der Shell, nicht
+   im Tab anfassen).
 2. **MC-Varianten der gemeinsamen Bausteine** `DriverRow`/`BoardMiniMap`/`PresenceManager`/
    `TimelineView` (heute noch Stone-Look in MC). Neue MC-Variante bauen, Classic-Version
    unangetastet lassen.
 3. Nur falls gewünscht: kleinere Feinheiten, immer additiv.
 
-## Nützliche Greps / Anker (Commit `ea69768`)
+## Nützliche Greps / Anker (Commit `07bdfb9`)
 ```
 grep -n 'if (uiMode === "mission-control")' src/ShuttleLeitstelle.jsx   # Gate
-grep -n 'function MissionControl' src/ShuttleLeitstelle.jsx            # Shell Z.~7886
-grep -n 'function MissionReturnsTab\|function ReturnsTab' src/ShuttleLeitstelle.jsx
-grep -n 'tab === "emergency"\|tab === "flights"\|tab === "drivers"\|tab === "overview"' src/ShuttleLeitstelle.jsx
-grep -n 'mcRideStatusKey\|mc-ride-card\|function MissionStyles' src/ShuttleLeitstelle.jsx
+grep -n 'function MissionControl' src/ShuttleLeitstelle.jsx            # Shell
+grep -n 'function MissionReturnsTab\|function MissionDriversTab' src/ShuttleLeitstelle.jsx
+grep -n 'tab === "emergency"\|tab === "flights"\|tab === "overview"\|tab === "settings"' src/ShuttleLeitstelle.jsx
+grep -n 'mcRideStatusKey\|mc-ride-card\|function MissionStyles\|const MC_STATUS' src/ShuttleLeitstelle.jsx
 grep -oE '^function [a-zA-Z]+' src/ShuttleLeitstelle.jsx | sort | uniq -d
 ```
 
-## Erste konkrete Aktion im neuen Chat
+## Erste konkrete Aktion im neuen Chat (Teil 2)
 Repo klonen, Branch auschecken, `npm ci`, Baseline-esbuild grün, Anker prüfen, dann
-Session-8-Scope mit Jordan klären (welcher Tab) und nach OK die Scheibe vorschlagen.
+Teil-2-Scope mit Jordan klären (welcher Tab) und nach OK die Scheibe vorschlagen.
 
 ## Offen für Jordans Live-Test (Umgebungsgrenze, nicht im Chat prüfbar)
-board- + returns-Redesign auf echten Breiten (Desktop/Handy), Flash nach echtem
-Zuteilen/Bearbeiten, überfällig-Markierung zur echten Uhrzeit, Suche im Betrieb.
+board- + returns- + drivers-Redesign auf echten Breiten (Desktop/Handy). Bei drivers
+konkret: Online/Offline-Punkt + "letzter Kontakt" bei echter GPS-Freigabe eines
+Fahrers, aktueller Auftrag während einer laufenden Fahrt, Auslastungsbalken/rot ab
+Soft-Limit, frei-zuerst-Sortierung zur echten Uhrzeit.
