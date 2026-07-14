@@ -67,6 +67,28 @@ dann nach OK bauen.
   Scheibe in EIGENEM Chat starten (Crash-Risiko bei langen Chats). Kandidaten
   siehe unten.
 
+### Teil 2 vorab geklärt (Fahrer-Timeline / Dispositionsplan, MC)
+Pflichtprüfung erledigt: **existiert bereits** als `TimelinePage` (Z.~6722,
+`timeline`-Tab). Das IST der Fahrer-Zeilen-Gantt: `Row` = eine Zeile pro Fahrer
+(+ "Ohne Fahrer"), Uhrzeit horizontal (Stunden-Raster, `pct(start/end)`), `Block`
+= Fahrt-Balken (DJ, Start->Ziel, Startzeit, Status-Farbe, Problem-Badge, Stift/
+Chevron öffnet Fahrt), `NowLine`, Zoom (`ZOOM_MIN/MAX`, `fitToScreen`, +/-),
+horizontaler Scroll, `hasConflict`/`conflictCount`, freie Zeit = Lücken. Dauer aus
+`effDur(config, r)`.
+- **Muster:** eigene `MissionTimelinePage`-Kopie, GESAMTE Logik + Schreib-Handler
+  VERBATIM (`dateForNightTime`, `beginDrag`/Drag-Math, `quickAssign`, `pendingDrop`/
+  `confirmPendingDrop`/`cancelPendingDrop`, `logRide`, `updateDyn`-Ketten, `zoom`/
+  `fitToScreen`, `hasConflict`, `evalFor`/Eignung). Nur Render neu (MC-Design).
+  MC-Zweig-Zeile `tab === "timeline"` (Z.~8741) auf `MissionTimelinePage` umstellen.
+  Classic `TimelinePage` byte-genau unverändert (per Diff belegen).
+- **Jordans Entscheidungen:** (1) Drag-and-Drop MUSS voll funktionieren -> Handler
+  verbatim, KEINE read-only-Strippung. (2) ETA/geplante Endzeit im Balken +
+  geschätzte Dauer klar als Schätzung markieren -> rein lesend aus `effDur`/
+  `estDurationMin`, keine Zeiten erfinden. (3) Klick-Verhalten ERSTMAL verbatim
+  (Klick = Schnellzuteilung, Stift = bearbeiten); Änderung auf "Klick = öffnen"
+  nur auf spätere ausdrückliche Ansage.
+- Stage Manager unberührt (MC ist dispatcher-only, `timeline` nur im Dispatcher-Nav).
+
 ## Kandidaten für die restlichen Teile (mit Jordan priorisieren, erst Risikoabwägung)
 1. **Nächsten Tab auf MC-Design** - genau EINEN pro Scheibe. Offene Kandidaten:
    `emergency` (Probleme), `flights` (Flughafen), `settings`, oder eine echte
