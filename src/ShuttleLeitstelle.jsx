@@ -7836,15 +7836,15 @@ function MissionTimelinePage({ setup, dyn, day, onEdit, onAssign, updateDyn, by,
         style={{
           left: `${pct(start(r))}%`, width: `${Math.max(9, pct(end(r)) - pct(start(r)))}%`,
           minWidth: 92, touchAction: "none", opacity: dragging ? 0.25 : 1,
-          background: `var(--mc-st-${stKey}-soft)`,
+          background: `var(--mc-st-${stKey}-fill)`,
           borderColor: conflict ? "var(--mc-st-problem)" : selected ? "var(--mc-text)" : `var(--mc-st-${stKey})`,
           boxShadow: conflict ? "0 0 0 1.5px var(--mc-st-problem)" : selected ? "0 0 0 1.5px var(--mc-text)" : "var(--mc-shadow-sm)",
         }}
         className="mc-tl-block absolute top-1.5 bottom-1.5 rounded-lg border pl-2 pr-1 py-1 overflow-hidden cursor-grab active:cursor-grabbing">
-        <div className="text-[11px] font-semibold leading-tight truncate" style={{ color: "var(--mc-text)" }}>{r.djName || "—"}</div>
-        <div className="text-[9px] leading-tight truncate" style={{ color: "var(--mc-text-secondary)" }}>{from} → {to}</div>
-        <div className="text-[9px] font-mono leading-tight" style={{ color: "var(--mc-text-muted)" }}>
-          {r.time} → {durKnown ? endTime : <span style={{ color: "var(--mc-st-assigned)" }}>ca. {endTime}</span>}
+        <div className="text-[11px] font-semibold leading-tight truncate" style={{ color: "#ffffff" }}>{r.djName || "—"}</div>
+        <div className="text-[9px] leading-tight truncate" style={{ color: "rgba(255,255,255,0.85)" }}>{from} → {to}</div>
+        <div className="text-[9px] font-mono leading-tight" style={{ color: "rgba(255,255,255,0.78)" }}>
+          {r.time} → {durKnown ? endTime : <span style={{ color: "rgba(255,255,255,0.92)", fontWeight: 600 }}>ca. {endTime}</span>}
         </div>
         {problem && (
           <span title="Offene Problemmeldung" className="absolute top-0.5 left-0.5 w-4 h-4 rounded-full flex items-center justify-center" style={{ background: "var(--mc-st-problem)" }}>
@@ -10136,6 +10136,15 @@ function MissionStyles() {
         --mc-st-done: #34d399;      --mc-st-done-soft: rgba(52,211,153,0.30);
         --mc-st-problem: #f26d6d;   --mc-st-problem-soft: rgba(242,109,109,0.30);
         --mc-st-idle: #7c8797;      --mc-st-idle-soft: rgba(124,135,151,0.30);
+        /* Kraeftige Fuellung, NUR fuer die Timeline-Balken. Bewusst getrennt von
+           -soft: dort steht die Akzentfarbe als TEXT drauf (Badges), deshalb ist
+           -soft bei 0.31 gedeckelt. Auf den Balken steht weisser Text, der traegt 0.45. */
+        --mc-st-new-fill: rgba(75,144,246,0.45);
+        --mc-st-assigned-fill: rgba(245,165,36,0.45);
+        --mc-st-enroute-fill: rgba(154,124,247,0.45);
+        --mc-st-done-fill: rgba(52,211,153,0.45);
+        --mc-st-problem-fill: rgba(242,109,109,0.45);
+        --mc-st-idle-fill: rgba(124,135,151,0.45);
         /* Tiefe / Schatten (subtil) */
         --mc-shadow-sm: 0 1px 2px rgba(0,0,0,0.40);
         --mc-shadow: 0 2px 10px rgba(0,0,0,0.35), 0 1px 2px rgba(0,0,0,0.40);
