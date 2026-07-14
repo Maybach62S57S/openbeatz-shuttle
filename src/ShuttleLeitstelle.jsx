@@ -7951,6 +7951,31 @@ function MissionControl({ setup, dyn, session, updateDyn, updateSetup, onLogout,
 
   const [moreOpen, setMoreOpen] = useState(false); // Slice 5.3: "Mehr"-Blatt der Mobil-Leiste
 
+  // Session 6: kurzes visuelles Feedback, wenn sich eine Fahrt gerade geaendert hat
+  // (Zuteilen/Bearbeiten/Status ueber die bestehenden Dialoge -> updatedAt steigt;
+  // auch Aenderungen anderer Leitstellen-Geraete). Rein praesentational: kein
+  // Schreibweg, keine Logik-/Statusaenderung. Beim ersten Laden flasht nichts
+  // (prev ist dann undefined). Zaehler erlaubt ueberlappende Flashes sauber.
+  const seenUpdatedRef = useRef({});
+  const [flashIds, setFlashIds] = useState({});
+  useEffect(() => {
+    const prev = seenUpdatedRef.current;
+    const fresh = [];
+    const seen = {};
+    (dyn.rides || []).forEach((r) => {
+      const u = r.updatedAt || 0;
+      seen[r.id] = u;
+      if (prev[r.id] != null && u > prev[r.id]) fresh.push(r.id);
+    });
+    seenUpdatedRef.current = seen;
+    if (fresh.length) {
+      setFlashIds((f) => { const n = { ...f }; fresh.forEach((id) => { n[id] = (n[id] || 0) + 1; }); return n; });
+      fresh.forEach((id) => setTimeout(() => setFlashIds((f) => {
+        const n = { ...f }; if (n[id] > 1) n[id] -= 1; else delete n[id]; return n;
+      }), 1600));
+    }
+  }, [dyn.rides]);
+
   // ---- Rollenabhaengige Nav (Slice 5.1) ----
   const navItems = mcNavForRole(session?.role);
   // Ist der aktive Tab fuer die Rolle nicht (mehr) erlaubt, auf den ersten
@@ -8150,94 +8175,120 @@ function MissionControl({ setup, dyn, session, updateDyn, updateSetup, onLogout,
           {tab === "board" && (() => {
             const wide = boardWidth >= 960;    // Liste + Fahrer + Karte
             const twoCol = boardWidth >= 640;  // Liste + Fahrer
+            const narrow = boardWidth > 0 && boardWidth < 560; // Karten stapeln
             const cols = wide ? "minmax(360px,1.7fr) minmax(160px,0.8fr) minmax(360px,1.5fr)" : twoCol ? "minmax(300px,2fr) minmax(160px,1fr)" : "1fr";
+            const ridesLoaded = Array.isArray(dyn.rides);
             return (
             <div ref={boardRef} className="grid gap-5" style={{ gridTemplateColumns: cols }}>
               {/* Fahrtenliste */}
               <section>
-                <div className="flex items-center gap-2 mb-3">
-                  <div className="flex gap-1 bg-stone-900 rounded-lg p-1 border border-stone-800">
+                {/* Filterleiste + Suche + Neu */}
+                <div className="flex items-center gap-2 mb-3 flex-wrap">
+                  <div className="flex gap-0.5 p-1 rounded-[var(--mc-r)]" style={{ background: "var(--mc-inset)", border: "1px solid var(--mc-border)" }}>
                     {[["all", "Alle"], ["unassigned", "Offen"], ["active", "Aktiv"], ["done", "Erledigt"]].map(([f, l]) => (
                       <button key={f} onClick={() => setFilter(f)}
-                        className={`px-2.5 py-1 rounded text-sm ${filter === f ? "bg-stone-700 text-stone-100" : "text-stone-400"}`}>{l}</button>
+                        className="px-2.5 py-1 rounded-[var(--mc-r-sm)] text-sm transition-colors"
+                        style={filter === f ? { background: "var(--mc-hover)", color: "var(--mc-text)", fontWeight: 500 } : { color: "var(--mc-text-secondary)" }}>{l}</button>
                     ))}
                   </div>
-                  <div className="relative flex-1 max-w-xs">
-                    <Search className="w-4 h-4 absolute left-2.5 top-2.5 text-stone-600" />
+                  <div className="relative flex-1 min-w-[160px] max-w-xs">
+                    <Search className="w-4 h-4 absolute left-2.5 top-2.5 pointer-events-none" style={{ color: "var(--mc-text-muted)" }} />
                     <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="DJ, Gast, Flug…"
-                      className="w-full bg-stone-900 border border-stone-800 rounded-lg pl-8 pr-8 py-2 text-sm placeholder-stone-600 focus:outline-none focus:border-orange-500" />
-                    {q && <button onClick={() => setQ("")} aria-label="Suche leeren" className="absolute right-2 top-2.5 text-stone-500 hover:text-stone-300"><X className="w-4 h-4" /></button>}
+                      className="mc-input w-full pl-8 pr-8 py-2 text-sm" />
+                    {q && <button onClick={() => setQ("")} aria-label="Suche leeren" className="absolute right-2 top-2.5" style={{ color: "var(--mc-text-muted)" }}><X className="w-4 h-4" /></button>}
                   </div>
+                  <span className="text-xs font-mono tabular-nums hidden sm:inline" style={{ color: "var(--mc-text-muted)" }}>{filtered.length}/{dayRides.filter((r) => r.status !== "cancelled").length}</span>
                   <button onClick={() => setEditRide({ _new: true, dayKey: day, date: day })}
-                    className="ml-auto bg-orange-600 hover:bg-orange-500 text-white text-sm px-3 py-2 rounded-lg flex items-center gap-1.5">
+                    className="mc-btn-primary ml-auto text-sm px-3 py-2 flex items-center gap-1.5">
                     <Plus className="w-4 h-4" />Fahrt
                   </button>
                 </div>
 
+                {/* Ladezustand (defensiv, falls Fahrten noch nicht bereitstehen) */}
+                {!ridesLoaded && <LoadingState label="Fahrten werden geladen" />}
+
+                {ridesLoaded && (
                 <div className="space-y-2">
                   {filtered.length === 0 && (() => {
                     const es = rideListEmpty({ total: dayRides.length, query: q, filterLabel: filter === "all" ? null : ({ unassigned: "Offen", active: "Aktiv", done: "Erledigt" }[filter]) });
                     return (
-                      <div className="text-stone-500 text-sm py-10 text-center border border-dashed border-stone-800 rounded-xl">
-                        {es.text}
-                        {es.reset === "search" && <button onClick={() => setQ("")} className="ml-2 text-orange-400 hover:text-orange-300 underline">Suche zurücksetzen</button>}
-                        {es.reset === "filter" && <button onClick={() => setFilter("all")} className="ml-2 text-orange-400 hover:text-orange-300 underline">Alle anzeigen</button>}
-                      </div>
+                      <EmptyState icon={Route} title={es.text}
+                        action={
+                          es.reset === "search" ? <button onClick={() => setQ("")} className="text-xs px-3 py-1.5 rounded-[var(--mc-r)]" style={{ background: "var(--mc-hover)", color: "var(--mc-text)", border: "1px solid var(--mc-border)" }}>Suche zurücksetzen</button>
+                          : es.reset === "filter" ? <button onClick={() => setFilter("all")} className="text-xs px-3 py-1.5 rounded-[var(--mc-r)]" style={{ background: "var(--mc-hover)", color: "var(--mc-text)", border: "1px solid var(--mc-border)" }}>Alle anzeigen</button>
+                          : <button onClick={() => setEditRide({ _new: true, dayKey: day, date: day })} className="mc-btn-primary text-xs px-3 py-1.5 flex items-center gap-1.5"><Plus className="w-3.5 h-3.5" />Fahrt anlegen</button>
+                        } />
                     );
                   })()}
                   {filtered.map((r) => {
                     const drv = setup.drivers.find((d) => d.id === r.assignedDriverId);
+                    const cancelled = r.status === "cancelled";
+                    const stripeKey = mcRideStatusKey(r.status, !!r.assignedDriverId);
+                    const flashing = !!flashIds[r.id];
                     return (
-                      <div key={r.id} className="bg-stone-900 border border-stone-800 rounded-xl px-4 py-3 flex items-center gap-4 hover:border-stone-700 transition">
-                        <div className="text-center min-w-[52px]">
-                          <div className="font-mono text-lg font-semibold leading-none">{r.time}</div>
-                          <div className={`text-[10px] mt-1 ${r.estDurationMin == null ? "text-orange-400" : "text-stone-500"}`}>{r.estDurationMin != null ? `${r.estDurationMin}′` : "?′"}</div>
-                        </div>
-                        <div className="w-px self-stretch bg-stone-800" />
-                        <div className="flex-1 min-w-0">
-                          {r.djName && <div className="text-base font-semibold text-orange-300 truncate mb-0.5">{r.djName}</div>}
-                          <div className="flex items-center gap-2 text-sm">
-                            <span className="text-stone-400">{locName(r.fromId, r.fromCustom)}</span>
-                            <ArrowRight className="w-3.5 h-3.5 text-stone-600 shrink-0" />
-                            <span className="text-stone-100 font-medium truncate">{locName(r.toId, r.toCustom)}</span>
-                            {r.zone && <ZoneChip zone={r.zone} className="shrink-0" />}
-                            {rideHasOpenIssue(r) && <span className="text-[10px] bg-red-500/20 text-red-300 px-1.5 py-0.5 rounded shrink-0 flex items-center gap-0.5"><AlertTriangle className="w-2.5 h-2.5" />Problem</span>}
-                            {flightDelayed(r) && <span className="text-[10px] bg-red-500/20 text-red-300 px-1.5 py-0.5 rounded shrink-0 flex items-center gap-0.5"><Plane className="w-2.5 h-2.5" />Flug {flightStyle(r.flightStatus).l}</span>}
+                      <div key={r.id} className="mc-ride-card group relative flex items-stretch overflow-hidden"
+                        style={{ opacity: cancelled ? 0.6 : 1, boxShadow: flashing ? "0 0 0 2px var(--mc-st-new), var(--mc-shadow)" : undefined }}>
+                        {/* Statusstreifen */}
+                        <span className="w-1 shrink-0 self-stretch" style={{ background: `var(--mc-st-${stripeKey})` }} aria-hidden="true" />
+                        <div className={`flex-1 min-w-0 flex ${narrow ? "flex-wrap" : "items-center"} gap-x-4 gap-y-2 px-4 py-3`}>
+                          {/* Zeit */}
+                          <div className="text-center min-w-[52px]">
+                            <div className="font-mono text-lg font-semibold leading-none tabular-nums" style={{ color: "var(--mc-text)" }}>{r.time}</div>
+                            <div className="text-[10px] mt-1 font-mono" style={{ color: r.estDurationMin == null ? "var(--mc-st-assigned)" : "var(--mc-text-muted)" }}>{r.estDurationMin != null ? `${r.estDurationMin}′` : "?′"}</div>
                           </div>
-                          <div className="flex items-center gap-3 mt-1 text-xs text-stone-500">
-                            <span className="flex items-center gap-1"><Users className="w-3 h-3" />{r.passengerCount}</span>
-                            {r.flightNo && <span className={`flex items-center gap-1 ${flightDelayed(r) ? "text-red-400 font-medium" : "text-sky-400"}`}><Plane className="w-3 h-3" />{r.flightNo}{r.flightStatus ? ` · ${flightStyle(r.flightStatus).l}` : ""}{flightDelayed(r) && " ⚠"}</span>}
-                            {r.onDemand && <span className="text-orange-400">on demand</span>}
+                          <div className="w-px self-stretch hidden sm:block" style={{ background: "var(--mc-border)" }} />
+                          {/* Hauptinfo */}
+                          <div className="flex-1 min-w-0">
+                            {r.djName && <div className="text-base font-semibold truncate mb-0.5" style={{ color: "var(--mc-text)" }}>{r.djName}</div>}
+                            <div className="flex items-center gap-2 text-sm flex-wrap">
+                              <span style={{ color: "var(--mc-text-secondary)" }}>{locName(r.fromId, r.fromCustom)}</span>
+                              <ArrowRight className="w-3.5 h-3.5 shrink-0" style={{ color: "var(--mc-text-muted)" }} />
+                              <span className="font-medium truncate" style={{ color: "var(--mc-text)" }}>{locName(r.toId, r.toCustom)}</span>
+                              {r.zone && <ZoneChip zone={r.zone} className="shrink-0" />}
+                              {rideHasOpenIssue(r) && <span className="text-[10px] px-1.5 py-0.5 rounded shrink-0 inline-flex items-center gap-0.5" style={{ background: "var(--mc-st-problem-soft)", color: "var(--mc-st-problem)" }}><AlertTriangle className="w-2.5 h-2.5" />Problem</span>}
+                              {flightDelayed(r) && <span className="text-[10px] px-1.5 py-0.5 rounded shrink-0 inline-flex items-center gap-0.5" style={{ background: "var(--mc-st-problem-soft)", color: "var(--mc-st-problem)" }}><Plane className="w-2.5 h-2.5" />Flug {flightStyle(r.flightStatus).l}</span>}
+                            </div>
+                            <div className="flex items-center gap-3 mt-1 text-xs flex-wrap" style={{ color: "var(--mc-text-muted)" }}>
+                              <span className="inline-flex items-center gap-1"><Users className="w-3 h-3" />{r.passengerCount}</span>
+                              {r.flightNo && <span className="inline-flex items-center gap-1" style={{ color: flightDelayed(r) ? "var(--mc-st-problem)" : "var(--mc-st-new)", fontWeight: flightDelayed(r) ? 500 : 400 }}><Plane className="w-3 h-3" />{r.flightNo}{r.flightStatus ? ` · ${flightStyle(r.flightStatus).l}` : ""}{flightDelayed(r) && " ⚠"}</span>}
+                              {r.onDemand && <span style={{ color: "var(--mc-st-assigned)" }}>on demand</span>}
+                            </div>
+                          </div>
+                          {/* Status */}
+                          <div className="shrink-0"><StatusBadge status={stripeKey} label={STATUS_LABEL[r.status] || r.status || "—"} /></div>
+                          {/* Fahrer */}
+                          <div className={`${narrow ? "w-full" : "w-[150px]"} shrink-0`}>
+                            {drv ? (
+                              <button onClick={() => setAssignRide(r)} title="Fahrer ändern" className="w-full text-left rounded-[var(--mc-r)] px-1.5 py-1 -mx-1.5 hover:bg-white/5 transition-colors">
+                                <div className="text-sm flex items-center gap-1.5" style={{ color: "var(--mc-text)" }}>
+                                  <span className="w-2 h-2 rounded-full shrink-0" style={{ background: drv.vehicleType === "Van" ? "var(--mc-st-assigned)" : "var(--mc-st-new)" }} />
+                                  {drv.firstName} {drv.lastName[0]}.
+                                </div>
+                                <div className="text-[10px] font-mono pl-3.5" style={{ color: "var(--mc-text-muted)" }}>{drv.vehicleType === "Van" ? "Van" : "Car"}</div>
+                              </button>
+                            ) : (
+                              <button onClick={() => setAssignRide(r)}
+                                className="mc-btn-assign w-full text-sm px-2.5 py-1.5 flex items-center justify-center gap-1">
+                                <Navigation className="w-3.5 h-3.5" />Zuteilen
+                              </button>
+                            )}
+                          </div>
+                          {/* Aktionen */}
+                          <div className="flex items-center gap-0.5 shrink-0 ml-auto">
+                            <button onClick={() => setWaRide(r)} title="WhatsApp-Text" className="mc-iconbtn"><MessageSquare className="w-4 h-4" /></button>
+                            <button onClick={() => setEditRide(r)} title="Fahrt öffnen" className="mc-iconbtn"><ChevronRight className="w-5 h-5" /></button>
                           </div>
                         </div>
-                        <div className="shrink-0"><StatusPill status={r.status} /></div>
-                        <div className="w-[150px] shrink-0">
-                          {drv ? (
-                            <button onClick={() => setAssignRide(r)} className="w-full text-left group">
-                              <div className="text-sm text-stone-200 flex items-center gap-1.5">
-                                <span className={`w-2 h-2 rounded-full ${drv.vehicleType === "Van" ? "bg-orange-400" : "bg-sky-400"}`} />
-                                {drv.firstName} {drv.lastName[0]}.
-                              </div>
-                              <div className="text-[10px] text-stone-500 font-mono">{drv.vehicleType === "Van" ? "Van" : "Car"}</div>
-                            </button>
-                          ) : (
-                            <button onClick={() => setAssignRide(r)}
-                              className="w-full bg-orange-500/15 hover:bg-orange-500/25 text-orange-300 text-sm px-2.5 py-1.5 rounded-lg flex items-center justify-center gap-1">
-                              <Navigation className="w-3.5 h-3.5" />Zuteilen
-                            </button>
-                          )}
-                        </div>
-                        <button onClick={() => setWaRide(r)} title="WhatsApp-Text" className="text-stone-600 hover:text-emerald-400 shrink-0"><MessageSquare className="w-4 h-4" /></button>
-                        <button onClick={() => setEditRide(r)} className="text-stone-600 hover:text-stone-300 shrink-0"><ChevronRight className="w-5 h-5" /></button>
                       </div>
                     );
                   })}
                 </div>
+                )}
               </section>
 
               {/* Fahrer-Live-Spalte */}
               <section>
-                <h3 className="text-sm font-medium text-stone-400 mb-3 flex items-center gap-2"><Radio className="w-4 h-4" />Fahrer live</h3>
+                <div className="mc-eyebrow mb-3 flex items-center gap-2"><Radio className="w-3.5 h-3.5" />Fahrer live</div>
                 <div className="space-y-1.5">
                   {setup.drivers.map((d) => {
                     const s = computeDriverStats(setup, dyn, d.id, day);
@@ -8453,6 +8504,25 @@ const MC_STATUS = {
   idle:     { label: "Inaktiv",    key: "idle" },     // Grau
 };
 
+// Reine Zuordnung Fahrt-Status -> MC_STATUS-Farbschluessel (fuer Statusstreifen +
+// Status-Badge in der Mission-Control-Fahrtenansicht). AENDERT KEINE Statuslogik,
+// nur die farbliche Gruppierung fuer die Darstellung. Der echte Status-Text kommt
+// weiter aus STATUS_LABEL. Problem-Meldungen werden separat als rote Chips gezeigt,
+// damit der Streifen den tatsaechlichen Fahrt-Status behaelt.
+//   planned (ohne Fahrer) = new (blau)   | planned (mit Fahrer)/accepted = assigned
+//   enroute_pickup/onboard = enroute     | done = done | cancelled = idle
+function mcRideStatusKey(status, hasDriver) {
+  switch (status) {
+    case "cancelled": return "idle";
+    case "done": return "done";
+    case "onboard":
+    case "enroute_pickup": return "enroute";
+    case "accepted": return "assigned";
+    case "planned": return hasDriver ? "assigned" : "new";
+    default: return "idle";
+  }
+}
+
 /* ---- Mission-Control-Navigation (Session 5, Slice 5.1) ----------------- *
  * Reine Datenstruktur + Rollenfilter. Wird in DIESEM Slice noch NICHT
  * gerendert (MissionControl bleibt Passthrough). Jeder Eintrag zeigt auf
@@ -8622,6 +8692,41 @@ function MissionStyles() {
       .mc-iconbtn--active { background: var(--mc-hover); color: var(--mc-text); border-color: var(--mc-border-strong); }
       .mc-iconbtn:disabled { opacity: var(--mc-disabled-opacity); cursor: not-allowed; }
       .mc-iconbtn:disabled:hover { background: transparent; color: var(--mc-text-secondary); border-color: transparent; }
+
+      /* Fahrtenkarte (Board) - Grundflaeche + Hover-Zustand + Flash via inline box-shadow */
+      .mc-ride-card {
+        background: var(--mc-panel);
+        border: 1px solid var(--mc-border);
+        border-radius: var(--mc-r-lg);
+        transition: background var(--mc-dur) var(--mc-ease), border-color var(--mc-dur) var(--mc-ease), box-shadow var(--mc-dur) var(--mc-ease);
+      }
+      .mc-ride-card:hover { background: var(--mc-panel-raised); border-color: var(--mc-border-strong); }
+
+      /* Sucheingabe */
+      .mc-input {
+        background: var(--mc-inset);
+        border: 1px solid var(--mc-border);
+        color: var(--mc-text);
+        border-radius: var(--mc-r);
+      }
+      .mc-input::placeholder { color: var(--mc-text-muted); }
+      .mc-input:focus { outline: none; border-color: var(--mc-st-new); box-shadow: 0 0 0 3px var(--mc-st-new-soft); }
+
+      /* Primaerer Button (neue Fahrt) */
+      .mc-btn-primary {
+        background: var(--mc-text); color: var(--mc-bg);
+        border-radius: var(--mc-r); font-weight: 500;
+        transition: opacity var(--mc-dur) var(--mc-ease);
+      }
+      .mc-btn-primary:hover { opacity: 0.88; }
+
+      /* Zuteilen-Button (unbesetzte Fahrt) - blauer Akzent */
+      .mc-btn-assign {
+        background: var(--mc-st-new-soft); color: var(--mc-st-new);
+        border-radius: var(--mc-r);
+        transition: background var(--mc-dur) var(--mc-ease);
+      }
+      .mc-btn-assign:hover { background: color-mix(in srgb, var(--mc-st-new) 22%, transparent); }
 
       /* LiveIndicator (ruhiger Puls, kein Gaming) */
       @keyframes mc-pulse-ring {
