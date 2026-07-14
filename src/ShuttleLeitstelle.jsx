@@ -5,7 +5,7 @@ import {
   ArrowRight, Plus, Settings, Upload, LogOut, Radio, Navigation, AlertTriangle,
   RefreshCw, Search, X, Route, Timer, Gauge, ChevronRight, Play, Flag, Ban,
   MessageSquare, Copy, Check, Moon, LayoutGrid, BarChart3, Siren, History, Link2, Eye, Trash2,
-  Smartphone, Wifi, WifiOff, Phone, RotateCcw,
+  Smartphone, Wifi, WifiOff, Phone, RotateCcw, MoreHorizontal,
 } from "lucide-react";
 
 /* ============================================================================
@@ -7949,6 +7949,8 @@ function MissionControl({ setup, dyn, session, updateDyn, updateSetup, onLogout,
   const emCount = emCases.length;
   const msgOpen = openMessages(dyn).length;
 
+  const [moreOpen, setMoreOpen] = useState(false); // Slice 5.3: "Mehr"-Blatt der Mobil-Leiste
+
   // ---- Rollenabhaengige Nav (Slice 5.1) ----
   const navItems = mcNavForRole(session?.role);
   // Ist der aktive Tab fuer die Rolle nicht (mehr) erlaubt, auf den ersten
@@ -7957,6 +7959,18 @@ function MissionControl({ setup, dyn, session, updateDyn, updateSetup, onLogout,
   useEffect(() => {
     if (navItems.length && !navItems.some((n) => n.tab === tab)) setTab(navItems[0].tab);
   }, [navItems, tab]);
+
+  // ---- Ableitung fuer die untere Mobil-Leiste (Slice 5.3) ----
+  // Primaere Buttons: die MC_MOBILE_PRIMARY-Tabs, aber nur soweit die Rolle
+  // sie ueberhaupt sehen darf (Schnitt mit navItems), in fester Reihenfolge.
+  // "Mehr" sammelt alle uebrigen rollen-erlaubten Punkte (MC_NAV-Reihenfolge).
+  const mobilePrimary = MC_MOBILE_PRIMARY
+    .map((k) => navItems.find((n) => n.tab === k))
+    .filter(Boolean);
+  const mobileMore = navItems.filter((n) => !MC_MOBILE_PRIMARY.includes(n.tab));
+  const moreActive = mobileMore.some((n) => n.tab === tab); // aktiver Tab liegt unter "Mehr"
+  const moreBadge = mobileMore.reduce((s, n) => s + (n.tab === "emergency" ? emCount : n.tab === "messages" ? msgOpen : 0), 0);
+  const moreCrit = mobileMore.some((n) => n.tab === "emergency") && emCrit > 0;
 
   const liveActive = hasSupabase() && !offline && !connIssue;
   const roleLabel = ({ dispo: "Leitstelle", stage: "Stage Manager", driver: "Fahrer" })[session?.role] || "";
@@ -8044,8 +8058,10 @@ function MissionControl({ setup, dyn, session, updateDyn, updateSetup, onLogout,
 
       {/* ---- Rumpf: linke Nav + Hauptinhalt ---- */}
       <div className="flex items-stretch">
-        {/* Linke Hauptnavigation (Desktop) - rollengefiltert */}
-        <nav className="shrink-0 w-56 py-3 self-stretch" style={{ borderRight: "1px solid var(--mc-border)", background: "var(--mc-panel)" }}>
+        {/* Linke Hauptnavigation (nur Desktop ab md; darunter uebernimmt die
+            untere Mobil-Leiste). "block" statt "flex", damit die vertikalen
+            Nav-Gruppen erhalten bleiben. */}
+        <nav className="hidden md:block shrink-0 w-56 py-3 self-stretch" style={{ borderRight: "1px solid var(--mc-border)", background: "var(--mc-panel)" }}>
           {MC_NAV_GROUPS.map((g) => {
             const items = navItems.filter((n) => n.group === g);
             if (items.length === 0) return null;
@@ -8082,7 +8098,7 @@ function MissionControl({ setup, dyn, session, updateDyn, updateSetup, onLogout,
         </nav>
 
         {/* Hauptinhalt = bestehende Tabs/Board/Modals (identische Props wie Dashboard) */}
-        <main className="flex-1 min-w-0 px-5 py-5">
+        <main className="flex-1 min-w-0 px-5 py-5 pb-24 md:pb-5">
           {(() => {
             const withIssues = (dyn.rides || []).filter((r) => rideHasOpenIssue(r) && r.status !== "cancelled");
             if (withIssues.length === 0) return null;
@@ -8259,6 +8275,85 @@ function MissionControl({ setup, dyn, session, updateDyn, updateSetup, onLogout,
         </main>
       </div>
 
+      {/* ---- Untere Mobil-Navigation (nur schmal, md:hidden) --------------- *
+          Gleiche Rollenfilterung wie die Desktop-Nav (mcNavForRole). Feste
+          Primaer-Buttons + "Mehr" fuer den Rest. z-30: liegt unter den Modals
+          (Modal = z-40, ChatPanel = z-50), damit ein offenes Modal die Leiste
+          sauber ueberdeckt. Der Chat-FAB wird per --mc-fab-lift darueber gehoben. */}
+      {navItems.length > 0 && (
+        <>
+          {/* "Mehr"-Blatt: liegt ueber der Leiste, schliesst bei Klick daneben */}
+          {moreOpen && mobileMore.length > 0 && (
+            <div className="md:hidden fixed inset-0 z-30" onClick={() => setMoreOpen(false)}>
+              <div className="absolute inset-0 bg-black/50 backdrop-blur-sm" />
+              <div className="absolute left-0 right-0 p-3" style={{ bottom: "calc(56px + env(safe-area-inset-bottom))" }} onClick={(e) => e.stopPropagation()}>
+                <div className="mx-auto max-w-md rounded-2xl overflow-hidden" style={{ background: "var(--mc-panel-raised)", border: "1px solid var(--mc-border)", boxShadow: "var(--mc-shadow-lg)" }}>
+                  <div className="px-4 py-2.5 flex items-center justify-between" style={{ borderBottom: "1px solid var(--mc-border)" }}>
+                    <span className="mc-eyebrow">Mehr</span>
+                    <button onClick={() => setMoreOpen(false)} aria-label="Schließen" className="p-1 rounded-lg hover:bg-white/5" style={{ color: "var(--mc-text-muted)" }}><X className="w-4 h-4" /></button>
+                  </div>
+                  <div className="grid grid-cols-3 gap-1 p-2">
+                    {mobileMore.map((it) => {
+                      const Icon = it.icon;
+                      const isActive = tab === it.tab;
+                      const badge = it.tab === "emergency" ? emCount : it.tab === "messages" ? msgOpen : 0;
+                      const crit = it.tab === "emergency" && emCrit > 0;
+                      return (
+                        <button key={it.tab} onClick={() => { setTab(it.tab); setMoreOpen(false); }}
+                          className="relative flex flex-col items-center gap-1.5 px-2 py-3 rounded-xl text-xs"
+                          style={isActive ? { background: "var(--mc-hover)", color: "var(--mc-text)" } : { color: "var(--mc-text-secondary)" }}>
+                          <Icon className="w-5 h-5" />
+                          <span className="truncate max-w-full">{it.label}</span>
+                          {badge > 0 && (
+                            <span className="absolute top-1.5 right-1.5 min-w-[1.05rem] h-[1.05rem] px-1 inline-flex items-center justify-center rounded-full text-[10px] font-bold"
+                              style={it.tab === "emergency"
+                                ? (crit ? { background: "var(--mc-st-problem)", color: "#fff" } : { background: "var(--mc-st-assigned)", color: "var(--mc-bg)" })
+                                : { background: "var(--mc-st-new)", color: "#fff" }}>
+                              {badge}
+                            </span>
+                          )}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Feste untere Leiste */}
+          <nav className="md:hidden fixed bottom-0 left-0 right-0 z-30 flex items-stretch"
+            style={{ background: "color-mix(in srgb, var(--mc-bg) 94%, transparent)", borderTop: "1px solid var(--mc-border)", backdropFilter: "blur(8px)", WebkitBackdropFilter: "blur(8px)", paddingBottom: "env(safe-area-inset-bottom)" }}>
+            {mobilePrimary.map((it) => {
+              const Icon = it.icon;
+              const isActive = tab === it.tab;
+              const label = MC_MOBILE_LABEL[it.tab] || it.label;
+              return (
+                <button key={it.tab} onClick={() => { setTab(it.tab); setMoreOpen(false); }}
+                  className="relative flex-1 flex flex-col items-center justify-center gap-0.5 py-2 text-[11px]"
+                  style={isActive ? { color: "var(--mc-text)" } : { color: "var(--mc-text-muted)" }}>
+                  {isActive && <span className="absolute top-0 left-1/4 right-1/4 h-0.5 rounded-full" style={{ background: "var(--mc-st-new)" }} />}
+                  <Icon className="w-5 h-5" />
+                  <span className="leading-none truncate max-w-full">{label}</span>
+                </button>
+              );
+            })}
+            {mobileMore.length > 0 && (
+              <button onClick={() => setMoreOpen((v) => !v)} aria-expanded={moreOpen}
+                className="relative flex-1 flex flex-col items-center justify-center gap-0.5 py-2 text-[11px]"
+                style={(moreActive || moreOpen) ? { color: "var(--mc-text)" } : { color: "var(--mc-text-muted)" }}>
+                {moreActive && <span className="absolute top-0 left-1/4 right-1/4 h-0.5 rounded-full" style={{ background: "var(--mc-st-new)" }} />}
+                <MoreHorizontal className="w-5 h-5" />
+                <span className="leading-none">Mehr</span>
+                {moreBadge > 0 && (
+                  <span className="absolute top-1 right-[26%] w-2 h-2 rounded-full" style={{ background: moreCrit ? "var(--mc-st-problem)" : "var(--mc-st-assigned)" }} />
+                )}
+              </button>
+            )}
+          </nav>
+        </>
+      )}
+
       {assignRide && (
         <AssignModal setup={setup} dyn={dyn} ride={assignRide}
           onClose={() => setAssignRide(null)}
@@ -8334,7 +8429,8 @@ function MissionControl({ setup, dyn, session, updateDyn, updateSetup, onLogout,
           onCopied={(which) => updateDyn((d) => { const r = d.rides.find((x) => x.id === waRide.id); if (r) logRide(r, "whatsapp", meBy, which); return d; })} />
       )}
 
-      <ChatPanel setup={setup} dyn={dyn} day={day} updateDyn={updateDyn} by={meBy} />
+      {/* liftOffset ueber CSS-Var: auf schmal ueber die Mobil-Leiste, ab md 0 */}
+      <ChatPanel setup={setup} dyn={dyn} day={day} updateDyn={updateDyn} by={meBy} liftOffset="var(--mc-fab-lift)" />
     </div>
   );
 }
@@ -8409,6 +8505,19 @@ function mcNavForRole(role) {
   return MC_NAV.filter((it) => allow.includes(it.tab)); // stage/driver: Teilmenge
 }
 
+/* ---- Mobile-Leiste (Session 5, Slice 5.3) ----------------------------- *
+ * Diese Tabs bekommen in der unteren Leiste je einen eigenen Button, in
+ * genau dieser Reihenfolge. "overview" heisst mobil "Live" (kuerzeres
+ * Label), sonst gilt das MC_NAV-Label. Alle uebrigen rollen-erlaubten
+ * Punkte wandern unter "Mehr". Der Rollenfilter kommt weiterhin
+ * ausschliesslich aus mcNavForRole - KEINE zweite Rollenquelle. Fuer eine
+ * reduzierte Rolle (z.B. stage = nur overview+emergency) erscheint dann
+ * nur "Live" + "Mehr" (mit den Problemen darunter), die Stage-Read-only-
+ * Garantie bleibt also unberuehrt.
+ * ----------------------------------------------------------------------- */
+const MC_MOBILE_PRIMARY = ["overview", "board", "returns", "drivers"];
+const MC_MOBILE_LABEL = { overview: "Live" }; // sonst MC_NAV-Label
+
 function MissionStyles() {
   return (
     <style>{`
@@ -8451,6 +8560,9 @@ function MissionStyles() {
         --mc-focus: 0 0 0 2px var(--mc-bg), 0 0 0 4px rgba(75,144,246,0.55);
         /* Disabled */
         --mc-disabled-opacity: 0.45;
+        /* Chat-FAB-Lift: auf schmal ueber die untere Mobil-Leiste heben (Slice 5.3),
+           ab md wieder 0 (siehe Media-Query unten) */
+        --mc-fab-lift: calc(56px + env(safe-area-inset-bottom));
         /* Typografie */
         --mc-font: system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
         --mc-font-mono: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace;
@@ -8523,6 +8635,11 @@ function MissionStyles() {
       @media (prefers-reduced-motion: reduce) {
         .mc-live-dot { animation: none; }
         .mc-scope * { transition: none !important; }
+      }
+
+      /* Ab md gibt es keine untere Mobil-Leiste mehr -> Chat-FAB nicht mehr anheben. */
+      @media (min-width: 768px) {
+        .mc-scope { --mc-fab-lift: 0px; }
       }
     `}</style>
   );
