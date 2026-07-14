@@ -10072,7 +10072,7 @@ const MC_NAV = [
   { tab: "drivers",   label: "Fahrer",          icon: Users,         group: "BETRIEB" },
   { tab: "emergency", label: "Probleme",        icon: Siren,         group: "BETRIEB" },
   // PLANUNG & KOMMUNIKATION
-  { tab: "timeline",  label: "Kalender",        icon: Gauge,         group: "PLANUNG & KOMMUNIKATION" },
+  { tab: "timeline",  label: "Timeline",        icon: Gauge,         group: "PLANUNG & KOMMUNIKATION" },
   { tab: "messages",  label: "Chat",            icon: MessageSquare, group: "PLANUNG & KOMMUNIKATION" },
   // SYSTEM
   { tab: "settings",  label: "Einstellungen",   icon: Settings,      group: "SYSTEM" },
