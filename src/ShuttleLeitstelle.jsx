@@ -7322,8 +7322,8 @@ function MissionTimelinePage({ setup, dyn, day, onEdit, onAssign, updateDyn, by,
   const cancelPendingDrop = () => setPendingDrop(null);
 
   const NowLine = () => showNowLine ? (
-    <div className="absolute top-0 bottom-0 w-0.5 bg-orange-500 z-10 pointer-events-none" style={{ left: `${pct(nowMin)}%` }}>
-      <div className="absolute -top-4 -translate-x-1/2 text-[9px] font-mono text-orange-400 whitespace-nowrap">{fromMin(nowMin % 1440)}</div>
+    <div className="absolute top-0 bottom-0 z-10 pointer-events-none" style={{ left: `${pct(nowMin)}%`, width: 2, background: "var(--mc-st-assigned)" }}>
+      <div className="absolute -top-4 -translate-x-1/2 text-[9px] font-mono whitespace-nowrap" style={{ color: "var(--mc-st-assigned)" }}>{fromMin(nowMin % 1440)}</div>
     </div>
   ) : null;
 
@@ -7339,22 +7339,36 @@ function MissionTimelinePage({ setup, dyn, day, onEdit, onAssign, updateDyn, by,
     const selected = selectedId === r.id;
     const problem = rideHasOpenIssue(r);
     const dragging = drag && drag.rideId === r.id && drag.moved;
+    // Rein LESEND: geplante Endzeit aus effDur (start + Dauer). Bei unbekannter
+    // Dauer faellt effDur auf config.minDurationMin zurueck -> sichtbar als "ca."
+    // markiert, es wird keine echte Endzeit erfunden.
+    const stKey = mcRideStatusKey(r.status, !!r.assignedDriverId);
+    const durKnown = r.estDurationMin != null;
+    const endTime = fromMin(end(r) % 1440);
     return (
       <div onPointerDown={(e) => beginDrag(e, r)} onClick={(e) => e.stopPropagation()}
         title={`${r.time} · ${from} → ${to}${r.djName ? " · " + r.djName : ""} — ziehen zum Verschieben, ${isOpen ? "tippen: passende Fahrer anzeigen" : "tippen: Fahrer ändern"}`}
-        style={{ left: `${pct(start(r))}%`, width: `${Math.max(9, pct(end(r)) - pct(start(r)))}%`, minWidth: 92, touchAction: "none", opacity: dragging ? 0.25 : 1 }}
-        className={`absolute top-1.5 bottom-1.5 rounded-lg border px-2 py-1 overflow-hidden cursor-grab active:cursor-grabbing text-white ${warn ? "bg-orange-500/30 border-orange-500" : barColor(r)} ${conflict ? "ring-2 ring-red-500" : ""} ${selected ? "ring-2 ring-white" : ""}`}>
-        <div className="text-[11px] font-semibold leading-tight truncate">{r.djName || "—"}</div>
-        <div className="text-[9px] leading-tight truncate opacity-85">{from} → {to}</div>
-        <div className="text-[9px] font-mono leading-tight opacity-70">{r.time}</div>
+        style={{
+          left: `${pct(start(r))}%`, width: `${Math.max(9, pct(end(r)) - pct(start(r)))}%`,
+          minWidth: 92, touchAction: "none", opacity: dragging ? 0.25 : 1,
+          background: `var(--mc-st-${stKey}-soft)`,
+          borderColor: conflict ? "var(--mc-st-problem)" : selected ? "var(--mc-text)" : `var(--mc-st-${stKey})`,
+          boxShadow: conflict ? "0 0 0 1.5px var(--mc-st-problem)" : selected ? "0 0 0 1.5px var(--mc-text)" : "var(--mc-shadow-sm)",
+        }}
+        className="mc-tl-block absolute top-1.5 bottom-1.5 rounded-lg border pl-2 pr-1 py-1 overflow-hidden cursor-grab active:cursor-grabbing">
+        <div className="text-[11px] font-semibold leading-tight truncate" style={{ color: "var(--mc-text)" }}>{r.djName || "—"}</div>
+        <div className="text-[9px] leading-tight truncate" style={{ color: "var(--mc-text-secondary)" }}>{from} → {to}</div>
+        <div className="text-[9px] font-mono leading-tight" style={{ color: "var(--mc-text-muted)" }}>
+          {r.time} → {durKnown ? endTime : <span style={{ color: "var(--mc-st-assigned)" }}>ca. {endTime}</span>}
+        </div>
         {problem && (
-          <span title="Offene Problemmeldung" className="absolute top-0.5 left-0.5 w-4 h-4 rounded-full bg-red-500 flex items-center justify-center">
+          <span title="Offene Problemmeldung" className="absolute top-0.5 left-0.5 w-4 h-4 rounded-full flex items-center justify-center" style={{ background: "var(--mc-st-problem)" }}>
             <AlertTriangle className="w-2.5 h-2.5 text-white" />
           </span>
         )}
         <button onPointerDown={(e) => e.stopPropagation()} onClick={(e) => { e.stopPropagation(); onEdit && onEdit(r); }} title="Fahrt bearbeiten"
-          className="absolute top-0.5 right-0.5 w-5 h-5 rounded-md bg-black/25 hover:bg-black/45 flex items-center justify-center">
-          <ChevronRight className="w-3 h-3" />
+          className="absolute top-0.5 right-0.5 w-5 h-5 rounded-md flex items-center justify-center" style={{ background: "rgba(0,0,0,0.32)" }}>
+          <ChevronRight className="w-3 h-3" style={{ color: "var(--mc-text)" }} />
         </button>
       </div>
     );
@@ -7364,17 +7378,22 @@ function MissionTimelinePage({ setup, dyn, day, onEdit, onAssign, updateDyn, by,
     const ev = selectedRide && driverId ? evalFor(driverId) : null;
     const clickable = ev && ev.eligible && !ev.overlap;
     const isDropTarget = dragActive && dropDriverId !== undefined && dropDriverId === (driverId || null);
-    const rowTone = isDropTarget ? "bg-orange-500/20" : !selectedRide ? "" : clickable ? (ev.feasible ? "bg-emerald-500/10" : "bg-amber-500/10") : "opacity-40";
+    const rowBg = isDropTarget ? "var(--mc-st-assigned-soft)"
+      : !selectedRide ? "var(--mc-panel)"
+        : clickable ? (ev.feasible ? "var(--mc-st-done-soft)" : "var(--mc-st-assigned-soft)")
+          : "var(--mc-panel)";
+    const dimmed = selectedRide && !clickable && !isDropTarget;
     return (
       <div data-row-driver={driverId || "unassigned"} onClick={() => clickable && quickAssign(driverId)}
-        className={`flex items-stretch border-b border-stone-800/60 transition bg-stone-900 ${rowTone} ${clickable ? "cursor-pointer hover:bg-emerald-500/20" : ""}`}>
-        <div className="w-40 shrink-0 px-3 py-2.5 sticky left-0 z-10 bg-stone-900">
-          <div className={`text-sm font-medium truncate ${warn ? "text-orange-400" : "text-stone-100"}`}>{label}</div>
-          {sub && <div className="text-[10px] font-mono text-stone-500 truncate mt-0.5">{sub}</div>}
-          {clickable && <div className={`text-[9px] mt-0.5 ${ev.feasible ? "text-emerald-400" : "text-amber-400"}`}>{ev.feasible ? "passt · antippen" : "knapp · antippen"}</div>}
+        className={`mc-tl-row flex items-stretch ${clickable ? "mc-tl-row-click cursor-pointer" : ""}`}
+        style={{ borderBottom: "1px solid var(--mc-border)", background: rowBg, opacity: dimmed ? 0.4 : 1 }}>
+        <div className="w-40 shrink-0 px-3 py-2.5 sticky left-0 z-10" style={{ background: "var(--mc-panel)" }}>
+          <div className="text-sm font-medium truncate" style={{ color: warn ? "var(--mc-st-assigned)" : "var(--mc-text)" }}>{label}</div>
+          {sub && <div className="text-[10px] font-mono truncate mt-0.5" style={{ color: "var(--mc-text-muted)" }}>{sub}</div>}
+          {clickable && <div className="text-[9px] mt-0.5" style={{ color: ev.feasible ? "var(--mc-st-done)" : "var(--mc-st-assigned)" }}>{ev.feasible ? "passt · antippen" : "knapp · antippen"}</div>}
         </div>
         <div className="relative shrink-0 h-16" style={{ width: contentW }}>
-          {hours.map((m) => <div key={m} className="absolute top-0 bottom-0 w-px bg-stone-800" style={{ left: `${pct(m)}%` }} />)}
+          {hours.map((m) => <div key={m} className="absolute top-0 bottom-0 w-px" style={{ left: `${pct(m)}%`, background: "var(--mc-border)" }} />)}
           <NowLine />
           {rs.map((r, i) => <Block key={r.id} r={r} warn={warn} conflict={conflictCheck && hasConflict(rs, i)} />)}
         </div>
@@ -7389,10 +7408,10 @@ function MissionTimelinePage({ setup, dyn, day, onEdit, onAssign, updateDyn, by,
       : dropDriverId === null ? "Ohne Fahrer"
         : (() => { const dd = setup.drivers.find((x) => x.id === dropDriverId); return dd ? `${dd.firstName} ${dd.lastName}` : "—"; })();
     return (
-      <div className="fixed z-50 pointer-events-none px-3 py-2 rounded-lg bg-stone-950 border border-orange-500 text-white shadow-lg"
-        style={{ left: drag.x + 14, top: drag.y + 14 }}>
-        <div className="text-sm font-semibold">{dropNewStart != null ? fromMin(dropNewStart) : "—"}</div>
-        <div className="text-[10px] text-stone-400">{targetLabel}</div>
+      <div className="mc-panel fixed z-50 pointer-events-none px-3 py-2"
+        style={{ left: drag.x + 14, top: drag.y + 14, borderColor: "var(--mc-st-new)" }}>
+        <div className="text-sm font-semibold" style={{ color: "var(--mc-text)" }}>{dropNewStart != null ? fromMin(dropNewStart) : "—"}</div>
+        <div className="text-[10px]" style={{ color: "var(--mc-text-secondary)" }}>{targetLabel}</div>
       </div>
     );
   };
@@ -7411,14 +7430,14 @@ function MissionTimelinePage({ setup, dyn, day, onEdit, onAssign, updateDyn, by,
     return (
       <>
         <div className="fixed inset-0 z-40" onPointerDown={cancelPendingDrop} />
-        <div className="fixed z-50 w-56 bg-stone-950 border border-orange-500 rounded-xl shadow-lg p-3" style={{ left, top }}
+        <div className="mc-panel fixed z-50 w-56 p-3" style={{ left, top, borderColor: "var(--mc-st-new)" }}
           onPointerDown={(e) => e.stopPropagation()}>
-          <div className="text-sm font-semibold text-orange-300 truncate mb-1.5">{ride.djName || "Fahrt"} wirklich verschieben?</div>
-          {timeChanged && <div className="text-xs text-stone-300 mb-1">Zeit: <span className="text-stone-500">{ride.time}</span> → <span className="font-medium text-stone-100">{newTime}</span></div>}
-          {driverChanged && <div className="text-xs text-stone-300 mb-1">Fahrer: <span className="text-stone-500">{driverLabel(ride.assignedDriverId)}</span> → <span className="font-medium text-stone-100">{driverLabel(newDriverIdOrUndefined)}</span></div>}
+          <div className="text-sm font-semibold truncate mb-1.5" style={{ color: "var(--mc-text)" }}>{ride.djName || "Fahrt"} wirklich verschieben?</div>
+          {timeChanged && <div className="text-xs mb-1" style={{ color: "var(--mc-text-secondary)" }}>Zeit: <span style={{ color: "var(--mc-text-muted)" }}>{ride.time}</span> → <span className="font-medium" style={{ color: "var(--mc-text)" }}>{newTime}</span></div>}
+          {driverChanged && <div className="text-xs mb-1" style={{ color: "var(--mc-text-secondary)" }}>Fahrer: <span style={{ color: "var(--mc-text-muted)" }}>{driverLabel(ride.assignedDriverId)}</span> → <span className="font-medium" style={{ color: "var(--mc-text)" }}>{driverLabel(newDriverIdOrUndefined)}</span></div>}
           <div className="flex gap-2 mt-2">
-            <button onClick={cancelPendingDrop} className="flex-1 text-xs bg-stone-800 hover:bg-stone-700 text-stone-200 py-1.5 rounded-lg">Abbrechen</button>
-            <button onClick={confirmPendingDrop} className="flex-1 text-xs bg-orange-600 hover:bg-orange-500 text-white py-1.5 rounded-lg font-medium">Verschieben</button>
+            <button onClick={cancelPendingDrop} className="flex-1 text-xs py-1.5 rounded-lg" style={{ background: "var(--mc-hover)", color: "var(--mc-text-secondary)" }}>Abbrechen</button>
+            <button onClick={confirmPendingDrop} className="mc-btn-primary flex-1 text-xs py-1.5">Verschieben</button>
           </div>
         </div>
       </>
@@ -7431,37 +7450,48 @@ function MissionTimelinePage({ setup, dyn, day, onEdit, onAssign, updateDyn, by,
     const left = Math.min(Math.max(recentlyMoved.x - 60, 8), window.innerWidth - 180);
     const top = Math.min(recentlyMoved.y + 16, window.innerHeight - 60);
     return (
-      <div className="fixed z-40 flex items-center gap-2 px-2.5 py-1.5 rounded-lg bg-stone-950 border border-stone-700 shadow-lg text-[11px] text-stone-300"
-        style={{ left, top }}>
-        <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
+      <div className="mc-panel fixed z-40 flex items-center gap-2 px-2.5 py-1.5 text-[11px]"
+        style={{ left, top, color: "var(--mc-text-secondary)" }}>
+        <CheckCircle2 className="w-3.5 h-3.5 shrink-0" style={{ color: "var(--mc-st-done)" }} />
         Verschoben
-        <button onClick={() => { onUndo && onUndo(); setRecentlyMoved(null); }} className="text-orange-300 hover:text-orange-200 font-medium">Rückgängig</button>
+        <button onClick={() => { onUndo && onUndo(); setRecentlyMoved(null); }} className="font-medium" style={{ color: "var(--mc-st-new)" }}>Rückgängig</button>
       </div>
     );
   };
 
   return (
     <div ref={gridRef} onPointerMove={() => {}}>
+      <style>{`
+        .mc-tl-row-click:hover { background: var(--mc-hover) !important; }
+        .mc-tl-block:hover { filter: brightness(1.10); }
+        .mc-tl-scroll::-webkit-scrollbar { height: 10px; width: 10px; }
+        .mc-tl-scroll::-webkit-scrollbar-thumb { background: var(--mc-border-strong); border-radius: 999px; }
+        .mc-tl-scroll::-webkit-scrollbar-track { background: transparent; }
+      `}</style>
+
       <div className="flex flex-wrap items-center justify-between gap-2 mb-3">
         <div className="flex items-center gap-2.5">
-          <h3 className="text-lg font-semibold text-stone-100 flex items-center gap-2"><Gauge className="w-5 h-5 text-orange-400" />Timeline · wer ist wann belegt</h3>
+          <div className="flex items-center gap-2">
+            <Gauge className="w-4 h-4" style={{ color: "var(--mc-text-secondary)" }} />
+            <h2 className="text-[15px] font-semibold" style={{ color: "var(--mc-text)" }}>Timeline · wer ist wann belegt</h2>
+          </div>
           {conflictCount > 0 && (
-            <span className="text-xs bg-red-500/20 text-red-300 px-2 py-1 rounded-full flex items-center gap-1"><AlertTriangle className="w-3 h-3" />{conflictCount} Konflikt{conflictCount > 1 ? "e" : ""}</span>
+            <span className="mc-badge mc-badge--problem"><AlertTriangle className="w-3 h-3" />{conflictCount} Konflikt{conflictCount > 1 ? "e" : ""}</span>
           )}
         </div>
         <div className="flex items-center gap-3">
-          <div className="flex items-center gap-0.5 bg-stone-900 border border-stone-800 rounded-lg p-0.5">
+          <div className="flex items-center gap-0.5 p-0.5 rounded-lg" style={{ background: "var(--mc-inset)", border: "1px solid var(--mc-border)" }}>
             <button onClick={() => setZoom((z) => Math.max(ZOOM_MIN, z / 1.3))} title="Kleiner"
-              className="w-7 h-7 flex items-center justify-center text-stone-300 hover:bg-stone-800 rounded text-base font-medium leading-none">−</button>
+              className="w-7 h-7 flex items-center justify-center rounded text-base font-medium leading-none" style={{ color: "var(--mc-text-secondary)" }}>−</button>
             <button onClick={fitToScreen} title="An Bildschirmbreite anpassen"
-              className="px-2 h-7 flex items-center text-[11px] text-stone-400 hover:bg-stone-800 rounded whitespace-nowrap">Passend</button>
+              className="px-2 h-7 flex items-center text-[11px] rounded whitespace-nowrap" style={{ color: "var(--mc-text-secondary)" }}>Passend</button>
             <button onClick={() => setZoom((z) => Math.min(ZOOM_MAX, z * 1.3))} title="Größer"
-              className="w-7 h-7 flex items-center justify-center text-stone-300 hover:bg-stone-800 rounded text-base font-medium leading-none">+</button>
+              className="w-7 h-7 flex items-center justify-center rounded text-base font-medium leading-none" style={{ color: "var(--mc-text-secondary)" }}>+</button>
           </div>
-          <div className="flex items-center gap-3 text-xs text-stone-500">
-            <span className="flex items-center gap-1.5"><span className="w-3 h-3 rounded bg-orange-500/90" />unterwegs</span>
-            <span className="flex items-center gap-1.5"><span className="w-3 h-3 rounded bg-emerald-600/80" />erledigt</span>
-            <span className="flex items-center gap-1.5"><span className="w-3 h-3 rounded ring-2 ring-red-500" />Konflikt</span>
+          <div className="hidden sm:flex items-center gap-3 text-xs" style={{ color: "var(--mc-text-muted)" }}>
+            <span className="flex items-center gap-1.5"><span className="w-3 h-3 rounded" style={{ background: "var(--mc-st-enroute)" }} />unterwegs</span>
+            <span className="flex items-center gap-1.5"><span className="w-3 h-3 rounded" style={{ background: "var(--mc-st-done)" }} />erledigt</span>
+            <span className="flex items-center gap-1.5"><span className="w-3 h-3 rounded" style={{ boxShadow: "0 0 0 1.5px var(--mc-st-problem)" }} />Konflikt</span>
           </div>
         </div>
       </div>
@@ -7469,28 +7499,31 @@ function MissionTimelinePage({ setup, dyn, day, onEdit, onAssign, updateDyn, by,
       <div className="flex flex-wrap items-center gap-1.5 mb-3">
         {FILTERS.map(([k, l]) => (
           <button key={k} onClick={() => setFilter(k)}
-            className={`text-xs px-2.5 py-1 rounded-lg border ${filter === k ? "bg-stone-100 text-stone-900 border-stone-100 font-medium" : "bg-stone-900 text-stone-400 border-stone-800"}`}>{l}</button>
+            className="text-xs px-2.5 py-1 rounded-lg border transition"
+            style={filter === k
+              ? { background: "var(--mc-text)", color: "var(--mc-bg)", borderColor: "var(--mc-text)", fontWeight: 500 }
+              : { background: "var(--mc-panel)", color: "var(--mc-text-secondary)", borderColor: "var(--mc-border)" }}>{l}</button>
         ))}
       </div>
 
-      <p className="text-xs text-stone-500 mb-3">
+      <p className="text-xs mb-3" style={{ color: "var(--mc-text-muted)" }}>
         {selectedRide
-          ? <>Offene Fahrt <b className="text-stone-300">{selectedRide.djName || selectedRide.time}</b> ausgewählt — grüne/gelbe Zeilen antippen zum Zuteilen, oder nochmal auf die Fahrt tippen zum Abbrechen.</>
-          : "Fahrt ziehen = Zeit ändern / in eine andere Zeile ziehen = Fahrer wechseln, wird erst nach Bestätigung übernommen · Tippen ohne Ziehen = offene Fahrt: passende Fahrer anzeigen, zugeteilte Fahrt: Fahrer ändern · Stift = Details bearbeiten."}
+          ? <>Offene Fahrt <b style={{ color: "var(--mc-text-secondary)" }}>{selectedRide.djName || selectedRide.time}</b> ausgewählt — grüne/gelbe Zeilen antippen zum Zuteilen, oder nochmal auf die Fahrt tippen zum Abbrechen.</>
+          : "Fahrt ziehen = Zeit ändern / in eine andere Zeile ziehen = Fahrer wechseln, wird erst nach Bestätigung übernommen · Tippen ohne Ziehen = offene Fahrt: passende Fahrer anzeigen, zugeteilte Fahrt: Fahrer ändern · Stift = Details bearbeiten. · Endzeit im Balken ist geschätzt (ca. = Dauer unbekannt)."}
       </p>
 
       {rides.length === 0 ? (
-        <div className="text-stone-500 text-sm py-16 text-center border border-dashed border-stone-800 rounded-xl">Keine Fahrten in dieser Ansicht.</div>
+        <EmptyState icon={Gauge} title="Keine Fahrten in dieser Ansicht" hint="Filter wechseln oder neue Fahrten anlegen." />
       ) : (
-        <div className="bg-stone-900 border border-stone-800 rounded-xl overflow-hidden">
+        <div className="mc-panel overflow-hidden" style={{ padding: 0 }}>
           {/* Eigener scrollbarer Bereich (statt der ganzen Seite): so bleiben
               Kopfzeile (oben) UND Fahrer-Namen (links) beim Scrollen stehen,
               ohne mit dem Dashboard-Header oben in der Seite zu kollidieren. */}
-          <div ref={scrollRef} className="overflow-auto max-h-[65vh] bg-stone-900">
-            <div className="flex border-b border-stone-800 bg-stone-950/95 sticky top-0 z-20">
-              <div className="w-40 shrink-0 sticky left-0 z-30 bg-stone-950/95" />
+          <div ref={scrollRef} className="mc-tl-scroll overflow-auto max-h-[65vh]">
+            <div className="flex sticky top-0 z-20" style={{ borderBottom: "1px solid var(--mc-border)", background: "var(--mc-inset)" }}>
+              <div className="w-40 shrink-0 sticky left-0 z-30" style={{ background: "var(--mc-inset)" }} />
               <div className="relative shrink-0 h-6" style={{ width: contentW }}>
-                {hours.map((m) => <div key={m} className="absolute text-[10px] text-stone-500 top-1.5" style={{ left: `${pct(m)}%`, transform: "translateX(-50%)" }}>{fromMin(m % 1440)}</div>)}
+                {hours.map((m) => <div key={m} className="absolute text-[10px] top-1.5" style={{ left: `${pct(m)}%`, transform: "translateX(-50%)", color: "var(--mc-text-muted)" }}>{fromMin(m % 1440)}</div>)}
               </div>
             </div>
             <div>
