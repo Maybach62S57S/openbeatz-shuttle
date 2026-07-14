@@ -6701,6 +6701,41 @@ function MissionEmergencyTab({ setup, dyn, day, updateDyn, by, onErr, onAssign, 
   // nur, was angezeigt wird.
   const [filter, setFilter] = useState("all"); // all | critical | warn
 
+  // Effekt 4 (rein lesend, KEIN Schreibweg): neu gemeldete Probleme pulsieren
+  // genau einmal kurz rot. seenIssueIdsRef haelt die bereits gesehenen offenen
+  // issue-IDs. Beim ersten Lauf wird nur geseedet (kein Puls beim Laden). Danach
+  // loest jede neue offene issue-ID einen einmaligen roten Puls auf der
+  // zugehoerigen Fahrt-Karte aus. Muster gespiegelt vom Board-Flash (Shell).
+  // Dependency ist eine stabile issue-ID-Signatur, damit das 3s-Polling ohne
+  // echte Aenderung nichts ausloest. Kein Dauerblinken (iteration 1 im CSS).
+  const seenIssueIdsRef = useRef(null);
+  const [pulseIds, setPulseIds] = useState({});
+  const issueSig = cases
+    .filter((c) => c.type === "issue")
+    .flatMap((c) => (c.r.issues || []).filter(issueOpen).map((iss) => iss.id))
+    .sort()
+    .join(",");
+  useEffect(() => {
+    const prev = seenIssueIdsRef.current;
+    const seen = {};
+    const freshRideIds = [];
+    cases.forEach((c) => {
+      if (c.type !== "issue") return;
+      (c.r.issues || []).filter(issueOpen).forEach((iss) => {
+        seen[iss.id] = true;
+        if (prev && !prev[iss.id]) freshRideIds.push(c.r.id);
+      });
+    });
+    seenIssueIdsRef.current = seen;
+    if (prev == null || !freshRideIds.length) return;
+    const uniq = [...new Set(freshRideIds)];
+    setPulseIds((f) => { const n = { ...f }; uniq.forEach((id) => { n[id] = (n[id] || 0) + 1; }); return n; });
+    const timers = uniq.map((id) => setTimeout(() => setPulseIds((f) => {
+      const n = { ...f }; if (n[id] > 1) n[id] -= 1; else delete n[id]; return n;
+    }), 1400));
+    return () => timers.forEach(clearTimeout);
+  }, [issueSig]);
+
   const resolveIssues = async (rideId) => {
     if (resolving) return;
     setResolving(rideId);
@@ -6771,7 +6806,7 @@ function MissionEmergencyTab({ setup, dyn, day, updateDyn, by, onErr, onAssign, 
               const key = crit ? "problem" : "assigned";
               const busy = resolving === r.id;
               return (
-                <div key={i} className="mc-ride-card"
+                <div key={i} className={"mc-ride-card" + (c.type === "issue" && pulseIds[r.id] ? " mc-flash-problem" : "")}
                   style={{ padding: "14px", borderLeft: `3px solid var(--mc-st-${key})` }}>
                   <div className="flex items-start gap-3">
                     <div className="w-9 h-9 rounded-lg flex items-center justify-center shrink-0"
@@ -9951,6 +9986,18 @@ function MissionStyles() {
       }
       .mc-live-dot { width: 8px; height: 8px; border-radius: 999px; background: var(--mc-st-done); animation: mc-pulse-ring 2.4s ease-out infinite; }
       .mc-live-dot--off { background: var(--mc-st-idle); animation: none; }
+
+      /* Effekt 4: neu gemeldete Probleme pulsieren genau EINMAL kurz rot
+         (iteration 1 -> kein Dauerblinken). Roter Ring ueber box-shadow, analog
+         zum bestehenden mc-pulse-ring; ohne fill-mode faellt die Karte danach
+         auf ihren Grundzustand (kein Ring) zurueck. Unter prefers-reduced-motion
+         schaltet der .mc-scope-*-Block unten die Animation ohnehin ab. */
+      @keyframes mc-flash-problem {
+        0%   { box-shadow: 0 0 0 0 color-mix(in srgb, var(--mc-st-problem) 55%, transparent); }
+        70%  { box-shadow: 0 0 0 7px color-mix(in srgb, var(--mc-st-problem) 0%, transparent); }
+        100% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--mc-st-problem) 0%, transparent); }
+      }
+      .mc-scope .mc-flash-problem { animation: mc-flash-problem 1.1s var(--mc-ease) 1; }
 
       /* Effekt 9: Mobil-Navigation reagiert fluessig */
       .mc-navbtn { transition: color var(--mc-anim-fast) var(--mc-ease); }
