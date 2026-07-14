@@ -5549,82 +5549,160 @@ function MessagesInbox({ dyn, updateDyn, by }) {
 function MissionMessagesInbox({ dyn, updateDyn, by }) {
   const [sort, setSort] = useState("open"); // open | all
   const [drafts, setDrafts] = useState({}); // messageId -> Freitext-Entwurf
+  // NEU (nur UI-Feedback, kein neues Datenmodell): welche Antwort gerade gesendet
+  // wird ({id, status}) und pro Nachricht ein Fehlertext, falls das Speichern scheitert.
+  const [sending, setSending] = useState(null);
+  const [errors, setErrors] = useState({});
   const all = (dyn.messages || []).slice().sort((a, b) => b.at - a.at);
   const open = all.filter((m) => !m.reply);
   const shown = sort === "open" ? open : all;
 
-  const reply = (id, status) => {
+  // Schreib-Vorgang identisch zur Classic-Version (m.reply-Objekt unveraendert);
+  // NEU nur der await + sending/error-Status drumherum, damit es echten Sende-
+  // status und eine Fehleranzeige gibt. Muster wie MessageComposer im selben Code.
+  const reply = async (id, status) => {
+    if (sending) return;
     const text = (drafts[id] || "").trim();
-    updateDyn((d) => {
+    setSending({ id, status });
+    setErrors((e) => { const n = { ...e }; delete n[id]; return n; });
+    const res = await updateDyn((d) => {
       const m = (d.messages || []).find((x) => x.id === id);
       if (m) m.reply = { status, text: text || null, by, at: Date.now() };
       return d;
     });
+    setSending(null);
+    if (res && res.ok === false) {
+      setErrors((e) => ({ ...e, [id]: "Antwort konnte nicht gespeichert werden. Bitte erneut versuchen." }));
+      return; // Entwurf bewusst behalten, damit nichts verloren geht
+    }
     setDrafts((cur) => { const n = { ...cur }; delete n[id]; return n; });
   };
-  // Antwort zurücknehmen (falls man sich vertan hat) -> wieder offen.
-  const undoReply = (id) => updateDyn((d) => {
-    const m = (d.messages || []).find((x) => x.id === id);
-    if (m) m.reply = null;
-    return d;
-  });
+  // Antwort zurücknehmen (falls man sich vertan hat) -> wieder offen. Schreib-
+  // Vorgang identisch (m.reply = null), NEU nur sending/error drumherum.
+  const undoReply = async (id) => {
+    if (sending) return;
+    setSending({ id, status: "undo" });
+    setErrors((e) => { const n = { ...e }; delete n[id]; return n; });
+    const res = await updateDyn((d) => {
+      const m = (d.messages || []).find((x) => x.id === id);
+      if (m) m.reply = null;
+      return d;
+    });
+    setSending(null);
+    if (res && res.ok === false) setErrors((e) => ({ ...e, [id]: "Antwort konnte nicht zurückgenommen werden. Bitte erneut versuchen." }));
+  };
 
-  const fromStyle = (from) => from?.startsWith("stage:") ? "text-purple-300 bg-purple-500/10 border-purple-500/30" : "text-sky-300 bg-sky-500/10 border-sky-500/30";
-  const fromKind = (from) => from?.startsWith("stage:") ? "Stage" : "Fahrer";
-  const replyStyle = { confirmed: "text-emerald-300 border-emerald-500/40 bg-emerald-500/10", declined: "text-red-300 border-red-500/40 bg-red-500/10", info: "text-sky-300 border-sky-500/40 bg-sky-500/10" };
+  const fromIsStage = (from) => !!from?.startsWith("stage:");
+  const fromKind = (from) => fromIsStage(from) ? "Stage" : "Fahrer";
   const replyLabel = { confirmed: "Bestätigt", declined: "Nicht bestätigt", info: "Info" };
+  const replyToken = { confirmed: "done", declined: "problem", info: "new" };
 
   return (
-    <div>
-      <div className="flex items-center gap-3 mb-4 flex-wrap">
-        <h3 className="text-lg font-semibold text-stone-100 flex items-center gap-2"><MessageSquare className="w-5 h-5 text-orange-400" />Nachrichten</h3>
-        {open.length > 0 && <span className="text-xs bg-orange-500/15 text-orange-300 px-2 py-1 rounded-full">{open.length} offen</span>}
-        <div className="flex items-center gap-1 bg-stone-900 border border-stone-800 rounded-lg p-0.5 ml-auto">
-          <button onClick={() => setSort("open")} className={`text-xs px-2.5 py-1 rounded ${sort === "open" ? "bg-orange-600 text-white" : "text-stone-400"}`}>Offen</button>
-          <button onClick={() => setSort("all")} className={`text-xs px-2.5 py-1 rounded ${sort === "all" ? "bg-orange-600 text-white" : "text-stone-400"}`}>Alle</button>
-        </div>
-      </div>
-
-      {shown.length === 0 && (
-        <div className="text-stone-500 text-sm py-12 text-center border border-dashed border-stone-800 rounded-xl">
-          <MessageSquare className="w-8 h-8 mx-auto mb-2 opacity-40" />
-          {sort === "open" ? "Keine offenen Nachrichten." : "Noch keine Nachrichten eingegangen."}
-        </div>
-      )}
-
-      <div className="space-y-3 max-w-3xl">
-        {shown.map((m) => (
-          <div key={m.id} className={`rounded-xl border p-3.5 ${m.reply ? "border-stone-800 bg-stone-900" : "border-orange-500/40 bg-orange-500/5"}`}>
-            <div className="flex items-center gap-2 mb-1.5 flex-wrap">
-              <span className={`text-[10px] font-medium px-1.5 py-0.5 rounded border ${fromStyle(m.from)}`}>{fromKind(m.from)}</span>
-              <span className="text-sm font-medium text-stone-200">{m.fromLabel}</span>
-              {m.artist && <span className="text-xs text-orange-300/80">· {m.artist}</span>}
-              <span className="text-[11px] text-stone-500 font-mono ml-auto">{new Date(m.at).toLocaleString("de-DE", { weekday: "short", hour: "2-digit", minute: "2-digit" })}</span>
-            </div>
-            <div className="text-sm text-stone-100 mb-2">{m.text}</div>
-
-            {m.reply ? (
-              <div className="flex items-center gap-2 flex-wrap">
-                <div className={`text-xs border rounded-lg px-2.5 py-1.5 ${replyStyle[m.reply.status] || replyStyle.info}`}>
-                  <span className="font-medium">{replyLabel[m.reply.status] || "Antwort"}</span>{m.reply.text ? `: ${m.reply.text}` : ""}
-                </div>
-                <button onClick={() => undoReply(m.id)} className="text-[11px] text-stone-500 hover:text-stone-300">Antwort zurücknehmen</button>
-              </div>
-            ) : (
-              <div>
-                <input value={drafts[m.id] || ""} onChange={(e) => setDrafts((c) => ({ ...c, [m.id]: e.target.value }))}
-                  placeholder="Antworttext (optional)"
-                  className="w-full mb-2 bg-stone-950 border border-stone-800 rounded-lg px-2.5 py-1.5 text-sm text-stone-200 placeholder-stone-600 focus:outline-none focus:border-orange-500" />
-                <div className="flex items-center gap-2 flex-wrap">
-                  <button onClick={() => reply(m.id, "confirmed")} className="text-sm bg-emerald-600/90 hover:bg-emerald-500 text-white px-3 py-1.5 rounded-lg flex items-center gap-1.5"><Check className="w-4 h-4" />Bestätigt</button>
-                  <button onClick={() => reply(m.id, "declined")} className="text-sm bg-red-600/80 hover:bg-red-500 text-white px-3 py-1.5 rounded-lg flex items-center gap-1.5"><X className="w-4 h-4" />Nicht bestätigt</button>
-                  <button onClick={() => reply(m.id, "info")} className="text-sm bg-stone-800 hover:bg-stone-700 text-stone-100 px-3 py-1.5 rounded-lg">Nur Info senden</button>
-                </div>
-              </div>
-            )}
+    <div className="mc-scope space-y-3">
+      <MissionPanel
+        icon={MessageSquare}
+        title="Nachrichten"
+        subtitle="Von Fahrern und Stage · eine Antwort pro Nachricht"
+        actions={open.length > 0 ? <StatusBadge status="assigned" label={`${open.length} offen`} /> : null}
+      >
+        {/* Umschaltung Offen / Alle */}
+        <div className="flex items-center gap-2 mb-3">
+          <div className="inline-flex items-center gap-0.5 rounded-lg p-0.5"
+            style={{ background: "var(--mc-inset)", border: "1px solid var(--mc-border)" }}>
+            {[["open", "Offen"], ["all", "Alle"]].map(([k, l]) => (
+              <button key={k} onClick={() => setSort(k)}
+                className="text-xs px-3 py-1.5 rounded-md transition"
+                style={sort === k
+                  ? { background: "var(--mc-st-assigned-soft)", color: "var(--mc-st-assigned)", fontWeight: 600 }
+                  : { color: "var(--mc-text-secondary)" }}>{l}</button>
+            ))}
           </div>
-        ))}
-      </div>
+        </div>
+
+        {shown.length === 0 ? (
+          <EmptyState icon={MessageSquare}
+            title={sort === "open" ? "Keine offenen Nachrichten." : "Noch keine Nachrichten eingegangen."}
+            hint={sort === "open"
+              ? "Sobald ein Fahrer oder die Stage etwas meldet, taucht es hier auf und wartet auf deine Antwort."
+              : "Eingehende Nachrichten von Fahrern und Stage erscheinen hier."} />
+        ) : (
+          <div className="space-y-2.5">
+            {shown.map((m) => {
+              const isOpen = !m.reply;
+              const stage = fromIsStage(m.from);
+              const busy = sending && sending.id === m.id;
+              const err = errors[m.id];
+              const relTime = fmtAgo(m.at);
+              const absTime = new Date(m.at).toLocaleString("de-DE", { weekday: "short", hour: "2-digit", minute: "2-digit" });
+              return (
+                <div key={m.id} className="mc-ride-card"
+                  style={{ padding: "12px 14px", borderLeft: `3px solid ${isOpen ? "var(--mc-st-assigned)" : "var(--mc-border)"}` }}>
+                  {/* Kopf: Absender-Art + Name + Artist + offen-Marker + Zeit */}
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <span className="inline-flex items-center text-[10px] font-medium px-1.5 py-0.5 rounded"
+                      style={{ background: stage ? "var(--mc-st-enroute-soft)" : "var(--mc-st-new-soft)", color: stage ? "var(--mc-st-enroute)" : "var(--mc-st-new)" }}>
+                      {fromKind(m.from)}
+                    </span>
+                    <span className="text-sm font-semibold truncate" style={{ color: "var(--mc-text)" }}>{m.fromLabel}</span>
+                    {m.artist && <span className="text-xs truncate" style={{ color: "var(--mc-st-assigned)" }}>· {m.artist}</span>}
+                    {isOpen && <StatusBadge status="assigned" label="offen" />}
+                    <span className="inline-flex items-center gap-1 text-[11px] font-mono ml-auto shrink-0"
+                      style={{ color: "var(--mc-text-muted)" }} title={absTime}>
+                      <Clock className="w-3 h-3" />{relTime}
+                    </span>
+                  </div>
+
+                  {/* Nachrichtentext */}
+                  <div className="text-sm mt-1.5 whitespace-pre-wrap break-words" style={{ color: "var(--mc-text)" }}>{m.text}</div>
+
+                  {m.reply ? (
+                    <div className="mt-2.5 flex items-center gap-2 flex-wrap">
+                      <StatusBadge status={replyToken[m.reply.status] || "new"}
+                        label={`${replyLabel[m.reply.status] || "Antwort"}${m.reply.text ? `: ${m.reply.text}` : ""}`} />
+                      <button onClick={() => undoReply(m.id)} disabled={!!sending}
+                        className="text-[11px] transition disabled:opacity-50 inline-flex items-center gap-1"
+                        style={{ color: "var(--mc-text-muted)" }}>
+                        {busy && sending.status === "undo" && <RefreshCw className="w-3 h-3 animate-spin" />}
+                        Antwort zurücknehmen
+                      </button>
+                      {err && (
+                        <span className="inline-flex items-center gap-1.5 text-xs w-full mt-1" style={{ color: "var(--mc-st-problem)" }}>
+                          <AlertTriangle className="w-3.5 h-3.5 shrink-0" />{err}
+                        </span>
+                      )}
+                    </div>
+                  ) : (
+                    <div className="mt-2.5">
+                      <input value={drafts[m.id] || ""} onChange={(e) => setDrafts((c) => ({ ...c, [m.id]: e.target.value }))}
+                        placeholder="Antworttext (optional)" disabled={!!busy}
+                        className="mc-input w-full mb-2 disabled:opacity-60" />
+                      <div className="flex items-center gap-2 flex-wrap">
+                        {[["confirmed", "Bestätigt", Check], ["declined", "Nicht bestätigt", X], ["info", "Nur Info senden", null]].map(([st, label, Ic]) => {
+                          const active = busy && sending.status === st;
+                          const key = replyToken[st];
+                          return (
+                            <button key={st} onClick={() => reply(m.id, st)} disabled={!!sending}
+                              className="text-sm px-3 py-1.5 rounded-lg inline-flex items-center gap-1.5 transition disabled:opacity-50"
+                              style={{ background: `var(--mc-st-${key}-soft)`, color: `var(--mc-st-${key})`, border: `1px solid var(--mc-st-${key})` }}>
+                              {active ? <RefreshCw className="w-4 h-4 animate-spin" /> : (Ic ? <Ic className="w-4 h-4" /> : null)}
+                              {active ? "wird gesendet" : label}
+                            </button>
+                          );
+                        })}
+                      </div>
+                      {err && (
+                        <div className="mt-2 flex items-center gap-1.5 text-xs" style={{ color: "var(--mc-st-problem)" }}>
+                          <AlertTriangle className="w-3.5 h-3.5 shrink-0" />{err}
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </MissionPanel>
     </div>
   );
 }
