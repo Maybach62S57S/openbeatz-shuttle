@@ -5768,6 +5768,297 @@ function ReturnsTab({ setup, dyn, day, updateDyn, by, onErr, onAssign, onWhatsAp
   );
 }
 
+/* ---- Mission-Control-Variante der Rueckfahrten (Session 7) --------------- *
+ * Eigene Kopie von ReturnsTab (Ansatz A): die komplette Datenableitung und
+ * ALLE Schreib-Handler sind VERBATIM aus ReturnsTab uebernommen (keine
+ * Aenderung an Rueckfahrten-/Zeit-/Zuteilungs-/Supabase-Logik). Nur der Render
+ * ist neu (Mission-Control-Designsystem). ReturnsTab (Classic) bleibt dadurch
+ * byte-genau unveraendert. Gemeinsame Unterkomponenten (PresenceManager,
+ * BoardMiniMap, TimelineView) werden unveraendert wiederverwendet.
+ * Zusaetzlich rein PRAESENTATIONAL: Suche (View-Filter ueber vorhandene
+ * Felder), "ueberfaellig"- und "naechste"-Hervorhebung (abgeleitet, kein
+ * Schreibweg). ------------------------------------------------------------- */
+function MissionReturnsTab({ setup, dyn, day, updateDyn, by, onErr, onAssign, onWhatsApp, onEdit, onNewReturn }) {
+  const [sort, setSort] = useState("time"); // time | dest
+  const [q, setQ] = useState("");
+  const [now, setNow] = useState(Date.now());
+  useEffect(() => { const t = setInterval(() => setNow(Date.now()), 30000); return () => clearInterval(t); }, []);
+  const ln = (id, c) => setup.locations.find((l) => l.id === id)?.short || c || "—";
+  const destName = (r) => ln(r.toId, r.toCustom);
+  const origName = (r) => ln(r.fromId, r.fromCustom); // Abholort (i.d.R. Festival)
+
+  // ---- Datenableitung: VERBATIM aus ReturnsTab (keine Logikaenderung) ----
+  const returns = (dyn.rides || []).filter((r) => r.dayKey === day && r.status !== "cancelled" && (r.type === "return" || r.fromId === "festival"));
+  const open = returns.filter((r) => !r.assignedDriverId && r.status !== "done");
+  const active = returns.filter((r) => r.assignedDriverId && r.status !== "done");
+  const done = returns.filter((r) => r.status === "done");
+  const problems = returns.filter((r) => rideHasOpenIssue(r));
+  const presence = useMemo(() => computeArtistPresence(dyn), [dyn.rides, dyn.artistPresence]);
+  const missing = presence.filter((p) => !p.pendingReturn && !p.noReturn);
+  const noReturnList = presence.filter((p) => !p.pendingReturn && p.noReturn);
+  const covered = presence.filter((p) => p.pendingReturn);
+
+  // Schreib-Handler VERBATIM aus ReturnsTab (gleiche updateDyn-Kette, by/Zeit).
+  const setNoReturn = async (name, value) => {
+    const res = await updateDyn((d) => {
+      d.artistPresence = d.artistPresence || {};
+      const cur = d.artistPresence[name] || {};
+      d.artistPresence[name] = { ...cur, noReturn: value, by, at: Date.now() };
+      return d;
+    });
+    if ((!res || !res.ok) && onErr) onErr(res?.error || "Rueckfahrt-Status konnte nicht gespeichert werden, bitte erneut versuchen.");
+  };
+  const setManualPresence = async (name, value) => {
+    const res = await updateDyn((d) => {
+      d.artistPresence = d.artistPresence || {};
+      const cur = d.artistPresence[name] || {};
+      if (value === null) { const { manual, ...rest } = cur; d.artistPresence[name] = { ...rest, by, at: Date.now() }; }
+      else d.artistPresence[name] = { ...cur, manual: value, by, at: Date.now() };
+      return d;
+    });
+    if ((!res || !res.ok) && onErr) onErr(res?.error || "Anwesenheit konnte nicht gespeichert werden, bitte erneut versuchen.");
+  };
+  const addManualArtist = (rawName) => {
+    const name = (rawName || "").trim();
+    if (!name) return;
+    updateDyn((d) => {
+      d.artistPresence = d.artistPresence || {};
+      const cur = d.artistPresence[name] || {};
+      d.artistPresence[name] = { ...cur, manual: "here", by, at: Date.now() };
+      return d;
+    });
+  };
+
+  const presenceNames = new Set(presence.map((p) => p.name));
+  const manualOnly = Object.entries(dyn.artistPresence || {})
+    .filter(([name, ov]) => ov?.manual === "here" && !presenceNames.has(name))
+    .map(([name]) => ({ name, onSite: true, pendingReturn: null, noReturn: false, manual: "here", manualOnly: true }));
+
+  const sortRides = (list) => list.slice().sort((a, b) => sort === "dest"
+    ? (destName(a).localeCompare(destName(b)) || sortMin(a.time) - sortMin(b.time))
+    : sortMin(a.time) - sortMin(b.time));
+
+  const atFestival = setup.drivers
+    .map((d) => ({ d, s: computeDriverStats(setup, dyn, d.id, day) }))
+    .filter((x) => !x.s.active && (x.s.locNow === "festival" || !x.s.locNow))
+    .sort((a, b) => a.s.drivingMin - b.s.drivingMin);
+
+  // ---- rein PRAESENTATIONAL (neu, keine Logikaenderung) ----
+  // Suche: reiner View-Filter ueber vorhandene Felder (Artist/Ziel/Abholort/
+  // Treffpunkt). Aendert NICHT die KPIs (die zeigen die echten Tages-Totale).
+  const matchesQ = (r) => {
+    if (!q.trim()) return true;
+    const hay = `${r.djName || ""} ${destName(r)} ${origName(r)} ${r.meetingPoint || ""}`.toLowerCase();
+    return hay.includes(q.trim().toLowerCase());
+  };
+  const searching = q.trim().length > 0;
+  const openShown = sortRides(open.filter(matchesQ));
+  const activeShown = sortRides(active.filter(matchesQ));
+  const doneShown = sortRides(done.filter(matchesQ));
+  const shownCount = openShown.length + activeShown.length + doneShown.length;
+  // "ueberfaellig": geplant/angenommen, Abholzeit liegt in der Vergangenheit.
+  // Reiner Datums/Zeit-Vergleich fuer eine visuelle Markierung, keine Sortier-
+  // oder Statuslogik. Sobald ein Fahrer unterwegs ist (enroute/onboard) oder
+  // erledigt, keine Markierung.
+  const isOverdue = (r) => ["planned", "accepted"].includes(r.status) && r.date && r.time && new Date(`${r.date}T${r.time}`).getTime() < now;
+  const nextOpenId = openShown[0]?.id || null; // frueheste offene Rueckfahrt = "naechste"
+
+  const Tile = ({ r, next }) => {
+    const drv = setup.drivers.find((d) => d.id === r.assignedDriverId);
+    const flow = STATUS_FLOW[r.status];
+    const issue = rideHasOpenIssue(r);
+    const overdue = isOverdue(r);
+    const stripeKey = mcRideStatusKey(r.status, !!r.assignedDriverId);
+    // Streifen/Akzent: Problem oder ueberfaellig -> rot; sonst naechste -> blau; sonst Status.
+    const accent = (issue || overdue) ? "var(--mc-st-problem)" : next ? "var(--mc-st-new)" : `var(--mc-st-${stripeKey})`;
+    return (
+      <div className="mc-ride-card relative flex items-stretch overflow-hidden"
+        style={next ? { boxShadow: "0 0 0 1px var(--mc-st-new)" } : undefined}>
+        <span className="w-1 shrink-0 self-stretch" style={{ background: accent }} aria-hidden="true" />
+        <div className="flex-1 min-w-0 p-3.5">
+          <div className="flex items-start justify-between gap-2">
+            <div className="flex items-start gap-3 min-w-0">
+              {/* Abholzeit prominent */}
+              <div className="text-center shrink-0">
+                <div className="font-mono text-2xl font-bold leading-none tabular-nums" style={{ color: overdue ? "var(--mc-st-problem)" : "var(--mc-text)" }}>{r.time}</div>
+                {(overdue || next) && (
+                  <div className="text-[9px] uppercase tracking-wide mt-1 font-semibold" style={{ color: overdue ? "var(--mc-st-problem)" : "var(--mc-st-new)" }}>
+                    {overdue ? "überfällig" : "nächste"}
+                  </div>
+                )}
+              </div>
+              {/* Abholort -> Ziel klar getrennt, Artist, Personen */}
+              <div className="min-w-0">
+                <div className="flex items-center gap-1.5 text-sm flex-wrap">
+                  <span style={{ color: "var(--mc-text-muted)" }}>{origName(r)}</span>
+                  <ArrowRight className="w-3.5 h-3.5 shrink-0" style={{ color: "var(--mc-text-muted)" }} />
+                  <Moon className="w-3.5 h-3.5 shrink-0" style={{ color: "var(--mc-text-secondary)" }} />
+                  <span className="font-semibold truncate" style={{ color: "var(--mc-text)" }}>{destName(r)}</span>
+                </div>
+                <div className="text-sm font-semibold truncate mt-0.5" style={{ color: "var(--mc-text)" }}>{r.djName || "—"}</div>
+                <div className="text-xs inline-flex items-center gap-1 mt-0.5" style={{ color: "var(--mc-text-muted)" }}><Users className="w-3 h-3" />{r.passengerCount} Pers.</div>
+              </div>
+            </div>
+            <StatusBadge status={stripeKey} label={STATUS_LABEL[r.status] || r.status || "—"} />
+          </div>
+          {r.meetingPoint && <div className="text-xs mt-2 inline-flex items-center gap-1.5" style={{ color: "var(--mc-st-assigned)" }}><MapPin className="w-3.5 h-3.5" />{r.meetingPoint}</div>}
+          {issue && <div className="text-xs mt-2 inline-flex items-center gap-1" style={{ color: "var(--mc-st-problem)" }}><AlertTriangle className="w-3.5 h-3.5" />{(r.issues || []).filter(issueOpen).map((i) => i.type).join(", ")}</div>}
+
+          <div className="flex items-center flex-wrap gap-2 mt-3">
+            {drv ? (
+              <span className="text-sm inline-flex items-center gap-1.5" style={{ color: "var(--mc-text-secondary)" }}>
+                <span className="w-2.5 h-2.5 rounded-full shrink-0" style={{ background: drv.vehicleType === "Van" ? "var(--mc-st-assigned)" : "var(--mc-st-new)" }} />{drv.vehicleType === "Van" ? "Van" : "Car"} · {drv.firstName}
+                {drv.phone && <a href={`tel:${drv.phone}`} title="Anrufen" className="hover:opacity-80" style={{ color: "var(--mc-text-muted)" }}><Navigation className="w-3.5 h-3.5 rotate-90" /></a>}
+              </span>
+            ) : (
+              <button onClick={() => onAssign(r)} className="mc-btn-assign text-sm px-3.5 py-2 inline-flex items-center gap-1.5"><Navigation className="w-4 h-4" />Fahrer zuweisen</button>
+            )}
+            {drv && flow?.next && <button onClick={() => onAssign(r)} className="text-sm px-2 py-2 rounded-[var(--mc-r)] hover:bg-white/5 transition-colors" style={{ color: "var(--mc-text-secondary)" }}>umteilen</button>}
+            <button onClick={() => onWhatsApp(r)} className="text-sm px-3 py-2 rounded-[var(--mc-r)] inline-flex items-center gap-1.5 transition-colors hover:opacity-90" style={{ background: "var(--mc-hover)", color: "var(--mc-text)" }}><MessageSquare className="w-4 h-4" />Text</button>
+            <button onClick={() => onEdit(r)} title="Fahrt öffnen" className="mc-iconbtn ml-auto"><ChevronRight className="w-5 h-5" /></button>
+          </div>
+        </div>
+      </div>
+    );
+  };
+
+  return (
+    <div>
+      {/* Kopf: Titel + Datum + Suche + Sort */}
+      <div className="flex flex-wrap items-center gap-3 mb-4">
+        <h3 className="text-base font-medium inline-flex items-center gap-2" style={{ color: "var(--mc-text)" }}><Moon className="w-5 h-5" style={{ color: "var(--mc-st-enroute)" }} />Rückfahrten · Nachtmodus</h3>
+        <span className="text-xs" style={{ color: "var(--mc-text-muted)" }}>{fmtDate(day)}</span>
+        <div className="relative flex-1 min-w-[160px] max-w-xs ml-auto">
+          <Search className="w-4 h-4 absolute left-2.5 top-2.5 pointer-events-none" style={{ color: "var(--mc-text-muted)" }} />
+          <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Artist, Ziel, Treffpunkt…" className="mc-input w-full pl-8 pr-8 py-2 text-sm" />
+          {q && <button onClick={() => setQ("")} aria-label="Suche leeren" className="absolute right-2 top-2.5" style={{ color: "var(--mc-text-muted)" }}><X className="w-4 h-4" /></button>}
+        </div>
+        <div className="flex items-center gap-0.5 p-1 rounded-[var(--mc-r)]" style={{ background: "var(--mc-inset)", border: "1px solid var(--mc-border)" }}>
+          <button onClick={() => setSort("time")} className="text-xs px-2.5 py-1 rounded-[var(--mc-r-sm)] transition-colors" style={sort === "time" ? { background: "var(--mc-hover)", color: "var(--mc-text)", fontWeight: 500 } : { color: "var(--mc-text-secondary)" }}>nach Zeit</button>
+          <button onClick={() => setSort("dest")} className="text-xs px-2.5 py-1 rounded-[var(--mc-r-sm)] transition-colors" style={sort === "dest" ? { background: "var(--mc-hover)", color: "var(--mc-text)", fontWeight: 500 } : { color: "var(--mc-text-secondary)" }}>nach Ziel</button>
+        </div>
+      </div>
+
+      {/* Wer ist vor Ort: pro Artist ein Button (fehlende / geplante / keine Rueckfahrt) */}
+      {presence.length > 0 && (
+        <div className="mb-4">
+          <div className="mc-eyebrow mb-2 inline-flex items-center gap-1.5"><MapPin className="w-3.5 h-3.5" style={{ color: "var(--mc-st-assigned)" }} />Vor Ort ({presence.length}){missing.length > 0 ? ` · ${missing.length} ohne Rückfahrt` : ""}</div>
+          <div className="flex flex-wrap gap-2">
+            {missing.map((p) => (
+              <div key={p.name} className="flex items-center gap-0.5 rounded-[var(--mc-r)] overflow-hidden" style={{ background: "var(--mc-st-assigned-soft)", border: "1px solid color-mix(in srgb, var(--mc-st-assigned) 45%, transparent)" }}>
+                <button onClick={() => onNewReturn && onNewReturn(p.name)} title="Noch keine Rückfahrt angelegt — antippen zum Anlegen"
+                  className="flex items-center gap-1.5 text-xs pl-2.5 pr-2 py-1.5 hover:opacity-90" style={{ color: "var(--mc-st-assigned)" }}>
+                  <AlertTriangle className="w-3.5 h-3.5 shrink-0" />{p.name}<span style={{ opacity: 0.7 }}>braucht Rückfahrt</span>
+                </button>
+                <button onClick={() => setNoReturn(p.name, true)} title="Braucht keine Rückfahrt — aus der offenen Liste nehmen"
+                  className="px-1.5 py-1.5 text-[10px] whitespace-nowrap hover:opacity-90" style={{ color: "var(--mc-st-assigned)", borderLeft: "1px solid color-mix(in srgb, var(--mc-st-assigned) 30%, transparent)" }}>
+                  keine nötig
+                </button>
+              </div>
+            ))}
+            {covered.map((p) => (
+              <button key={p.name} onClick={() => onEdit && onEdit(p.pendingReturn)} title="Rückfahrt bereits geplant — antippen zum Öffnen"
+                className="flex items-center gap-1.5 text-xs px-2.5 py-1.5 rounded-[var(--mc-r)] hover:opacity-90" style={{ background: "var(--mc-panel)", border: "1px solid var(--mc-border)", color: "var(--mc-text-secondary)" }}>
+                <CheckCircle2 className="w-3.5 h-3.5 shrink-0" style={{ color: "var(--mc-st-done)" }} />{p.name}<span style={{ color: "var(--mc-text-muted)" }}>{p.pendingReturn.time}</span>
+              </button>
+            ))}
+            {noReturnList.map((p) => (
+              <div key={p.name} className="flex items-center gap-0.5 rounded-[var(--mc-r)] overflow-hidden opacity-60" style={{ background: "var(--mc-inset)", border: "1px solid var(--mc-border)" }}>
+                <span className="flex items-center gap-1.5 text-xs pl-2.5 pr-2 py-1.5 line-through" style={{ color: "var(--mc-text-muted)" }}>{p.name}</span>
+                <span className="text-[10px] pr-1.5" style={{ color: "var(--mc-text-muted)" }}>keine Rückfahrt</span>
+                <button onClick={() => setNoReturn(p.name, false)} title="Doch wieder als braucht Rückfahrt aufnehmen"
+                  className="px-1.5 py-1.5 hover:opacity-90" style={{ color: "var(--mc-text-secondary)", borderLeft: "1px solid var(--mc-border)" }}><RefreshCw className="w-3 h-3" /></button>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Praesenz-Verwaltung (gemeinsame Komponente, unveraendert wiederverwendet) */}
+      <PresenceManager
+        presence={presence} manualOnly={manualOnly}
+        onSetManual={setManualPresence} onAdd={addManualArtist} onSetNoReturn={setNoReturn} />
+
+      {/* KPIs (echte Tages-Totale, unabhaengig von der Suche) */}
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 mb-4">
+        {[["Offen", open.length, "assigned", open.length > 0], ["Unterwegs", active.length, "enroute", false], ["Erledigt", done.length, "done", false], ["Probleme", problems.length, "problem", problems.length > 0]].map(([l, v, key, emph]) => (
+          <div key={l} className="rounded-[var(--mc-r)] px-3 py-2.5 text-center" style={{ background: "var(--mc-panel)", border: "1px solid var(--mc-border)" }}>
+            <div className="text-2xl font-bold font-mono tabular-nums" style={{ color: (v > 0 || emph) ? `var(--mc-st-${key})` : "var(--mc-text)" }}>{v}</div>
+            <div className="text-[10px] uppercase tracking-wide" style={{ color: "var(--mc-text-muted)" }}>{l}</div>
+          </div>
+        ))}
+      </div>
+
+      {returns.length === 0 && (
+        <EmptyState icon={Moon} title="Keine Rückfahrten (Festival → Hotel/Airport) an diesem Tag."
+          hint="Rückfahrten entstehen aus Fahrten vom Festival weg oder über „braucht Rückfahrt“ oben." />
+      )}
+
+      {returns.length > 0 && searching && shownCount === 0 && (
+        <EmptyState icon={Search} title={`Keine Rückfahrt passt zu „${q.trim()}".`}
+          action={<button onClick={() => setQ("")} className="text-xs px-3 py-1.5 rounded-[var(--mc-r)]" style={{ background: "var(--mc-hover)", color: "var(--mc-text)", border: "1px solid var(--mc-border)" }}>Suche zurücksetzen</button>} />
+      )}
+
+      {returns.length > 0 && !(searching && shownCount === 0) && (
+      <div className="grid grid-cols-1 xl:grid-cols-3 gap-4">
+        <div className="xl:col-span-2 space-y-4">
+          {openShown.length > 0 && (
+            <div>
+              <div className="mc-eyebrow mb-2 inline-flex items-center gap-1.5" style={{ color: "var(--mc-st-assigned)" }}><AlertTriangle className="w-3.5 h-3.5" />Offene Rückfahrten ohne Fahrer{searching ? ` (${openShown.length})` : ""}</div>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">{openShown.map((r) => <Tile key={r.id} r={r} next={r.id === nextOpenId} />)}</div>
+            </div>
+          )}
+          {activeShown.length > 0 && (
+            <div>
+              <div className="mc-eyebrow mb-2">Zugeteilt / unterwegs{searching ? ` (${activeShown.length})` : ""}</div>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">{activeShown.map((r) => <Tile key={r.id} r={r} />)}</div>
+            </div>
+          )}
+          {doneShown.length > 0 && (
+            <details className="group">
+              <summary className="mc-eyebrow cursor-pointer mb-2 inline-flex items-center gap-1.5"><CheckCircle2 className="w-3.5 h-3.5" style={{ color: "var(--mc-st-done)" }} />Erledigte Rückfahrten ({doneShown.length})</summary>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-2 mt-2">
+                {doneShown.map((r) => {
+                  const drv = setup.drivers.find((d) => d.id === r.assignedDriverId);
+                  return <div key={r.id} className="flex items-center gap-2 text-xs rounded-[var(--mc-r)] px-3 py-2 opacity-70" style={{ background: "var(--mc-inset)", border: "1px solid var(--mc-border)" }}>
+                    <span className="font-mono tabular-nums" style={{ color: "var(--mc-text-secondary)" }}>{r.time}</span><span style={{ color: "var(--mc-text-secondary)" }}>{destName(r)}</span>
+                    <span className="ml-auto" style={{ color: "var(--mc-text-muted)" }}>{drv ? drv.vehicleId : ""}</span>
+                  </div>;
+                })}
+              </div>
+            </details>
+          )}
+        </div>
+
+        {/* Fahrer am Festival / frei + Live-Karte */}
+        <div className="space-y-3">
+          <div className="rounded-[var(--mc-r-lg)] p-3" style={{ background: "var(--mc-panel)", border: "1px solid var(--mc-border)" }}>
+            <div className="mc-eyebrow mb-2 inline-flex items-center gap-1.5"><MapPin className="w-3.5 h-3.5" style={{ color: "var(--mc-st-assigned)" }} />Am Festival / frei ({atFestival.length})</div>
+            <div className="space-y-1 max-h-[16rem] overflow-y-auto">
+              {atFestival.map(({ d, s }) => (
+                <div key={d.id} className="flex items-center gap-2 text-sm rounded-[var(--mc-r)] px-2.5 py-2" style={{ background: "var(--mc-inset)" }}>
+                  <span className="w-2 h-2 rounded-full shrink-0" style={{ background: "var(--mc-st-done)" }} />
+                  <span className="font-mono text-xs" style={{ color: "var(--mc-text-secondary)" }}>{d.vehicleType === "Van" ? "Van" : "Car"}</span>
+                  <span className="truncate" style={{ color: "var(--mc-text-secondary)" }}>{d.firstName} {d.lastName[0]}.</span>
+                  <span className="ml-auto text-xs" style={{ color: "var(--mc-text-muted)" }}>{s.count}×</span>
+                  {d.phone && <a href={`tel:${d.phone}`} title="Anrufen" className="shrink-0 hover:opacity-80" style={{ color: "var(--mc-text-muted)" }}><Navigation className="w-3.5 h-3.5 rotate-90" /></a>}
+                </div>
+              ))}
+              {atFestival.length === 0 && <div className="text-xs" style={{ color: "var(--mc-text-muted)" }}>niemand frei am Festival</div>}
+            </div>
+          </div>
+
+          <BoardMiniMap setup={setup} dyn={dyn} day={day} onEdit={onEdit} />
+        </div>
+      </div>
+      )}
+
+      {/* Timeline — wer wann besetzt ist, volle Breite (gemeinsame Komponente) */}
+      <TimelineView setup={setup} dyn={dyn} day={day} onEdit={onEdit} />
+    </div>
+  );
+}
+
 /* -------------------------- Flughafen-Modul (Punkt 4/7) ------------------- */
 function FlightTab({ setup, dyn, day, updateDyn, by, onErr, onEdit }) {
   const [busy, setBusy] = useState(null); // rideId | "all"
@@ -8313,7 +8604,7 @@ function MissionControl({ setup, dyn, session, updateDyn, updateSetup, onLogout,
             onEdit={(r) => { setDay(r.dayKey); setEditRide(r); }} onAssign={(r) => setAssignRide(r)} />}
           {tab === "timeline" && <TimelinePage setup={setup} dyn={dyn} day={day} updateDyn={updateDyn} by={meBy} onUndo={onUndo}
             onEdit={(r) => { setDay(r.dayKey); setEditRide(r); }} onAssign={(r) => setAssignRide(r)} />}
-          {tab === "returns" && <ReturnsTab setup={setup} dyn={dyn} day={day} updateDyn={updateDyn} by={meBy} onErr={notifyErr}
+          {tab === "returns" && <MissionReturnsTab setup={setup} dyn={dyn} day={day} updateDyn={updateDyn} by={meBy} onErr={notifyErr}
             onAssign={(r) => setAssignRide(r)} onWhatsApp={(r) => setWaRide(r)} onEdit={(r) => { setDay(r.dayKey); setEditRide(r); }}
             onNewReturn={(artistName) => setEditRide({ _new: true, dayKey: day, date: day, djName: artistName, fromId: "festival", toId: "" })} />}
           {tab === "emergency" && <EmergencyTab setup={setup} dyn={dyn} day={day} updateDyn={updateDyn} by={meBy} onErr={notifyErr}
