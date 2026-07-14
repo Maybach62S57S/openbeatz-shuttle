@@ -7883,5 +7883,269 @@ function Modal({ title, children, onClose, wide }) {
 // Dashboard-Kopf gereicht wird). Eigenes Shell/KPI-Layout und die duplizierte Glue
 // nach Ansatz A folgen in Slice 2/3, ohne Classic anzufassen.
 function MissionControl(props) {
-  return <Dashboard {...props} />;
+  // Slice 1 + Designsystem (Session 3): die Design-Tokens werden geladen
+  // (MissionStyles, komplett auf .mc-scope gescopt, wirkt nie auf Classic).
+  // Die Ansicht selbst ist weiterhin ein Passthrough auf Dashboard — die
+  // Fachbereiche werden bewusst noch NICHT umgebaut. Das eigene Mission-
+  // Control-Layout mit den neuen Basiskomponenten folgt in einer spaeteren
+  // Scheibe, ohne Classic anzufassen.
+  return <><MissionStyles /><Dashboard {...props} /></>;
+}
+
+/* ======================================================================== *
+ *  Mission Control Design System (Session 3)
+ *  Enterprise-Dark: ruhig, hochwertig, nachttauglich. KEINE Fachlogik.
+ *  Alle Tokens sind unter .mc-scope gescopt und koennen Classic technisch
+ *  nicht erreichen. Basiskomponenten sind rein praesentational.
+ * ======================================================================== */
+
+// Zentrale, konsistente Statusfarben (eine Quelle der Wahrheit).
+// Semantische UI-Zustaende, NICHT an ride.status gekoppelt (das kommt spaeter).
+const MC_STATUS = {
+  new:      { label: "Neu",        key: "new" },      // Blau
+  assigned: { label: "Zugewiesen", key: "assigned" }, // Gelb/Orange
+  enroute:  { label: "Unterwegs",  key: "enroute" },  // Violett
+  done:     { label: "Erledigt",   key: "done" },     // Gruen
+  problem:  { label: "Problem",    key: "problem" },  // Rot
+  idle:     { label: "Inaktiv",    key: "idle" },     // Grau
+};
+
+function MissionStyles() {
+  return (
+    <style>{`
+      /* ---- Design-Tokens (nur unter .mc-scope aktiv) ---- */
+      .mc-scope {
+        /* Flaechen */
+        --mc-bg: #0a0c10;
+        --mc-panel: #12151b;
+        --mc-panel-raised: #171b22;
+        --mc-inset: #0d0f14;
+        --mc-hover: #1c212a;
+        /* Rahmen */
+        --mc-border: #232a34;
+        --mc-border-strong: #323c49;
+        /* Text */
+        --mc-text: #e7ebf0;
+        --mc-text-secondary: #9aa4b2;
+        --mc-text-muted: #616d7c;
+        /* Statusfarben: Akzent + weiche Fuellung */
+        --mc-st-new: #4b90f6;       --mc-st-new-soft: rgba(75,144,246,0.13);
+        --mc-st-assigned: #f5a524;  --mc-st-assigned-soft: rgba(245,165,36,0.13);
+        --mc-st-enroute: #9a7cf7;   --mc-st-enroute-soft: rgba(154,124,247,0.14);
+        --mc-st-done: #34d399;      --mc-st-done-soft: rgba(52,211,153,0.13);
+        --mc-st-problem: #f26d6d;   --mc-st-problem-soft: rgba(242,109,109,0.14);
+        --mc-st-idle: #7c8797;      --mc-st-idle-soft: rgba(124,135,151,0.13);
+        /* Tiefe / Schatten (subtil) */
+        --mc-shadow-sm: 0 1px 2px rgba(0,0,0,0.40);
+        --mc-shadow: 0 2px 10px rgba(0,0,0,0.35), 0 1px 2px rgba(0,0,0,0.40);
+        --mc-shadow-lg: 0 14px 40px rgba(0,0,0,0.48);
+        --mc-ring-inset: inset 0 1px 0 rgba(255,255,255,0.035);
+        /* Radien */
+        --mc-r-sm: 6px; --mc-r: 10px; --mc-r-lg: 14px; --mc-r-pill: 999px;
+        /* Abstaende */
+        --mc-space-1: 4px; --mc-space-2: 8px; --mc-space-3: 12px;
+        --mc-space-4: 16px; --mc-space-5: 24px; --mc-space-6: 32px;
+        /* Animationszeiten */
+        --mc-dur-fast: 120ms; --mc-dur: 200ms; --mc-dur-slow: 340ms;
+        --mc-ease: cubic-bezier(0.4, 0, 0.2, 1);
+        /* Fokus */
+        --mc-focus: 0 0 0 2px var(--mc-bg), 0 0 0 4px rgba(75,144,246,0.55);
+        /* Disabled */
+        --mc-disabled-opacity: 0.45;
+        /* Typografie */
+        --mc-font: system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+        --mc-font-mono: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace;
+
+        background: var(--mc-bg);
+        color: var(--mc-text);
+        font-family: var(--mc-font);
+      }
+
+      .mc-scope :focus-visible { outline: none; box-shadow: var(--mc-focus); }
+
+      /* Panel */
+      .mc-panel {
+        background: var(--mc-panel);
+        border: 1px solid var(--mc-border);
+        border-radius: var(--mc-r-lg);
+        box-shadow: var(--mc-shadow), var(--mc-ring-inset);
+      }
+
+      /* SectionHeader-Eyebrow */
+      .mc-eyebrow { font-size: 11px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--mc-text-muted); }
+
+      /* StatusBadge */
+      .mc-badge {
+        display: inline-flex; align-items: center; gap: 6px;
+        padding: 3px 9px; border-radius: var(--mc-r-pill);
+        font-size: 12px; font-weight: 500; line-height: 1; white-space: nowrap;
+      }
+      .mc-badge .mc-dot { width: 6px; height: 6px; border-radius: 999px; background: currentColor; }
+      .mc-badge--new      { color: var(--mc-st-new);      background: var(--mc-st-new-soft); }
+      .mc-badge--assigned { color: var(--mc-st-assigned); background: var(--mc-st-assigned-soft); }
+      .mc-badge--enroute  { color: var(--mc-st-enroute);  background: var(--mc-st-enroute-soft); }
+      .mc-badge--done     { color: var(--mc-st-done);     background: var(--mc-st-done-soft); }
+      .mc-badge--problem  { color: var(--mc-st-problem);  background: var(--mc-st-problem-soft); }
+      .mc-badge--idle     { color: var(--mc-st-idle);     background: var(--mc-st-idle-soft); }
+
+      /* MetricCard */
+      .mc-metric {
+        background: var(--mc-inset);
+        border: 1px solid var(--mc-border);
+        border-radius: var(--mc-r);
+        padding: var(--mc-space-4);
+      }
+      .mc-metric-label { font-size: 11px; letter-spacing: 0.06em; text-transform: uppercase; color: var(--mc-text-muted); }
+      .mc-metric-value { font-size: 28px; font-weight: 600; color: var(--mc-text); font-variant-numeric: tabular-nums; line-height: 1.05; }
+      .mc-metric-unit  { font-size: 13px; font-weight: 500; color: var(--mc-text-secondary); }
+
+      /* IconButton */
+      .mc-iconbtn {
+        display: inline-flex; align-items: center; justify-content: center;
+        width: 34px; height: 34px; border-radius: var(--mc-r);
+        color: var(--mc-text-secondary);
+        background: transparent; border: 1px solid transparent; cursor: pointer;
+        transition: background var(--mc-dur) var(--mc-ease), color var(--mc-dur) var(--mc-ease), border-color var(--mc-dur) var(--mc-ease);
+      }
+      .mc-iconbtn:hover { background: var(--mc-hover); color: var(--mc-text); border-color: var(--mc-border); }
+      .mc-iconbtn--active { background: var(--mc-hover); color: var(--mc-text); border-color: var(--mc-border-strong); }
+      .mc-iconbtn:disabled { opacity: var(--mc-disabled-opacity); cursor: not-allowed; }
+      .mc-iconbtn:disabled:hover { background: transparent; color: var(--mc-text-secondary); border-color: transparent; }
+
+      /* LiveIndicator (ruhiger Puls, kein Gaming) */
+      @keyframes mc-pulse-ring {
+        0%   { box-shadow: 0 0 0 0 rgba(52,211,153,0.45); }
+        70%  { box-shadow: 0 0 0 6px rgba(52,211,153,0); }
+        100% { box-shadow: 0 0 0 0 rgba(52,211,153,0); }
+      }
+      .mc-live-dot { width: 8px; height: 8px; border-radius: 999px; background: var(--mc-st-done); animation: mc-pulse-ring 2.4s ease-out infinite; }
+      .mc-live-dot--off { background: var(--mc-st-idle); animation: none; }
+
+      @media (prefers-reduced-motion: reduce) {
+        .mc-live-dot { animation: none; }
+        .mc-scope * { transition: none !important; }
+      }
+    `}</style>
+  );
+}
+
+// --- Basiskomponenten (rein praesentational, keine Fachlogik) ---
+
+function SectionHeader({ title, subtitle, eyebrow, icon: Icon, actions, className = "" }) {
+  return (
+    <div className={`flex items-start justify-between gap-3 ${className}`}>
+      <div className="min-w-0">
+        {eyebrow && <div className="mc-eyebrow mb-1">{eyebrow}</div>}
+        <div className="flex items-center gap-2">
+          {Icon && <Icon className="w-4 h-4" style={{ color: "var(--mc-text-secondary)" }} />}
+          <h2 className="text-[15px] font-semibold truncate" style={{ color: "var(--mc-text)" }}>{title}</h2>
+        </div>
+        {subtitle && <p className="text-xs mt-0.5" style={{ color: "var(--mc-text-secondary)" }}>{subtitle}</p>}
+      </div>
+      {actions && <div className="flex items-center gap-1.5 shrink-0">{actions}</div>}
+    </div>
+  );
+}
+
+function MissionPanel({ title, subtitle, eyebrow, icon, actions, header, children, className = "", bodyClassName = "", padded = true }) {
+  const showHeader = header || title;
+  return (
+    <section className={`mc-panel ${className}`}>
+      {showHeader && (
+        <div className="px-4 py-3" style={{ borderBottom: "1px solid var(--mc-border)" }}>
+          {header || <SectionHeader title={title} subtitle={subtitle} eyebrow={eyebrow} icon={icon} actions={actions} />}
+        </div>
+      )}
+      <div className={`${padded ? "p-4" : ""} ${bodyClassName}`}>{children}</div>
+    </section>
+  );
+}
+
+function StatusBadge({ status = "idle", label, dot = true, className = "" }) {
+  const s = MC_STATUS[status] || MC_STATUS.idle;
+  return (
+    <span className={`mc-badge mc-badge--${s.key} ${className}`}>
+      {dot && <span className="mc-dot" />}
+      {label || s.label}
+    </span>
+  );
+}
+
+function MetricCard({ label, value, unit, icon: Icon, status, hint, className = "" }) {
+  const accent = status && MC_STATUS[status] ? `var(--mc-st-${MC_STATUS[status].key})` : "var(--mc-text-secondary)";
+  return (
+    <div className={`mc-metric ${className}`}>
+      <div className="flex items-center justify-between">
+        <span className="mc-metric-label">{label}</span>
+        {Icon && <Icon className="w-4 h-4" style={{ color: accent }} />}
+      </div>
+      <div className="mt-2 flex items-baseline gap-1.5">
+        <span className="mc-metric-value">{value}</span>
+        {unit && <span className="mc-metric-unit">{unit}</span>}
+      </div>
+      {hint && <div className="mt-1 text-xs" style={{ color: "var(--mc-text-muted)" }}>{hint}</div>}
+    </div>
+  );
+}
+
+function IconButton({ icon: Icon, label, onClick, active = false, disabled = false, className = "", type = "button" }) {
+  return (
+    <button type={type} onClick={onClick} disabled={disabled} title={label} aria-label={label}
+      className={`mc-iconbtn ${active ? "mc-iconbtn--active" : ""} ${className}`}>
+      {Icon && <Icon className="w-[18px] h-[18px]" />}
+    </button>
+  );
+}
+
+function EmptyState({ icon: Icon, title, hint, action, className = "" }) {
+  return (
+    <div className={`flex flex-col items-center justify-center text-center px-6 py-10 ${className}`}>
+      {Icon && (
+        <div className="mb-3 flex items-center justify-center w-11 h-11 rounded-full"
+          style={{ background: "var(--mc-inset)", border: "1px solid var(--mc-border)" }}>
+          <Icon className="w-5 h-5" style={{ color: "var(--mc-text-muted)" }} />
+        </div>
+      )}
+      <div className="text-sm font-medium" style={{ color: "var(--mc-text)" }}>{title}</div>
+      {hint && <div className="text-xs mt-1 max-w-xs" style={{ color: "var(--mc-text-secondary)" }}>{hint}</div>}
+      {action && <div className="mt-4">{action}</div>}
+    </div>
+  );
+}
+
+function LoadingState({ label = "Wird geladen", className = "" }) {
+  return (
+    <div className={`flex items-center justify-center gap-2.5 px-6 py-10 ${className}`}>
+      <RefreshCw className="w-4 h-4 animate-spin" style={{ color: "var(--mc-text-secondary)" }} />
+      <span className="text-sm" style={{ color: "var(--mc-text-secondary)" }}>{label}…</span>
+    </div>
+  );
+}
+
+function ErrorState({ title = "Fehler", message, onRetry, className = "" }) {
+  return (
+    <div className={`flex flex-col items-center justify-center text-center px-6 py-10 ${className}`}>
+      <div className="mb-3 flex items-center justify-center w-11 h-11 rounded-full" style={{ background: "var(--mc-st-problem-soft)" }}>
+        <AlertTriangle className="w-5 h-5" style={{ color: "var(--mc-st-problem)" }} />
+      </div>
+      <div className="text-sm font-medium" style={{ color: "var(--mc-text)" }}>{title}</div>
+      {message && <div className="text-xs mt-1 max-w-sm break-words" style={{ color: "var(--mc-text-secondary)" }}>{message}</div>}
+      {onRetry && (
+        <button onClick={onRetry} className="mt-4 text-xs px-3 py-1.5 rounded-lg"
+          style={{ background: "var(--mc-hover)", color: "var(--mc-text)", border: "1px solid var(--mc-border)" }}>
+          Erneut versuchen
+        </button>
+      )}
+    </div>
+  );
+}
+
+function LiveIndicator({ active = true, label = "Live", className = "" }) {
+  return (
+    <span className={`inline-flex items-center gap-2 ${className}`}>
+      <span className={`mc-live-dot ${active ? "" : "mc-live-dot--off"}`} />
+      <span className="text-[11px] font-semibold tracking-wide uppercase"
+        style={{ color: active ? "var(--mc-st-done)" : "var(--mc-text-muted)" }}>{label}</span>
+    </span>
+  );
 }
