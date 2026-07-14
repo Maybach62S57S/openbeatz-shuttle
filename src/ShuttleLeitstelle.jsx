@@ -9645,6 +9645,7 @@ function MissionControl({ setup, dyn, session, updateDyn, updateSetup, onLogout,
       )}
 
       {assignRide && (
+        <div className="mc-modal-fade">
         <AssignModal setup={setup} dyn={dyn} ride={assignRide}
           onClose={() => setAssignRide(null)}
           onAssign={async (driverId) => {
@@ -9664,9 +9665,11 @@ function MissionControl({ setup, dyn, session, updateDyn, updateSetup, onLogout,
             if (res && res.ok) setAssignRide(null);
             return res;
           }} />
+        </div>
       )}
 
       {editRide && (
+        <div className="mc-modal-fade">
         <RideForm setup={setup} ride={editRide}
           onClose={() => setEditRide(null)}
           onSave={async (data) => {
@@ -9712,11 +9715,14 @@ function MissionControl({ setup, dyn, session, updateDyn, updateSetup, onLogout,
             if (res && res.ok) setEditRide(null);
             return res;
           }} />
+        </div>
       )}
 
       {waRide && (
+        <div className="mc-modal-fade">
         <WhatsAppModal ride={waRide} setup={setup} onClose={() => setWaRide(null)}
           onCopied={(which) => updateDyn((d) => { const r = d.rides.find((x) => x.id === waRide.id); if (r) logRide(r, "whatsapp", meBy, which); return d; })} />
+        </div>
       )}
 
       {/* liftOffset ueber CSS-Var: auf schmal ueber die Mobil-Leiste, ab md 0 */}
@@ -9998,6 +10004,17 @@ function MissionStyles() {
         100% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--mc-st-problem) 0%, transparent); }
       }
       .mc-scope .mc-flash-problem { animation: mc-flash-problem 1.1s var(--mc-ease) 1; }
+
+      /* Effekt 8: MC-Modals oeffnen weich. Nur weiches OEFFNEN; Schliessen bleibt
+         hart (eine Exit-Animation braeuchte verzoegertes Unmount = Zustandslogik,
+         bewusst out of scope). Der Wrapper animiert AUSSCHLIESSLICH opacity
+         (transform wuerde die position:fixed-Kinder des geteilten Modal-Chassis
+         brechen) und sitzt selbst auf der bestehenden Modal-Ebene (fixed, z-40,
+         siehe Stacking-Kommentar im Shell), damit die opacity<1-Phase das
+         Stacking gegenueber Nav (z-30) und Toast/ChatPanel (z-50) nicht
+         veraendert. reduced-motion deckt der .mc-scope-*-Block unten ab. */
+      @keyframes mc-modal-in { from { opacity: 0; } to { opacity: 1; } }
+      .mc-modal-fade { position: fixed; inset: 0; z-index: 40; animation: mc-modal-in var(--mc-anim) var(--mc-ease) both; }
 
       /* Effekt 9: Mobil-Navigation reagiert fluessig */
       .mc-navbtn { transition: color var(--mc-anim-fast) var(--mc-ease); }
