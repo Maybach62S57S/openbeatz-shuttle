@@ -6283,7 +6283,7 @@ function MissionReturnsTab({ setup, dyn, day, updateDyn, by, onErr, onAssign, on
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 mb-4">
         {[["Offen", open.length, "assigned", open.length > 0], ["Unterwegs", active.length, "enroute", false], ["Erledigt", done.length, "done", false], ["Probleme", problems.length, "problem", problems.length > 0]].map(([l, v, key, emph]) => (
           <div key={l} className="rounded-[var(--mc-r)] px-3 py-2.5 text-center" style={{ background: "var(--mc-panel)", border: "1px solid var(--mc-border)" }}>
-            <div className="text-2xl font-bold font-mono tabular-nums" style={{ color: (v > 0 || emph) ? `var(--mc-st-${key})` : "var(--mc-text)" }}>{v}</div>
+            <div className="text-2xl font-bold font-mono tabular-nums" style={{ color: (v > 0 || emph) ? `var(--mc-st-${key})` : "var(--mc-text)" }}><MissionCount value={v} /></div>
             <div className="text-[10px] uppercase tracking-wide" style={{ color: "var(--mc-text-muted)" }}>{l}</div>
           </div>
         ))}
@@ -9278,7 +9278,7 @@ function MissionControl({ setup, dyn, session, updateDyn, updateSetup, onLogout,
             {[["Fahrten", kpi.total, null], ["Offen", kpi.unassigned, kpi.unassigned ? "assigned" : null], ["Aktiv", kpi.active, "enroute"], ["Erledigt", kpi.done, "done"]].map(([l, v, st]) => (
               <div key={l} className="px-3 py-1.5 rounded-lg text-center min-w-[68px]" style={{ background: "var(--mc-panel)", border: "1px solid var(--mc-border)" }}>
                 <div className="text-[10px] uppercase tracking-wide" style={{ color: "var(--mc-text-muted)" }}>{l}</div>
-                <div className="text-lg font-semibold leading-none mt-0.5" style={{ color: st && MC_STATUS[st] ? `var(--mc-st-${MC_STATUS[st].key})` : "var(--mc-text)" }}>{v}</div>
+                <div className="text-lg font-semibold leading-none mt-0.5" style={{ color: st && MC_STATUS[st] ? `var(--mc-st-${MC_STATUS[st].key})` : "var(--mc-text)" }}><MissionCount value={v} /></div>
               </div>
             ))}
           </div>
@@ -9959,6 +9959,12 @@ function MissionStyles() {
       @keyframes mc-sheet-in { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
       .mc-sheet-in { animation: mc-sheet-in var(--mc-anim) var(--mc-ease) both; }
 
+      /* Effekt 7: neue Timeline-Eintraege blenden weich ein. NUR opacity und
+         fill-mode backwards, damit die Inline-Opacity beim Draggen (0.25) danach
+         wieder greift und die Positionierung (left/width) unberuehrt bleibt. */
+      @keyframes mc-entry-in { from { opacity: 0; } to { opacity: 1; } }
+      .mc-scope .mc-tl-block { animation: mc-entry-in var(--mc-anim) var(--mc-ease) backwards; }
+
       @media (prefers-reduced-motion: reduce) {
         .mc-live-dot { animation: none; }
         /* Alle MC-Mikroanimationen und Transitions aus; Elemente stehen sofort im Endzustand */
@@ -10092,4 +10098,41 @@ function LiveIndicator({ active = true, label = "Live", className = "" }) {
         style={{ color: active ? "var(--mc-st-done)" : "var(--mc-text-muted)" }}>{label}</span>
     </span>
   );
+}
+
+// Effekt 6: KPI-Zahlen zaehlen beim ersten Mount sanft hoch (0 -> Ziel, easeOutCubic).
+// Rein anzeigend, keine Datenlogik. Spaetere Wertaenderungen werden direkt uebernommen
+// (kein erneutes Hochzaehlen). prefers-reduced-motion -> sofort der Zielwert.
+function prefersReducedMotion() {
+  return typeof window !== "undefined" && typeof window.matchMedia === "function"
+    && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+}
+function useCountUp(target, duration = 650) {
+  const isNum = typeof target === "number" && isFinite(target);
+  const reduce = prefersReducedMotion();
+  const [val, setVal] = useState(isNum && !reduce ? 0 : target);
+  const doneRef = useRef(!isNum || reduce);
+  const rafRef = useRef(0);
+  useEffect(() => {
+    if (!isNum) { setVal(target); return; }
+    if (doneRef.current) { setVal(target); return; } // schon animiert -> Aenderungen direkt setzen
+    doneRef.current = true;
+    if (reduce || target === 0) { setVal(target); return; }
+    const now0 = () => (typeof performance !== "undefined" && performance.now ? performance.now() : Date.now());
+    const t0 = now0();
+    const tick = (now) => {
+      const p = Math.min(1, (now - t0) / duration);
+      const eased = 1 - Math.pow(1 - p, 3);
+      setVal(Math.round(target * eased));
+      if (p < 1) rafRef.current = requestAnimationFrame(tick);
+      else setVal(target);
+    };
+    rafRef.current = requestAnimationFrame(tick);
+    return () => { if (rafRef.current) cancelAnimationFrame(rafRef.current); };
+  }, [target, isNum, reduce]);
+  return isNum ? val : target;
+}
+function MissionCount({ value, className = "", style }) {
+  const shown = useCountUp(value);
+  return <span className={className} style={style}>{shown}</span>;
 }
