@@ -1,0 +1,82 @@
+# Übergabe: Session 8 — Mission Control Beta (frischer Chat)
+
+Startnachricht für einen neuen Chat. Deutsch, informell, keine Gedankenstriche,
+korrekte Umlaute. PAT unten selbst einsetzen (wird nirgends gespeichert).
+Pro Scheibe ein eigener Chat (lange Chats stürzen ab). Erst
+`PROJEKT-ANWEISUNGEN.md` lesen, dann Repo holen, Anker prüfen, Risikoabwägung,
+dann nach OK bauen.
+
+---
+
+## Repo / Setup
+- Repo: `Maybach62S57S/openbeatz-shuttle`, Branch **`feature/mission-control-beta`**, letzter Commit `ea69768`
+- Gesicherter Rückweg: Tag `stabil-vor-design-2026-07-13`, Branch `backup/paket-3-fertig`
+- Hauptdatei: `src/ShuttleLeitstelle.jsx` (~9160 Zeilen)
+- PAT hier einfügen: `<DEIN_FINE_GRAINED_PAT>`
+- Nach dem Klonen: `git config` (user.name/email), `git checkout feature/mission-control-beta`,
+  `npm ci`, Baseline grün:
+  `./node_modules/.bin/esbuild src/ShuttleLeitstelle.jsx --bundle=false --format=esm --outfile=/tmp/x.js`
+
+## Verbindliche Regeln (unverändert)
+- Nur `uiMode === "mission-control"`. Classic UI byte-genau unverändert.
+- Bestehende Views nur umgestalten/einsetzen, nicht neu schreiben, nichts entfernen.
+- Keine Daten-/Status-/Rollen-/Login-/PIN-/Auth-/Zeit-/Zuteilungs-/Supabase-Schreiblogik anfassen.
+- `mcNavForRole` nutzt nur `session.role`, keine zweite Rollenquelle.
+- Keine neuen Libs, keine Supabase-Struktur-Änderung, kein neues top-level `dyn`-Feld.
+- Stage Manager strikt read-only + Probleme melden.
+- Nach jeder Änderung: esbuild + Duplikat-Grep + Icon-/Referenz-Gegencheck
+  (esbuild kompiliert durch undefinierte JSX-Refs!) + Node-Test für neue reine Logik.
+- Commit über `git commit -F /tmp/msg.txt`, Push auf den Feature-Branch.
+
+## Muster für Tab-Redesigns (so wurde board + returns gemacht)
+- **Tab ist in MC ein duplizierter Inline-Block** (wie `board`): direkt dort umstylen,
+  Handler/Datenzugriffe 1:1 lassen. Classic ist automatisch unberührt (eigener Block).
+- **Tab ist eine GEMEINSAME Komponente** (wie `ReturnsTab`): eine eigene `Mission…Tab`-Kopie
+  anlegen, Logik + Schreib-Handler VERBATIM übernehmen, nur den Render neu (MC-Design),
+  und im MC-Zweig die eine Zeile auf die neue Komponente umstellen. Classic-Komponente
+  NIE anfassen. Danach per automatischem Diff belegen, dass Handler + Datenableitungen
+  byte-identisch sind (so wie bei `MissionReturnsTab`).
+- Gemeinsame Unterkomponenten (z.B. `PresenceManager`, `BoardMiniMap`, `TimelineView`,
+  `DriverRow`) unverändert wiederverwenden - nicht umstylen (sonst ändert sich Classic).
+
+## Stand jetzt (Sessions 5-7 fertig, alles auf dem Branch)
+- **5.1-5.3:** `MC_NAV`/`mcNavForRole`, `MissionControl`-Shell (Ansatz A), Desktop-Nav +
+  untere Mobil-Leiste, Chat-FAB-Lift via `--mc-fab-lift`.
+- **6 (`39098c0`):** `board`-Tab (Fahrtenansicht) MC-Design - `.mc-ride-card`+Hover,
+  Statusstreifen via `mcRideStatusKey`, `mc`-StatusBadge, Filter-Segmented-Control,
+  `.mc-input`-Suche, `mc`-EmptyState/LoadingState, mobiles Stapeln, Flash-Feedback (`flashIds`).
+- **7 (`ea69768`):** `returns`-Tab als eigene `MissionReturnsTab` - überfällig/nächste-
+  Hervorhebung, Abholort->Ziel getrennt, View-Suche, mc-KPIs/EmptyState. Logik verbatim,
+  Classic byte-identisch.
+- **Design-Bausteine vorhanden:** `MissionStyles` (Tokens unter `.mc-scope`), `MC_STATUS`,
+  `mcRideStatusKey`, Basiskomponenten `SectionHeader/MissionPanel/StatusBadge/MetricCard/
+  IconButton/EmptyState/LoadingState/ErrorState/LiveIndicator`, plus Klassen
+  `.mc-ride-card/.mc-input/.mc-btn-primary/.mc-btn-assign`.
+
+## Kandidaten für Session 8 (mit Jordan priorisieren, erst Risikoabwägung)
+1. **Nächsten Tab auf MC-Design** - genau EINEN pro Scheibe. Kandidaten: `emergency`
+   (Probleme), `flights` (Flughafen), `drivers` (Fahrer), `settings`, oder eine echte
+   `overview`-Landing (KPIs/Live). Jeweils prüfen: Inline-Block in MC oder gemeinsame
+   Komponente? -> passendes Muster oben.
+2. **MC-Varianten der gemeinsamen Bausteine** `DriverRow`/`BoardMiniMap`/`PresenceManager`/
+   `TimelineView` (heute noch Stone-Look in MC). Neue MC-Variante bauen, Classic-Version
+   unangetastet lassen.
+3. Nur falls gewünscht: kleinere Feinheiten, immer additiv.
+
+## Nützliche Greps / Anker (Commit `ea69768`)
+```
+grep -n 'if (uiMode === "mission-control")' src/ShuttleLeitstelle.jsx   # Gate
+grep -n 'function MissionControl' src/ShuttleLeitstelle.jsx            # Shell Z.~7886
+grep -n 'function MissionReturnsTab\|function ReturnsTab' src/ShuttleLeitstelle.jsx
+grep -n 'tab === "emergency"\|tab === "flights"\|tab === "drivers"\|tab === "overview"' src/ShuttleLeitstelle.jsx
+grep -n 'mcRideStatusKey\|mc-ride-card\|function MissionStyles' src/ShuttleLeitstelle.jsx
+grep -oE '^function [a-zA-Z]+' src/ShuttleLeitstelle.jsx | sort | uniq -d
+```
+
+## Erste konkrete Aktion im neuen Chat
+Repo klonen, Branch auschecken, `npm ci`, Baseline-esbuild grün, Anker prüfen, dann
+Session-8-Scope mit Jordan klären (welcher Tab) und nach OK die Scheibe vorschlagen.
+
+## Offen für Jordans Live-Test (Umgebungsgrenze, nicht im Chat prüfbar)
+board- + returns-Redesign auf echten Breiten (Desktop/Handy), Flash nach echtem
+Zuteilen/Bearbeiten, überfällig-Markierung zur echten Uhrzeit, Suche im Betrieb.
