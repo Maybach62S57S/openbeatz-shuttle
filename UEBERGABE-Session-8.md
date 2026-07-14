@@ -63,31 +63,52 @@ dann nach OK bauen.
   Status-Badge frei/auf Fahrt, Auslastungsbalken (rot ab `softHoursMin`),
   `EmptyState`, 2 Spalten ab `xl`. Classic `DriversTab` byte-genau unverändert,
   nur MC-Zweig-Zeile umgestellt. Node-Tests: `gpsInfo`/`activeRoute` + Grenzfall.
-- **Teil 2-4 offen:** konkreten Tab jeweils frisch mit Jordan festlegen. Jede
+- **Teil 2 fertig (Etappe A `b73e509`, Etappe B `78ee018`):** `timeline`-Tab
+  (Fahrer-Gantt) als eigene `MissionTimelinePage` (direkt nach `TimelinePage`,
+  Z.~7116). Muster wie `returns`/`drivers`: GESAMTE Logik + ALLE Schreib-Handler
+  VERBATIM (`quickAssign`/`applyDrop`/`beginDrag`+Drag-Effekt/`timeFromClientX`/
+  `driverIdFromClientY`/`confirmPendingDrop`/`cancelPendingDrop`/`evalFor`), nur
+  Render neu im MC-Design. Drag-and-Drop voll funktionsfaehig (keine read-only-
+  Strippung). NEU rein lesend: geplante Endzeit im Balken `HH:MM -> HH:MM`, bei
+  unbekannter Dauer sichtbar als "ca." markiert (aus `effDur`/`estDurationMin`,
+  keine erfundenen Zeiten, kein neues dyn-Feld). MC-Zweig-Zeile `tab==="timeline"`
+  auf `MissionTimelinePage` umgestellt. Classic `TimelinePage` byte-genau
+  unveraendert (Diff-Exit 0). Handler-Block + Drag-Ableitungen per Diff byte-
+  identisch zu Classic belegt (nur Namenszeile weicht ab). Node-Test 7/7 fuer die
+  ETA-Logik (bekannt/unbekannt/Nacht-Umbruch/Config-Fallback). esbuild gruen,
+  keine Duplikate, Icon-/Referenz-Check bestanden.
+- **Teil 3-4 offen:** konkreten Tab jeweils frisch mit Jordan festlegen. Jede
   Scheibe in EIGENEM Chat starten (Crash-Risiko bei langen Chats). Kandidaten
   siehe unten.
 
-### Teil 2 vorab geklärt (Fahrer-Timeline / Dispositionsplan, MC)
-Pflichtprüfung erledigt: **existiert bereits** als `TimelinePage` (Z.~6722,
-`timeline`-Tab). Das IST der Fahrer-Zeilen-Gantt: `Row` = eine Zeile pro Fahrer
-(+ "Ohne Fahrer"), Uhrzeit horizontal (Stunden-Raster, `pct(start/end)`), `Block`
-= Fahrt-Balken (DJ, Start->Ziel, Startzeit, Status-Farbe, Problem-Badge, Stift/
-Chevron öffnet Fahrt), `NowLine`, Zoom (`ZOOM_MIN/MAX`, `fitToScreen`, +/-),
-horizontaler Scroll, `hasConflict`/`conflictCount`, freie Zeit = Lücken. Dauer aus
-`effDur(config, r)`.
-- **Muster:** eigene `MissionTimelinePage`-Kopie, GESAMTE Logik + Schreib-Handler
-  VERBATIM (`dateForNightTime`, `beginDrag`/Drag-Math, `quickAssign`, `pendingDrop`/
-  `confirmPendingDrop`/`cancelPendingDrop`, `logRide`, `updateDyn`-Ketten, `zoom`/
-  `fitToScreen`, `hasConflict`, `evalFor`/Eignung). Nur Render neu (MC-Design).
-  MC-Zweig-Zeile `tab === "timeline"` (Z.~8741) auf `MissionTimelinePage` umstellen.
-  Classic `TimelinePage` byte-genau unverändert (per Diff belegen).
-- **Jordans Entscheidungen:** (1) Drag-and-Drop MUSS voll funktionieren -> Handler
-  verbatim, KEINE read-only-Strippung. (2) ETA/geplante Endzeit im Balken +
-  geschätzte Dauer klar als Schätzung markieren -> rein lesend aus `effDur`/
-  `estDurationMin`, keine Zeiten erfinden. (3) Klick-Verhalten ERSTMAL verbatim
-  (Klick = Schnellzuteilung, Stift = bearbeiten); Änderung auf "Klick = öffnen"
-  nur auf spätere ausdrückliche Ansage.
-- Stage Manager unberührt (MC ist dispatcher-only, `timeline` nur im Dispatcher-Nav).
+### Teil 2 erledigt (Fahrer-Timeline / Dispositionsplan, MC)
+Umgesetzt wie oben unter "Teil 2 fertig". Offen geblieben (bewusst, nur auf Ansage):
+Klick-Verhalten ist weiter verbatim (Tap auf zugeteilte Fahrt = Fahrer aendern per
+Assign, Tap auf offene Fahrt = passende Fahrer hervorheben, Stift = bearbeiten).
+Umstellung auf "Klick = Fahrt oeffnen" nur wenn Jordan es ausdruecklich sagt.
+
+### Ready-to-paste Opener fuer Teil 3 (neuer Chat)
+```
+Session 8 Teil 3, frischer Chat. Erst PROJEKT-ANWEISUNGEN.md lesen, dann Repo holen.
+Repo: Maybach62S57S/openbeatz-shuttle, Branch feature/mission-control-beta, letzter
+Commit 78ee018. PAT setze ich unten ein: <PAT>
+Nach Klon: git config (user.name/email), checkout feature/mission-control-beta,
+npm ci, Baseline-esbuild gruen bestaetigen. Danach UEBERGABE-Session-8.md lesen.
+Feste Regeln wie gehabt: nur uiMode mission-control, Classic byte-genau unveraendert,
+keine Fahrten-/Status-/Rollen-/Login-/PIN-/Auth-/Zeit-/Zuteilungs-/GPS-/Supabase-
+Schreiblogik aendern, keine Felder/Aktionen entfernen, keine neuen Libs, kein neues
+top-level dyn-Feld. Stage Manager kriegt keine Rechte (MC dispatcher-only). Nach jeder
+Aenderung: esbuild + Duplikat-Grep + Referenz-/Icon-Gegencheck + Node-Test fuer neue
+reine Logik + Diff-Beleg dass Handler/Ableitungen byte-identisch sind. Automatisch auf
+den Feature-Branch pushen. Bevor du baust: Scope bestaetigen, Stelle lokalisieren,
+Risikoabwaegung, dann nach meinem OK bauen.
+AUFTRAG TEIL 3: <einen der offenen Tabs waehlen -- emergency / flights / settings /
+echte overview-Landing -- ODER MC-Variante eines gemeinsamen Bausteins (DriverRow/
+BoardMiniMap/PresenceManager/TimelineView)>.
+```
+Achtung Teil 3: `settings` ist ein Brocken (~288 Zeilen), `emergency` speist den
+Nav-Badge (`emCount`/`emCrit`) -> im Tab nicht anfassen. Stage Manager bleibt ueberall
+unberuehrt (MC dispatcher-only).
 
 ## Kandidaten für die restlichen Teile (mit Jordan priorisieren, erst Risikoabwägung)
 1. **Nächsten Tab auf MC-Design** - genau EINEN pro Scheibe. Offene Kandidaten:
@@ -102,22 +123,27 @@ horizontaler Scroll, `hasConflict`/`conflictCount`, freie Zeit = Lücken. Dauer 
    unangetastet lassen.
 3. Nur falls gewünscht: kleinere Feinheiten, immer additiv.
 
-## Nützliche Greps / Anker (Commit `07bdfb9`)
+## Nützliche Greps / Anker (Commit `78ee018`)
 ```
 grep -n 'if (uiMode === "mission-control")' src/ShuttleLeitstelle.jsx   # Gate
 grep -n 'function MissionControl' src/ShuttleLeitstelle.jsx            # Shell
-grep -n 'function MissionReturnsTab\|function MissionDriversTab' src/ShuttleLeitstelle.jsx
+grep -n 'function MissionReturnsTab\|function MissionDriversTab\|function MissionTimelinePage' src/ShuttleLeitstelle.jsx
 grep -n 'tab === "emergency"\|tab === "flights"\|tab === "overview"\|tab === "settings"' src/ShuttleLeitstelle.jsx
 grep -n 'mcRideStatusKey\|mc-ride-card\|function MissionStyles\|const MC_STATUS' src/ShuttleLeitstelle.jsx
 grep -oE '^function [a-zA-Z]+' src/ShuttleLeitstelle.jsx | sort | uniq -d
 ```
 
-## Erste konkrete Aktion im neuen Chat (Teil 2)
+## Erste konkrete Aktion im neuen Chat (Teil 3)
 Repo klonen, Branch auschecken, `npm ci`, Baseline-esbuild grün, Anker prüfen, dann
-Teil-2-Scope mit Jordan klären (welcher Tab) und nach OK die Scheibe vorschlagen.
+Teil-3-Scope mit Jordan klären (welcher Tab) und nach OK die Scheibe vorschlagen.
 
 ## Offen für Jordans Live-Test (Umgebungsgrenze, nicht im Chat prüfbar)
 board- + returns- + drivers-Redesign auf echten Breiten (Desktop/Handy). Bei drivers
 konkret: Online/Offline-Punkt + "letzter Kontakt" bei echter GPS-Freigabe eines
 Fahrers, aktueller Auftrag während einer laufenden Fahrt, Auslastungsbalken/rot ab
 Soft-Limit, frei-zuerst-Sortierung zur echten Uhrzeit.
+- **timeline (MC, neu):** Fahrt ziehen -> Zeit aendern; in andere Zeile ziehen ->
+  Fahrer wechseln; Bestaetigungs-Popover + "Rueckgaengig"-Hinweis; Zoom/Passend;
+  Konflikt-Ring; Tap auf offene Fahrt -> passende Fahrer leuchten; "ca."-Endzeit bei
+  Fahrten ohne hinterlegte Dauer. Auf Desktop + Handy pruefen (Drag mit Touch,
+  horizontaler Scroll bei Zoom, sticky Kopf/Fahrerspalte).
