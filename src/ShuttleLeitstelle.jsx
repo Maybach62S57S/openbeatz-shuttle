@@ -6695,121 +6695,174 @@ function MissionEmergencyTab({ setup, dyn, day, updateDyn, by, onErr, onAssign, 
     .sort((a, b) => a.s.drivingMin - b.s.drivingMin);
   const shiftable = (dyn.rides || []).filter((r) => r.dayKey === day && r.status !== "cancelled" && r.status !== "done" && r.onDemand);
 
+  // NEU (nur UI-Feedback): welche Fahrt gerade als erledigt gespeichert wird.
+  const [resolving, setResolving] = useState(null);
+  // NEU (nur Anzeige): Prioritaets-Filter. Aendert die cases/Logik NICHT, filtert
+  // nur, was angezeigt wird.
+  const [filter, setFilter] = useState("all"); // all | critical | warn
+
   const resolveIssues = async (rideId) => {
+    if (resolving) return;
+    setResolving(rideId);
     const res = await updateDyn((d) => {
       const r = d.rides.find((x) => x.id === rideId);
       if (r) { (r.issues || []).filter(issueOpen).forEach((i) => { i.state = "done"; }); logRide(r, "problem_done", by); }
       return d;
     });
+    setResolving(null);
     if ((!res || !res.ok) && onErr) onErr(res?.error || "Problem konnte nicht als erledigt gespeichert werden, bitte erneut versuchen.");
   };
 
   const critCount = cases.filter((c) => c.sev === "critical").length;
+  const warnCount = cases.length - critCount;
+  const shown = filter === "all" ? cases : cases.filter((c) => c.sev === filter);
+  const typeMeta = { issue: "Problem", flight: "Flug", nodriver: "Ohne Fahrer", waiting: "Wartet" };
+
+  const secBtn = "text-sm px-3 py-2 rounded-lg inline-flex items-center gap-1.5 transition";
+  const secStyle = { background: "var(--mc-hover)", color: "var(--mc-text)", border: "1px solid var(--mc-border)" };
 
   return (
-    <div>
-      <div className="flex items-center gap-3 mb-4">
-        <div className={`flex items-center gap-2 px-3 py-1.5 rounded-lg ${critCount ? "bg-red-500/15 text-red-300" : "bg-stone-900 text-stone-400"}`}>
-          <Siren className={`w-5 h-5 ${critCount ? "text-red-400" : ""}`} />
-          <span className="font-medium">{cases.length === 0 ? "Keine akuten Notfälle" : `${cases.length} Fall${cases.length > 1 ? "e" : ""}`}{critCount ? ` · ${critCount} kritisch` : ""}</span>
+    <div className="mc-scope space-y-3">
+      {/* Kopf: Lage + Filter nach Prioritaet */}
+      <div className="flex items-center gap-3 flex-wrap">
+        <div className="flex items-center gap-2 px-3 py-1.5 rounded-lg"
+          style={critCount
+            ? { background: "var(--mc-st-problem-soft)", color: "var(--mc-st-problem)" }
+            : { background: "var(--mc-inset)", color: "var(--mc-text-secondary)" }}>
+          <Siren className="w-5 h-5" style={{ color: critCount ? "var(--mc-st-problem)" : "var(--mc-text-muted)" }} />
+          <span className="font-medium text-sm">{cases.length === 0 ? "Keine akuten Notfälle" : `${cases.length} Fall${cases.length > 1 ? "e" : ""}`}{critCount ? ` · ${critCount} kritisch` : ""}</span>
         </div>
-        <span className="text-xs text-stone-500">{fmtDate(day)}</span>
+        <span className="text-xs" style={{ color: "var(--mc-text-muted)" }}>{fmtDate(day)}</span>
+        {cases.length > 0 && (
+          <div className="inline-flex items-center gap-0.5 rounded-lg p-0.5 ml-auto"
+            style={{ background: "var(--mc-inset)", border: "1px solid var(--mc-border)" }}>
+            {[["all", `Alle (${cases.length})`, "assigned"], ["critical", `Kritisch (${critCount})`, "problem"], ["warn", `Warnung (${warnCount})`, "assigned"]].map(([k, l, tok]) => (
+              <button key={k} onClick={() => setFilter(k)}
+                className="text-xs px-3 py-1.5 rounded-md transition"
+                style={filter === k
+                  ? { background: `var(--mc-st-${tok}-soft)`, color: `var(--mc-st-${tok})`, fontWeight: 600 }
+                  : { color: "var(--mc-text-secondary)" }}>{l}</button>
+            ))}
+          </div>
+        )}
       </div>
 
       <div className="grid grid-cols-1 xl:grid-cols-3 gap-4">
         {/* Fälle */}
-        <div className="xl:col-span-2 space-y-3">
-          {cases.length === 0 && (
-            <div className="text-stone-500 text-sm py-12 text-center border border-dashed border-stone-800 rounded-xl">
-              <CheckCircle2 className="w-8 h-8 mx-auto mb-2 opacity-40 text-emerald-500" />
-              Aktuell alles im grünen Bereich.<br /><span className="text-xs">Probleme, gelandete Flüge ohne Fahrer oder überfällige Fahrten erscheinen hier automatisch.</span>
-            </div>
-          )}
-          {cases.map((c, i) => {
-            const r = c.r;
-            const drv = setup.drivers.find((d) => d.id === r.assignedDriverId);
-            const Icon = CASE_ICON[c.type] || AlertTriangle;
-            const sugg = suggestDrivers(setup, dyn, r).slice(0, 3);
-            const crit = c.sev === "critical";
-            return (
-              <div key={i} className={`rounded-xl border p-3.5 ${crit ? "border-red-500/50 bg-red-500/10" : "border-amber-500/40 bg-amber-500/5"}`}>
-                <div className="flex items-start gap-3">
-                  <div className={`w-9 h-9 rounded-lg flex items-center justify-center shrink-0 ${crit ? "bg-red-500/20 text-red-300" : "bg-amber-500/20 text-amber-300"}`}><Icon className="w-5 h-5" /></div>
-                  <div className="min-w-0 flex-1">
-                    <div className="flex items-center gap-2 flex-wrap">
-                      <span className="font-mono text-lg font-semibold">{r.time}</span>
-                      <span className="text-sm text-stone-300">{ln(r.fromId, r.fromCustom)} → {ln(r.toId, r.toCustom)}</span>
-                      {r.zone && <ZoneChip zone={r.zone} />}
-                      <span className="text-xs text-stone-500 flex items-center gap-1"><Users className="w-3 h-3" />{r.passengerCount}</span>
-                    </div>
-                    {r.djName && <div className="text-sm font-semibold text-orange-300 truncate mt-0.5">{r.djName}</div>}
-                    <div className={`text-sm mt-0.5 font-medium ${crit ? "text-red-300" : "text-amber-300"}`}>{c.label}</div>
-                    <div className="text-xs text-stone-500 mt-0.5">
-                      {drv ? `Fahrer: ${drv.firstName} ${drv.lastName} (${drv.vehicleType === "Van" ? "Van" : "Car"})${drv.phone ? " · " + drv.phone : ""}` : "kein Fahrer zugeteilt"}
-                    </div>
-
-                    {/* nächste passende Fahrer */}
-                    {sugg.length > 0 && (
-                      <div className="mt-2 text-xs">
-                        <span className="text-stone-500">Passende Fahrer: </span>
-                        {sugg.map((x, k) => (
-                          <span key={x.driver.id} className={`inline-flex items-center gap-1 mr-2 ${x.feasible ? "text-emerald-300" : "text-amber-300"}`}>
-                            {x.driver.vehicleType === "Van" ? "Van" : "Car"} {x.driver.firstName}{x.deadKnown ? ` (${x.deadMin}′)` : ""}{k < sugg.length - 1 ? "," : ""}
-                          </span>
-                        ))}
+        <div className="xl:col-span-2 space-y-2.5">
+          {cases.length === 0 ? (
+            <MissionPanel padded>
+              <EmptyState icon={CheckCircle2} title="Aktuell alles im grünen Bereich."
+                hint="Probleme, gelandete Flüge ohne Fahrer oder überfällige Fahrten erscheinen hier automatisch." />
+            </MissionPanel>
+          ) : shown.length === 0 ? (
+            <MissionPanel padded>
+              <EmptyState icon={CheckCircle2} title="Keine Fälle in dieser Ansicht."
+                hint="Der Prioritäts-Filter blendet die anderen Fälle gerade aus."
+                action={<button onClick={() => setFilter("all")} className={secBtn} style={secStyle}>Alle anzeigen</button>} />
+            </MissionPanel>
+          ) : (
+            shown.map((c, i) => {
+              const r = c.r;
+              const drv = setup.drivers.find((d) => d.id === r.assignedDriverId);
+              const Icon = CASE_ICON[c.type] || AlertTriangle;
+              const sugg = suggestDrivers(setup, dyn, r).slice(0, 3);
+              const crit = c.sev === "critical";
+              const key = crit ? "problem" : "assigned";
+              const busy = resolving === r.id;
+              return (
+                <div key={i} className="mc-ride-card"
+                  style={{ padding: "14px", borderLeft: `3px solid var(--mc-st-${key})` }}>
+                  <div className="flex items-start gap-3">
+                    <div className="w-9 h-9 rounded-lg flex items-center justify-center shrink-0"
+                      style={{ background: `var(--mc-st-${key}-soft)`, color: `var(--mc-st-${key})` }}><Icon className="w-5 h-5" /></div>
+                    <div className="min-w-0 flex-1">
+                      {/* Prioritaet + Art + Fahrt-Zuordnung */}
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <StatusBadge status={key} label={crit ? "Kritisch" : "Warnung"} />
+                        <span className="text-[10px] font-medium px-1.5 py-0.5 rounded"
+                          style={{ background: "var(--mc-inset)", color: "var(--mc-text-secondary)" }}>{typeMeta[c.type] || "Fall"}</span>
                       </div>
-                    )}
+                      <div className="flex items-center gap-2 flex-wrap mt-1.5">
+                        <span className="font-mono text-lg font-semibold" style={{ color: "var(--mc-text)" }}>{r.time}</span>
+                        <span className="text-sm" style={{ color: "var(--mc-text-secondary)" }}>{ln(r.fromId, r.fromCustom)} → {ln(r.toId, r.toCustom)}</span>
+                        {r.zone && <ZoneChip zone={r.zone} />}
+                        <span className="text-xs inline-flex items-center gap-1" style={{ color: "var(--mc-text-muted)" }}><Users className="w-3 h-3" />{r.passengerCount}</span>
+                      </div>
+                      {r.djName && <div className="text-sm font-semibold truncate mt-0.5" style={{ color: "var(--mc-st-assigned)" }}>{r.djName}</div>}
+                      <div className="text-sm mt-0.5 font-medium" style={{ color: `var(--mc-st-${key})` }}>{c.label}</div>
+                      <div className="text-xs mt-0.5" style={{ color: "var(--mc-text-muted)" }}>
+                        {drv ? `Fahrer: ${drv.firstName} ${drv.lastName} (${drv.vehicleType === "Van" ? "Van" : "Car"})${drv.phone ? " · " + drv.phone : ""}` : "kein Fahrer zugeteilt"}
+                      </div>
 
-                    {/* große Aktions-Buttons */}
-                    <div className="flex flex-wrap gap-2 mt-3">
-                      <button onClick={() => onAssign(r)} className="text-sm bg-orange-600 hover:bg-orange-500 text-white px-3 py-2 rounded-lg flex items-center gap-1.5">
-                        <Navigation className="w-4 h-4" />{drv ? "Ersatzfahrer suchen" : "Fahrer zuweisen"}
-                      </button>
-                      {drv && drv.phone && <a href={`tel:${drv.phone}`} className="text-sm bg-stone-800 hover:bg-stone-700 text-stone-100 px-3 py-2 rounded-lg flex items-center gap-1.5"><Navigation className="w-4 h-4 rotate-90" />Fahrer anrufen</a>}
-                      <button onClick={() => onWhatsApp(r)} className="text-sm bg-stone-800 hover:bg-stone-700 text-stone-100 px-3 py-2 rounded-lg flex items-center gap-1.5"><MessageSquare className="w-4 h-4" />WhatsApp-Text</button>
-                      {c.type === "issue" && <button onClick={() => resolveIssues(r.id)} className="text-sm bg-stone-800 hover:bg-stone-700 text-stone-100 px-3 py-2 rounded-lg flex items-center gap-1.5"><CheckCircle2 className="w-4 h-4" />Problem erledigt</button>}
-                      <button onClick={() => onEdit(r)} className="text-sm text-stone-400 hover:text-stone-200 px-2 py-2">Fahrt öffnen</button>
+                      {/* nächste passende Fahrer */}
+                      {sugg.length > 0 && (
+                        <div className="mt-2 text-xs">
+                          <span style={{ color: "var(--mc-text-muted)" }}>Passende Fahrer: </span>
+                          {sugg.map((x, k) => (
+                            <span key={x.driver.id} className="inline-flex items-center gap-1 mr-2"
+                              style={{ color: x.feasible ? "var(--mc-st-done)" : "var(--mc-st-assigned)" }}>
+                              {x.driver.vehicleType === "Van" ? "Van" : "Car"} {x.driver.firstName}{x.deadKnown ? ` (${x.deadMin}′)` : ""}{k < sugg.length - 1 ? "," : ""}
+                            </span>
+                          ))}
+                        </div>
+                      )}
+
+                      {/* große Aktions-Buttons */}
+                      <div className="flex flex-wrap gap-2 mt-3">
+                        <button onClick={() => onAssign(r)} className="mc-btn-assign text-sm px-3 py-2 inline-flex items-center gap-1.5">
+                          <Navigation className="w-4 h-4" />{drv ? "Ersatzfahrer suchen" : "Fahrer zuweisen"}
+                        </button>
+                        {drv && drv.phone && <a href={`tel:${drv.phone}`} className={secBtn} style={secStyle}><Navigation className="w-4 h-4 rotate-90" />Fahrer anrufen</a>}
+                        <button onClick={() => onWhatsApp(r)} className={secBtn} style={secStyle}><MessageSquare className="w-4 h-4" />WhatsApp-Text</button>
+                        {c.type === "issue" && (
+                          <button onClick={() => resolveIssues(r.id)} disabled={busy} className={secBtn + " disabled:opacity-60"}
+                            style={{ background: "var(--mc-st-done-soft)", color: "var(--mc-st-done)", border: "1px solid var(--mc-st-done)" }}>
+                            {busy ? <RefreshCw className="w-4 h-4 animate-spin" /> : <CheckCircle2 className="w-4 h-4" />}{busy ? "wird gespeichert" : "Problem erledigt"}
+                          </button>
+                        )}
+                        <button onClick={() => onEdit(r)} className="text-sm px-2 py-2 transition" style={{ color: "var(--mc-text-secondary)" }}>Fahrt öffnen</button>
+                      </div>
                     </div>
                   </div>
                 </div>
-              </div>
-            );
-          })}
+              );
+            })
+          )}
         </div>
 
         {/* rechte Spalte: freie Fahrer + verschiebbare Fahrten */}
         <div className="space-y-3">
-          <div className="bg-stone-900 border border-stone-800 rounded-xl p-3">
-            <div className="text-xs text-stone-400 mb-2 flex items-center gap-1.5"><CheckCircle2 className="w-3.5 h-3.5 text-emerald-500" />Freie Fahrer jetzt ({freeDrivers.length})</div>
+          <MissionPanel icon={CheckCircle2} title={`Freie Fahrer jetzt (${freeDrivers.length})`}>
             <div className="space-y-1 max-h-72 overflow-y-auto">
               {freeDrivers.map(({ d, s }) => {
                 const loc = setup.locations.find((l) => l.id === s.locNow);
                 return (
-                  <div key={d.id} className="flex items-center gap-2 text-xs bg-stone-950/50 rounded px-2 py-1.5">
-                    <span className={`w-2 h-2 rounded-full shrink-0 bg-emerald-400`} />
-                    <span className="text-stone-300">{d.vehicleType === "Van" ? "Van" : "Car"}</span>
-                    <span className="text-stone-400 truncate">{d.firstName} {d.lastName[0]}.</span>
-                    <span className="text-stone-600 ml-auto truncate">{loc ? loc.short : "—"} · {s.count}×</span>
-                    {d.phone && <a href={`tel:${d.phone}`} className="text-stone-500 hover:text-emerald-400 shrink-0"><Navigation className="w-3.5 h-3.5 rotate-90" /></a>}
+                  <div key={d.id} className="flex items-center gap-2 text-xs rounded px-2 py-1.5" style={{ background: "var(--mc-inset)" }}>
+                    <span className="w-2 h-2 rounded-full shrink-0" style={{ background: "var(--mc-st-done)" }} />
+                    <span style={{ color: "var(--mc-text-secondary)" }}>{d.vehicleType === "Van" ? "Van" : "Car"}</span>
+                    <span className="truncate" style={{ color: "var(--mc-text)" }}>{d.firstName} {d.lastName[0]}.</span>
+                    <span className="ml-auto truncate" style={{ color: "var(--mc-text-muted)" }}>{loc ? loc.short : "—"} · {s.count}×</span>
+                    {d.phone && <a href={`tel:${d.phone}`} className="shrink-0" style={{ color: "var(--mc-text-muted)" }}><Navigation className="w-3.5 h-3.5 rotate-90" /></a>}
                   </div>
                 );
               })}
-              {freeDrivers.length === 0 && <div className="text-xs text-stone-600">alle Fahrer im Einsatz</div>}
+              {freeDrivers.length === 0 && <div className="text-xs" style={{ color: "var(--mc-text-muted)" }}>alle Fahrer im Einsatz</div>}
             </div>
-          </div>
+          </MissionPanel>
 
-          <div className="bg-stone-900 border border-stone-800 rounded-xl p-3">
-            <div className="text-xs text-stone-400 mb-2 flex items-center gap-1.5"><Clock className="w-3.5 h-3.5" />Verschiebbar (on demand)</div>
+          <MissionPanel icon={Clock} title="Verschiebbar (on demand)">
             <div className="space-y-1">
               {shiftable.sort((a, b) => sortMin(a.time) - sortMin(b.time)).map((r) => (
-                <button key={r.id} onClick={() => onEdit(r)} className="w-full flex items-center gap-2 text-left text-xs hover:bg-stone-800 rounded px-1.5 py-1">
-                  <span className="font-mono text-stone-300">{r.time}</span>
-                  <span className="text-stone-400 truncate">{ln(r.fromId, r.fromCustom)} → {ln(r.toId, r.toCustom)}</span>
+                <button key={r.id} onClick={() => onEdit(r)} className="w-full flex items-center gap-2 text-left text-xs rounded px-1.5 py-1 transition"
+                  style={{ color: "var(--mc-text-secondary)" }}>
+                  <span className="font-mono" style={{ color: "var(--mc-text)" }}>{r.time}</span>
+                  <span className="truncate">{ln(r.fromId, r.fromCustom)} → {ln(r.toId, r.toCustom)}</span>
                 </button>
               ))}
-              {shiftable.length === 0 && <div className="text-xs text-stone-600">keine flexiblen Fahrten</div>}
+              {shiftable.length === 0 && <div className="text-xs" style={{ color: "var(--mc-text-muted)" }}>keine flexiblen Fahrten</div>}
             </div>
-          </div>
+          </MissionPanel>
         </div>
       </div>
     </div>
