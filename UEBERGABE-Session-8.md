@@ -147,3 +147,18 @@ Soft-Limit, frei-zuerst-Sortierung zur echten Uhrzeit.
   Konflikt-Ring; Tap auf offene Fahrt -> passende Fahrer leuchten; "ca."-Endzeit bei
   Fahrten ohne hinterlegte Dauer. Auf Desktop + Handy pruefen (Drag mit Touch,
   horizontaler Scroll bei Zoom, sticky Kopf/Fahrerspalte).
+
+---
+
+## ✅ Session 8 komplett abgeschlossen (alle 4 Teile)
+- **Teil 1 (`07bdfb9`):** `drivers` -> `MissionDriversTab`.
+- **Teil 2 (`78ee018`):** `timeline` -> `MissionTimelinePage`.
+- **Teil 3 (`4a44798`):** `messages` (Nav "Chat") -> `MissionMessagesInbox`. MC-Design,
+  ungelesen/offen-Hervorhebung, relative Zeitstempel, Sendestatus + Fehleranzeige
+  (additive sending/error-Schicht, reply-/undoReply-Mutation byte-identisch). Node 21/21.
+- **Teil 4 (`99a2863`):** `emergency` (Nav "Probleme") -> `MissionEmergencyTab`. MC-Design,
+  Prioritaets-Badges + Filter (anzeigeseitig), Fall-Art-Tag, Ladezustand am "Problem
+  erledigt"-Button. resolveIssues-Mutation + onErr byte-identisch. Stage Manager
+  unberuehrt. Node 15/15.
+
+Weiter geht es in **`UEBERGABE-Session-9.md`** (frischer Chat, Session 9).
