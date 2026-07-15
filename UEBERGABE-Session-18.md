@@ -1305,10 +1305,10 @@ STICHTAG: ab 21.07. wird nichts mehr geloescht (Festival 23. bis 27.07.).
 
 ---
 
-# STAND SESSION 24 (15.07.2026): AUF BRANCH, WARTET AUF JORDANS OK
+# STAND SESSION 24 (16.07.2026): AUF MAIN
 
-Branch `fix/session-24-forks-raus`, Code-Commit `fce0635`, von `main` = `0085061`.
-**Noch nicht auf main**, FF-Merge nach Jordans OK.
+`main` = `e8c6246`, FF-Merge aus `fix/session-24-forks-raus` erledigt.
+Code-Commit `fce0635` (der Doku-Commit `e8c6246` liegt direkt danach).
 `src/ShuttleLeitstelle.jsx`: **8812 Zeilen** (vorher 9861, -1049).
 Bundle 752,8 -> 687,4 kb. esbuild gruen, Duplikat-Grep leer. Kein Schema-Re-Run offen.
 
@@ -1495,9 +1495,12 @@ Maybach62S57S/openbeatz-shuttle. PAT setze ich hier ein: <PAT>
 Nach dem Klonen: git config (user.name/email), npm ci, Baseline-esbuild gruen:
 ./node_modules/.bin/esbuild src/ShuttleLeitstelle.jsx --bundle=false --format=esm --outfile=/tmp/x.js
 
-STAND: main = <nach dem FF-Merge eintragen>, Code-Stand fce0635, 8812 Zeilen.
-Session 24 (die sechs Classic-Forks raus) ist gemerged. Session 21, 22, 23 und
-24 sind von mir noch NICHT am Geraet getestet.
+STAND: Code-Stand fce0635, 8812 Zeilen (main zeigt auf den Doku-Commit danach).
+Session 24 (die sechs Classic-Forks raus) ist gemerged und auf Production.
+Session 21, 22, 23 und 24 sind von mir noch NICHT am Geraet getestet.
+Jordans Entscheidung 16.07.: Session 25 kommt NACH dem Festival, zusammen mit
+der Kommentar-Kosmetik. Vor dem Festival wird nur noch getestet und, falls die
+Tests etwas finden, repariert.
 Rueckwege: git revert fce0635 8aa1bfe 7e4fc47, Tag
 stabil-classic-vorhanden-2026-07-15 = f7bb75d, Tag
 stabil-vor-design-2026-07-13 = 4d13e59. Vercel: altes Deployment per
