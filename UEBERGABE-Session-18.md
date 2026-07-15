@@ -1847,3 +1847,134 @@ als jeder Git-Befehl, und der richtige Weg waehrend eines laufenden Tests.
 Git: `git revert a38d118 a7e12c1 a4e302d` (nur die Fahrer-App-Fixes, in dieser
 Reihenfolge). Tags: `stabil-classic-vorhanden-2026-07-15` = `f7bb75d`,
 `stabil-vor-design-2026-07-13` = `4d13e59`.
+
+---
+
+# SESSION 27: MC-Design fuer die geteilten Komponenten (Jordan will das, 16.07.)
+
+## Frisch gemessen auf `a38d118`, ersetzt die Zahlen aus Session 19
+
+| Komponente | Def. | Zeilen | `var(--mc-*)` | `stone-*` | Optik |
+|---|---|---|---|---|---|
+| `SettingsTab` | 7235 | 301 | 0 | 67 | Classic |
+| `RideForm` | 3832 | 287 | 0 | 9 | Classic |
+| `FlightTab` | 5347 | 162 | 0 | 29 | Classic |
+| `LiveGoogleMap` | 6943 | 127 | 0 | 3 | Classic |
+| `MapTab` | 7106 | 127 | 0 | 32 | Classic |
+| `AssignModal` | 3718 | 112 | 0 | 23 | Classic |
+| `ChatPanel` | 3568 | 105 | 0 | 22 | Classic |
+| `TimelineView` | 6412 | 78 | 0 | 12 | Classic |
+| `BoardMiniMap` | 6860 | 46 | 0 | 11 | Classic |
+| `WhatsAppModal` | 4348 | 27 | 0 | 6 | Classic |
+| `NoGpsSharingPanel` | 7078 | 27 | 0 | 3 | Classic |
+| `DriverRow` | 3691 | 25 | 0 | 7 | Classic |
+
+**1424 Zeilen, 12 von 12 komplett Classic, null MC-Token.**
+
+## BELEGT: keine der zwoelf landet beim Fahrer/Stage/Gast
+
+Aufrufstellen per AST ihren Eltern-Komponenten zugeordnet, **0 Treffer in
+DriverApp/StageApp/GuestApp**:
+
+- `MissionControl` rendert: `RideForm`, `AssignModal`, `WhatsAppModal`,
+  `ChatPanel`, `DriverRow`, `FlightTab`, `MapTab`, `SettingsTab`, `BoardMiniMap`
+- `MapTab` rendert: `LiveGoogleMap`, `NoGpsSharingPanel`, `TimelineView`
+- `MissionOverviewTab`/`MissionReturnsTab` rendern: `BoardMiniMap`, `TimelineView`
+
+**Konsequenz: ein Re-Skin ist reine Optik, leitstellenseitig, ohne Logik,
+Schreibwege oder Daten.** Anderes Kaliber als die Fahrer-App. Schlimmster Fall
+ist "sieht komisch aus", nicht Datenverlust. Jordan ist die Leitstelle und
+merkt es sofort.
+
+## Timing-Logik (wichtig, gilt auch fuer alles Weitere)
+
+Jordan testet Sa/So 18./19.07. mit mehreren Fahrern. **Was am Festival laufen
+soll, muss VOR dem Test rein**, sonst wird ein Stand getestet, der danach
+ersetzt wird. Damit gibt es nur zwei sinnvolle Fenster:
+
+| Wann | Bewertung |
+|---|---|
+| Do/Fr 16./17.07. | Test deckt es ab, Mo/Di Puffer. **Richtig.** |
+| Mo/Di 20./21.07. | geht UNGETESTET ins Festival. **Schlechteste Option.** |
+| nach dem Festival | null Risiko |
+
+## Aufteilung, nach Nutzen sortiert
+
+- **27a: `RideForm` + `AssignModal` + `WhatsAppModal` = 426 Zeilen.**
+  Die zwei Dialoge, die im Betrieb staendig aufgehen. Groesster spuerbarer
+  Effekt, eine Familie, ein Muster. **Das ist die Scheibe fuer vor dem Festival.**
+- **27d: `TimelineView` + `BoardMiniMap` + `NoGpsSharingPanel` + `DriverRow`
+  = 176 Zeilen.** Sitzen direkt IN den MC-Seiten, also die auffaelligsten
+  Classic-Inseln, und winzig. Zweitbester Kandidat.
+- 27c: `FlightTab` + `MapTab` + `LiveGoogleMap` = 416 Zeilen.
+  **Achtung:** `MapTab` ist NICHT "identisch mit Classic gewesen", MC uebergibt
+  zusaetzlich `SchematicComponent={MissionSchematicMap}` und `glideMarkers`.
+  Die Karte darin ist schon MC, nur der Rahmen ist Classic.
+- 27b: `SettingsTab` = 301 Zeilen. Groesster Brocken, wird einmal eingerichtet
+  und nie wieder angefasst. Lohnt vor dem Festival nicht.
+- `ChatPanel` (105) nach Bedarf.
+
+## Hinweise fuer den Umbau
+
+- Designsystem: `MissionStyles`, CSS-Custom-Properties unter `.mc-scope`.
+  Aesthetik: enterprise dark, ruhig, nachtschichttauglich. **Kein Gaming, kein
+  Cyberpunk, kein Neon, keine uebertriebenen Animationen.**
+- Alles unter `.mc-scope` gescopt. Die Modals werden von `MissionControl`
+  gerendert, haengen also im Scope (Wurzel `<div className="mc-scope ...">`).
+- **Nur `className`/Style anfassen. Keine Props, keine Handler, keine
+  Feldlogik.** `RideForm` ist ein Formular mit Schreibweg, das ist die Grenze.
+- Beleg: Pruefsummen muessen GENAU die umgebauten Bausteine als geaendert
+  zeigen, alles andere byte-identisch. Dazu Laufzeit-Test (`react-dom/server`,
+  App-Root muss 25053 Zeichen rendern) und jede `var(--mc-*)` einzeln gegen
+  `MissionStyles` pruefen (eine Variable, die es nicht gibt, macht die ganze
+  CSS-Regel ungueltig, und esbuild meldet das nie).
+
+---
+
+## Ready-to-paste Opener: Session 27a (Modals auf MC-Design)
+
+```
+Erst PROJEKT-ANWEISUNGEN.md lesen, dann Repo holen. Repo:
+Maybach62S57S/openbeatz-shuttle. PAT setze ich hier ein: <PAT>
+Nach dem Klonen: git config (user.name/email), npm ci, Baseline-esbuild gruen:
+./node_modules/.bin/esbuild src/ShuttleLeitstelle.jsx --bundle=false --format=esm --outfile=/tmp/x.js
+
+STAND: main = bca80ed, Code-Stand a38d118, 8883 Zeilen. Classic ist komplett
+raus (Sessions 19 bis 24). Die Fahrer-App-Fixes (from-Waechter,
+Doppeltipp-Sperre, Offline-Ehrlichkeit) sind auf Production, aber noch
+ungetestet. Ich teste Sa/So mit mehreren Fahrern.
+Rueckweg: Vercel -> altes Deployment -> Promote to Production. Git:
+git revert <commit>. Tag stabil-vor-design-2026-07-13 = 4d13e59.
+
+Danach UEBERGABE-Session-18.md lesen, KOMPLETT, vor allem "SESSION 27"
+ganz unten. Die Datei waechst nach UNTEN an, alles weiter oben ist aelter.
+Die Anker unten sind auf a38d118. Per grep gegenpruefen.
+
+AUFTRAG 27a: RideForm (3832), AssignModal (3718) und WhatsAppModal (4348) auf
+MC-Design ziehen. Zusammen 426 Zeilen, alle drei heute komplett Classic
+(0 var(--mc-*), gemessen). Sie werden nur von MissionControl gerendert und
+haengen damit im .mc-scope. 0 Treffer in DriverApp/StageApp/GuestApp, belegt.
+- NUR className/Style. KEINE Props, KEINE Handler, KEINE Feldlogik.
+  RideForm ist ein Formular mit Schreibweg, das ist die Grenze.
+- Designsystem ist MissionStyles. Enterprise dark, ruhig, nachtschicht-
+  tauglich. Kein Gaming, kein Neon, keine uebertriebenen Animationen.
+- Die anderen neun geteilten Komponenten NICHT anfassen, das sind 27b/c/d.
+- Weiter tabu: DriverApp/StageApp/GuestApp, die Datenschicht, das
+  dyn_data/RPC-Thema, der Fallschirm.
+
+Branch: fix/session-27a-modals von main. Nach meinem OK FF-Merge auf main.
+
+Zum Schluss: Diff-Beleg, Regressionsrisiken, konkrete manuelle Testfaelle.
+esbuild ist kein Beweis, das ist in Session 23 und 24 je mit einer Gegenprobe
+belegt worden. Pruefsummen muessen GENAU die drei Modals als geaendert zeigen,
+alles andere byte-identisch. Laufzeit-Test: App-Root muss 25053 Zeichen
+rendern. Jede var(--mc-*) einzeln gegen MissionStyles pruefen, eine Variable
+die es nicht gibt macht die ganze CSS-Regel ungueltig und esbuild meldet das
+nie. Achtung: git diff --stat kann bei aehnlichen Bloecken scheinbare
+Einfuegungen zeigen, --patience nutzen.
+Commit ueber /tmp/msg.txt. Sprache Deutsch, informell, keine Gedankenstriche,
+korrekte Umlaute. Warn mich rechtzeitig, wenn der Chat zu lang wird.
+
+ZEITFENSTER: muss VOR Sa 18.07. fertig sein, sonst deckt mein Fahrer-Test es
+nicht ab und es ginge ungetestet ins Festival (23. bis 27.07.).
+```
