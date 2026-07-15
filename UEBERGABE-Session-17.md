@@ -102,27 +102,15 @@ steht nach jedem Tab-Wechsel wieder auf Schema. Kostenseitig gut, aber er soll
 sich nicht wundern. `loadGoogleMapsApi` (79) ist ein Singleton, das Skript
 laedt nur einmal, nur die Map-Instanzen zaehlen.
 
-# OFFEN: Scheibe 3 (NoGps-Panel zum Fahrer-Tab)
+# ERLEDIGT/HINFAELLIG: Scheibe 3 (NoGps-Panel)
 
-Jordans Wunsch: sehen, welcher Fahrer gerade keinen Standort teilt, um
-nachzuhaken.
+War geplant als "Panel vom Karte-Tab in den Fahrer-Tab ziehen". **Jordan hat am
+15.07. entschieden, dass es im Karte-Tab bleibt.** Damit ist nichts zu tun:
+`NoGpsSharingPanel` (8844) haengt in `MapTab` (8872), und `MapTab` rendern
+Classic (3951) UND MC (9989). Das Panel ist also in beiden Oberflaechen im
+Karte-Tab bereits vorhanden. Kein Code noetig.
 
-**80 Prozent existiert schon.** `NoGpsSharingPanel` (8844) macht genau das:
-Fahrer, die heute eine Fahrt haben, aber keine frische GPS-Position teilen,
-mit Anruf-Button. Es haengt nur am falschen Tab (in `MapTab`, 8957).
-
-**Achtung, nicht so billig wie es klingt:** `MapTab` ist eine GETEILTE
-Komponente (Classic 3951 + MC 9989). Rausnehmen traefe Classic. Also:
-1. additiver Prop `showNoGps = true` an `MapTab`, MC (9989) setzt `false`
-   -> Classic laufzeit-identisch.
-2. `<NoGpsSharingPanel>` additiv im MC-Fahrer-Tab (`MissionDriversTab`, 4964)
-   rendern. Achtung: `MissionDriversTab` bekommt heute schon `day` als Prop,
-   das Panel braucht `setup`, `dyn`, `day` - alle vorhanden.
-
-**Bei den 3 Minuten bleiben, nicht auf 30/60 hochgehen.** Jordan hatte
-30 bis 60 Minuten im Kopf. Das waere schlechter als der Ist-Zustand:
-`GPS_MAX_AGE_MS` steht auf 3 Minuten. Bei 30 merkt er erst nach einer halben
-Stunde, dass jemand dunkel ist.
+Nicht ungefragt wieder aufmachen.
 
 # NICHT BAUEN ohne eigene Risikoabwaegung (Jordan hat es angesprochen, ist vertagt)
 
@@ -193,7 +181,7 @@ Scheibe, eigener Chat, eigene Risikoabwaegung.
 1. **MC-Ueberblick auf der Preview durchklicken** (Commit `12ca278`). Zuschnitt
    ok? Wenn nicht, jetzt sagen, bevor Scheibe 2 und 3 drauf aufbauen.
 2. Entscheiden, ob Scheibe 2 (Google in der Minikarte) ueberhaupt noch gewollt
-   ist.
+   ist. Empfehlung: nein, die grosse Karte im map-Tab hat Google schon.
 3. Vor dem Festival: Merge `feature/mission-control-beta` -> `main` per
    Fast-Forward, Produktivdaten laden (Fahrer, Orte, Fahrzeugmatrix),
    Live-Test mit mehreren Fahrer-GPS, Google-Maps-Key in Vercel pruefen.
@@ -243,29 +231,42 @@ Sprache Deutsch, informell, keine Gedankenstriche, korrekte Umlaute. Warn mich
 rechtzeitig, wenn der Chat zu lang wird.
 ```
 
-## Ready-to-paste Opener: Scheibe 3 (NoGps-Panel zum Fahrer-Tab)
+## Ready-to-paste Opener: MERGE auf Production (wichtigster naechster Schritt)
 
 ```
 Erst PROJEKT-ANWEISUNGEN.md lesen, dann Repo holen. Repo:
-Maybach62S57S/openbeatz-shuttle, Branch feature/mission-control-beta.
-PAT setze ich hier ein: <PAT>
-Nach dem Klonen: git config (user.name/email), git checkout
-feature/mission-control-beta, npm ci, Baseline-esbuild gruen:
-./node_modules/.bin/esbuild src/ShuttleLeitstelle.jsx --bundle=false --format=esm --outfile=/tmp/x.js
+Maybach62S57S/openbeatz-shuttle. PAT setze ich hier ein: <PAT>
+Nach dem Klonen: git config (user.name/email), npm ci.
 
-STAND: Branch steht auf 12ca278 (bzw. dem Stand nach Scheibe 2), main
-(Production) auf 8499232. Nicht direkt auf main pushen.
+STAND: feature/mission-control-beta steht auf 48c74e2 (Doku) bzw. 12ca278
+(letzte Code-Aenderung, MissionOverviewTab). main (Production) steht auf
+8499232, ist also zwei Commits hinterher. Rueckweg: Tag
+stabil-vor-design-2026-07-13 = Branch backup/paket-3-fertig = 4d13e59.
 
-Danach UEBERGABE-Session-17.md lesen, Abschnitt "OFFEN: Scheibe 3". Anker per
-grep gegenpruefen.
+Danach UEBERGABE-Session-17.md lesen.
 
-AUFTRAG SCHEIBE 3: NoGpsSharingPanel (8844) soll in MC vom Karte-Tab in den
-Fahrer-Tab. MapTab ist GETEILT (Classic 3951 + MC 9989), also nicht rausbauen,
-sondern additiver Prop showNoGps = true, MC setzt false. Panel additiv in
-MissionDriversTab (4964) rendern. Bei GPS_MAX_AGE_MS = 3 Minuten bleiben,
-nicht auf 30/60 hochgehen. Nur Darstellung, keine neue Logik, kein Schreibweg,
-kein Reminder-/Push-Knopf (das ist bewusst vertagt, siehe Uebergabe).
-Diff-Beleg zum Schluss.
+AUFTRAG: Merge feature/mission-control-beta auf main (Production).
+Vorgehen:
+1. Pruefen, ob der Merge ein echter Fast-Forward ist (git merge-base --is-
+   ancestor main feature/mission-control-beta). Wenn nicht, STOPP und mir
+   sagen warum, nicht einfach mergen.
+2. Baseline auf feature/mission-control-beta: esbuild gruen
+   (./node_modules/.bin/esbuild src/ShuttleLeitstelle.jsx --bundle=false
+   --format=esm --outfile=/tmp/x.js), Duplikat-Grep leer.
+3. Diff main..feature zusammenfassen: was genau geht auf Production, welche
+   Renderzweige sind betroffen, was aendert sich fuer Fahrer/Stage/Gast
+   (Erwartung: nichts, es ist alles MC-only).
+4. Erst nach meinem OK: git checkout main, git merge --ff-only
+   feature/mission-control-beta, push auf main.
+5. Danach bestaetigen, dass main und feature auf demselben Hash stehen.
 
-Feste Regeln wie gehabt (identisch zum Opener oben).
+WICHTIG: main ist Production und das Festival ist am 23.-27. Juli. Kein
+Umbau nebenbei, nur der Merge. Wenn dir beim Diff etwas auffaellt, sag es
+mir, statt es zu reparieren.
+Sprache Deutsch, informell, keine Gedankenstriche, korrekte Umlaute.
 ```
+
+## Ready-to-paste Opener: Scheibe 2 (nur falls Jordan es doch will)
+
+Siehe Abschnitt "OFFEN: Scheibe 2" oben. Opener steht direkt darueber.
+Empfehlung bleibt: weglassen, die grosse Karte im map-Tab hat Google schon.
