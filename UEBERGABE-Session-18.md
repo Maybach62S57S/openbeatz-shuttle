@@ -2,6 +2,12 @@
 
 Ersetzt UEBERGABE-Session-17.md.
 
+> **AKTUELLSTER STAND: Abschnitt "STAND SESSION 23" ganz unten**, dazu
+> "VORARBEIT FUER SESSION 24". Diese Datei waechst nach UNTEN an. Alle
+> Zeilennummern und Stand-Angaben weiter oben sind aelter und stimmen nicht
+> mehr. Reihenfolge der Staende in der Datei: 18 (oben), 19, 21, 22, 23 (unten).
+> Jede Zeilennummer vor der Benutzung per grep gegenpruefen.
+
 > **NACHTRAG Session 19 weiter unten beachten** (Abschnitt
 > "NACHTRAG (15.07.2026, aus Session 19)", direkt vor der Testliste). Er
 > korrigiert die Aufwandsschaetzung fuer den Zustand NACH dem Classic-Ausbau
@@ -1042,4 +1048,236 @@ Feste Regeln wie in der Uebergabe. esbuild ist kein Beweis, jede Referenz und
 jedes Icon einzeln gegenpruefen. Commit ueber /tmp/msg.txt. Sprache Deutsch,
 informell, keine Gedankenstriche, korrekte Umlaute. Warn mich rechtzeitig,
 wenn der Chat zu lang wird.
+```
+
+---
+
+# STAND SESSION 23 (15.07.2026): BRANCH, NOCH NICHT AUF MAIN
+
+Branch `fix/session-23-dashboard-raus`, Code-Commit `7e4fc47`. **Wartet auf
+Jordans OK**, danach FF-Merge (geprueft: main ist Vorfahre).
+`src/ShuttleLeitstelle.jsx`: **9871 Zeilen** (vorher 10322, -451).
+esbuild gruen, Duplikat-Grep leer. Kein Schema-Re-Run offen.
+**Jordan hat Session 21, 22 und 23 noch NICHT am Geraet getestet.**
+
+## Geloescht
+
+- `Dashboard` (vormals 3615 bis 4071, 457 Zeilen) samt "Oberflaeche"-Umschalter
+  im Kopf. An der Stelle steht jetzt ein Erklaerungsblock.
+- `uiMode`-State, `setUiModeSafe` (hatte seit Session 19 keinen Aufrufer),
+  localStorage-Schluessel `"obf:uiMode"`.
+- Prop `uiMode={uiMode}` am MissionControl-Aufruf und aus der
+  `MissionControl`-Signatur.
+- Zwei Kommentare mitgezogen, die sonst Falschaussagen gewesen waeren: der
+  Routing-Kommentar im App-Root ("State + Setter bleiben bestehen, weil
+  handleMcFallback sie weiter benutzt") und der Kommentar am "Zu Classic"-Knopf
+  im MC-Kopf (verwies auf `key={uiMode}` und den Dashboard-Umschalter).
+
+## Zwei Messergebnisse, die Raten ersetzt haben
+
+**1. Die uiMode-Prop an MissionControl war ohne Wirkung.** Alle 8
+`uiMode`-Vorkommen im Kompilat von `1033d26` einzeln aufgelistet: State,
+localStorage lesen, localStorage schreiben, die Prop am Aufruf,
+Dashboard-Signatur, zwei Umschalter-Zeilen im Dashboard-Kopf,
+MissionControl-Signatur. **Im RUMPF von MissionControl: null Vorkommen.** Das
+Entfernen ist deshalb keine Verhaltensaenderung.
+
+**2. Die Kpi-Falle ist maschinell geklaert, der Beleg ist esbuild selbst.**
+esbuild benennt das lokale `Kpi` in `MissionOverviewTab` von sich aus nach
+`Kpi2` um, weil es das globale beschattet. Im Kompilat: `Kpi2` hat Definition
+plus 4 Aufrufe (lebt), `Kpi` hat nur seine Definition (tot).
+**Warnung fuer den, der das nachbaut:** ein zaehlender Totholz-Test kann
+beschattete Namen prinzipiell NICHT sehen und meldet `Kpi` faelschlich als
+"benutzt". Nur das Kompilat gibt die richtige Antwort.
+
+## Belege (esbuild war ausdruecklich nicht der Beweis)
+
+- **Gegenprobe, der Kern:** absichtlich eine `<Dashboard />`-Referenz in einen
+  erreichbaren Zweig gebaut. **esbuild: GRUEN. Duplikat-Grep: leer.** Beide
+  blind, genau wie in dieser Uebergabe beschrieben. Kompilat-Scan (1 Treffer)
+  und Laufzeit-Rendertest ("Dashboard is not defined") schlagen an. Danach
+  Gegenprobe entfernt, md5 der Datei identisch.
+- **Kompilat:** `Dashboard`, `uiMode`, `setUiMode`, `setUiModeSafe`,
+  `"obf:uiMode"` je **0 Treffer**. Das ist erschoepfend, nicht stichprobenhaft:
+  was 0 mal im Bundle steht, kann kein Pfad referenzieren, auch kein
+  unerreichbarer. Fallschirm, Fahrer/Stage/Gast, die geteilten Komponenten und
+  die sechs Forks alle weiter vorhanden.
+- **Pruefsummen aller 206 Top-Level-Bausteine** (inkl. `export default function
+  App` und `class MissionControlBoundary`, die eine naive Funktions-Erfassung
+  uebersieht): genau drei beruehrt. `Dashboard` entfernt, `App` -8 Zeilen,
+  `MissionControl` -2 Zeilen. **204 byte-identisch**, darunter der komplette
+  Fallschirm.
+- **Laufzeit-Test mit echtem React** (`react-dom/server`, keine neue Library,
+  kein jsdom): Modul laedt, App-Root rendert (25053 Zeichen). Nicht im Repo,
+  Jordan hat ihn nicht angefordert. Aufbau: esbuild mit `--jsx=automatic`
+  bauen (die Projekt-Standardpruefung nutzt `transform`, das Ergebnis ist in
+  Node nicht lauffaehig), dann `renderToString(createElement(App))`.
+  `globalThis.localStorage` stubben, `navigator` NICHT (Node 22 hat nur einen
+  Getter dafuer).
+- **Icons: 42 importiert, 0 tot vorher wie nachher.** Importliste unveraendert.
+  Kein Icon ist durch den Dashboard-Ausbau tot geworden.
+
+## OFFENE ENTSCHEIDUNG: das globale Kpi
+
+`Kpi` (jetzt **3624**, 9 Zeilen) ist seit diesem Commit bewiesen tot, null
+Aufrufer. **Nicht geloescht**, weil Jordans Auftrag ueberall sonst "loeschen"
+bzw. "raus" sagt und beim Kpi nur "wird danach tot" plus die Verwechslungs-
+Warnung. Session 25 (Totholz) listet es bereits. Steht als Frage bei Jordan.
+Das **lokale** `const Kpi` in `MissionOverviewTab` (jetzt **6406**) bleibt in
+jedem Fall, es ist ein anderes Ding (siehe Kpi2-Beleg oben).
+
+## Rueckweg
+
+`git revert 7e4fc47`, Tag `stabil-classic-vorhanden-2026-07-15` = `f7bb75d`,
+Tag `stabil-vor-design-2026-07-13` = `4d13e59`, oder Vercel -> altes
+Deployment -> Promote to Production.
+
+## Offene Testfaelle Session 23 (Jordan, auf Production)
+
+1. [ ] Laptop, Dispo-Login: MC oeffnet. Kein "Oberflaeche"-Umschalter, kein
+       "Zu Classic".
+2. [ ] **Der wichtigste:** Absturz erzwingen (Wegwerf-Branch mit `throw` in
+       `MissionControl`) -> Fehlerseite mit "Neu laden". Kein weisser
+       Bildschirm, kein Classic. Prueft S22 und S23 zusammen. **Ab jetzt gibt
+       es keinen Classic-Boden mehr, der einen Fehler im S22-Umbau auffangen
+       wuerde.**
+3. [ ] "Neu laden" -> MC ist wieder da.
+4. [ ] Konsole `localStorage.setItem("obf:uiMode","classic")` + F5 -> trotzdem
+       MC, nichts kaputt. Der Wert wird ab jetzt ignoriert (wie
+       "obf:viewMode" seit S21), er muss nicht geloescht werden.
+5. [ ] Ueberblick-Tab: die vier KPI-Kacheln (Erledigt / Offen / Anstehend /
+       Gesamt) sind da und klickbar. **Sichttest fuer das lokale Kpi.**
+6. [ ] Fahrt zuteilen, Timeline verschieben, Rueckgaengig, Chat-Knopf.
+7. [ ] iPhone: MC mit unterer Leiste.
+8. [ ] Fahrer-, Stage-, Gast-Login unveraendert.
+9. [ ] Die offenen Testfaelle aus S21 (besonders Nr. 4, Karte-Tab
+       Schema/Google) und S22 stehen weiter aus.
+
+---
+
+# VORARBEIT FUER SESSION 24 (gemessen in Session 23, nicht nochmal messen)
+
+## Anker, Stand `7e4fc47`
+
+| Fork (raus) | Def. | Zeilen | Gegenstueck (bleibt) | Def. |
+|---|---|---|---|---|
+| `DriversTab` | 4117 | 61 | `MissionDriversTab` | 4190 |
+| `MessagesInbox` | 4789 | 82 | `MissionMessagesInbox` | 4875 |
+| `ReturnsTab` | 5148 | 248 | `MissionReturnsTab` | 5407 |
+| `EmergencyTab` | 5882 | 129 | `MissionEmergencyTab` | 6015 |
+| `OverviewTab` | 6234 | 124 | `MissionOverviewTab` | 6387 |
+| `TimelinePage` | 6582 | 393 | `MissionTimelinePage` | 6976 |
+
+**Summe: 1037 Zeilen** (die Uebergabe schaetzte ~1100). Alle sechs haben seit
+`7e4fc47` **null Aufrufer**, belegt im Kompilat (je genau 1 Vorkommen = nur die
+Definition).
+
+## DIE "GETEILT"-FALLE IST ENTSCHAERFT (das ist der wichtige Teil)
+
+Automatisch gemessen: jede Verwendung ihrer Eltern-Funktion zugeordnet
+(Klammerzaehlung, Kommentare vorher entfernt), dann gefragt, welche Bezeichner
+NUR von den sechs Forks benutzt werden.
+
+**Ergebnis: null.** Keine einzige Komponente und kein Helfer stirbt mit den
+sechs Forks. Session 24 ist ein reines Rausschneiden von sechs Bloecken, es
+gibt nichts, was mitgeloescht werden muesste oder duerfte.
+
+22 Bezeichner werden von den Forks benutzt UND von anderen. Sie bleiben alle.
+Die, bei denen der Fork-Aufrufer der vorletzte ist, also nach S24 nur noch
+einen Nutzer haben:
+
+| Bezeichner | Nutzer heute | nach S24 |
+|---|---|---|
+| `StatusPill` | DriverApp, ReturnsTab | **DriverApp (Fahrer, tabu)** |
+| `computeArtistPresence` | ReturnsTab, MissionReturnsTab | MissionReturnsTab |
+| `PresenceManager` | ReturnsTab, MissionReturnsTab | MissionReturnsTab |
+| `useElementWidth` | OverviewTab, MissionOverviewTab, MissionControl | 2 MC-Stellen |
+
+`StatusPill` bestaetigt Punkt 2 des Nachtrags: es landet beim Fahrer und ist
+damit tabu, nicht "auf MC umbauen".
+
+## Was in S24 zusaetzlich tot wird
+
+Nach dem Fork-Ausbau ist zu pruefen (nicht vorab geloescht): `flightAlert`
+haengt heute u. a. an `OverviewTab`, hat aber genug andere Nutzer und bleibt.
+Die vorhandene Totholz-Liste fuer Session 25 waechst voraussichtlich nicht
+durch S24, weil nichts fork-exklusiv ist. **Trotzdem nach dem Loeschen erneut
+messen**, das ist eine Prognose, kein Beleg.
+
+---
+
+# Weitere gefundene Punkte fuer spaetere Sessions (aus Session 23)
+
+- **`dynToRpcParams` hat zwei Vorkommen, nicht null.** Die Session-22-Notiz
+  sagt "keine Aufrufer, schon auf ff05974". Zwei Vorkommen heisst Definition
+  plus eine Verwendung. Nicht analysiert, ausserhalb des Pakets, aber die
+  Session-25-Liste stimmt an dieser Stelle moeglicherweise nicht. Vor dem
+  Loeschen nachmessen.
+- Kommentar bei **8775** ("reiner PASSTHROUGH auf Dashboard", "Ansatz A, ohne
+  Classic anzufassen") beschreibt einen Zustand, den es nicht mehr gibt.
+  Gehoert zu S24.
+- `onSetUiMode` und `onSwitchToMobile` stecken weiter in der
+  `MissionControl`-Signatur (**8777**), beide am Aufruf fest `null`, ihre
+  Knoepfe unerreichbar. Eigene kleine Scheibe, absichtlich nicht hier.
+- Totholz-Liste fuer Session 25, Stand `7e4fc47`: `Kpi` global (3624, neu),
+  `ErrorState`, `IconButton`, `tsToDayMin`, evtl. `dynToRpcParams` (siehe
+  oben). Vorher jeweils per Kompilat gegenpruefen, nicht per Grep auf die
+  Quelle (Beschattung, siehe Kpi).
+- Unveraendert offen: Chat-FAB ueberlappt die MC-Handy-Leiste, "Was brennt"
+  widerspricht dem Kopf-Banner (nicht analysiert, Verdacht Tagesfilter),
+  `favicon.ico` 404. Ebenso die fuenf geparkten Stabilitaetsbefunde aus
+  Session 18.
+
+---
+
+## Ready-to-paste Opener: Session 24 (die sechs Classic-Forks raus)
+
+```
+Erst PROJEKT-ANWEISUNGEN.md lesen, dann Repo holen. Repo:
+Maybach62S57S/openbeatz-shuttle. PAT setze ich hier ein: <PAT>
+Nach dem Klonen: git config (user.name/email), npm ci, Baseline-esbuild gruen:
+./node_modules/.bin/esbuild src/ShuttleLeitstelle.jsx --bundle=false --format=esm --outfile=/tmp/x.js
+
+STAND: main = <Commit nach dem S23-Merge>, 9871 Zeilen. Session 23 (Dashboard
+und uiMode raus) ist gemerged, von mir aber noch NICHT am Geraet getestet.
+Session 21 und 22 ebenfalls nicht. Rueckwege: git revert 7e4fc47, Tag
+stabil-classic-vorhanden-2026-07-15 = f7bb75d, Tag
+stabil-vor-design-2026-07-13 = 4d13e59. Vercel: altes Deployment per
+Promote to Production zurueckholen.
+
+Danach UEBERGABE-Session-18.md lesen, KOMPLETT, vor allem "STAND SESSION 23"
+und "VORARBEIT FUER SESSION 24". Die Anker dort sind auf 7e4fc47, alles
+weiter oben in der Datei ist aelter. Per grep gegenpruefen.
+
+ENTSCHEIDUNG STEHT: Mission Control ist die einzige Leitstellen-Oberflaeche,
+Classic wird geloescht. Nicht neu verhandeln. Weiter tabu:
+DriverApp/StageApp/GuestApp (Stage read-only), die Datenschicht, das
+dyn_data/RPC-Thema, der Fallschirm.
+
+AUFTRAG: die sechs verwaisten Classic-Forks raus, zusammen 1037 Zeilen.
+DriversTab (4117), MessagesInbox (4789), ReturnsTab (5148),
+EmergencyTab (5882), OverviewTab (6234), TimelinePage (6582).
+Alle sechs haben seit Session 23 null Aufrufer.
+- Die Mission-Gegenstuecke bleiben, nicht verwechseln: MissionDriversTab
+  (4190), MissionMessagesInbox (4875), MissionReturnsTab (5407),
+  MissionEmergencyTab (6015), MissionOverviewTab (6387),
+  MissionTimelinePage (6976).
+- In Session 23 bereits gemessen: NICHTS stirbt mit den sechs Forks, kein
+  Helfer ist fork-exklusiv. Nach dem Loeschen trotzdem neu messen.
+- StatusPill faellt danach auf DriverApp zurueck, also Fahrer, tabu.
+- Umbenennen der MC-Forks (MissionOverviewTab -> OverviewTab): NICHT,
+  kosmetisches Refactoring, nach dem Festival.
+- Das globale Kpi (3624) und die uebrige Totholz-Liste: Session 25.
+
+Branch: fix/session-24-forks-raus von main. Nach meinem OK FF-Merge auf main.
+
+Zum Schluss: Diff-Beleg, Regressionsrisiken, konkrete manuelle Testfaelle.
+esbuild ist kein Beweis, das ist in Session 23 mit einer Gegenprobe belegt
+worden (kaputte Referenz -> esbuild gruen, Duplikat-Grep leer). Kompilat
+gegenpruefen, Pruefsummen der nicht angefassten Bausteine gegen den Vorstand,
+Icons einzeln. Commit ueber /tmp/msg.txt. Sprache Deutsch, informell, keine
+Gedankenstriche, korrekte Umlaute. Warn mich rechtzeitig, wenn der Chat zu
+lang wird.
+
+STICHTAG: ab 21.07. wird nichts mehr geloescht (Festival 23. bis 27.07.).
 ```
