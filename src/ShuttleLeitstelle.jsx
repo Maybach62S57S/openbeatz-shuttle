@@ -7130,6 +7130,155 @@ function OverviewTab({ setup, dyn, day, setTab, onEdit, onAssign }) {
   );
 }
 
+/* ------------- Mission Control: Ueberblick (Session 17, Scheibe 1) ---------
+ * MC-eigene Variante von OverviewTab. Ansatz A wie bei MissionReturnsTab:
+ * OverviewTab ist eine GETEILTE Komponente (Classic-Dashboard + MC), ein Umbau
+ * dort traefe Classic. Deshalb eigene Kopie, Classic bleibt byte-genau.
+ *
+ * BEWUSST WENIGER ALS CLASSIC (Jordans Entscheidung 15.07., "doppelt gemoppelt").
+ * Der Ueberblick soll in zehn Sekunden zeigen ob was brennt, nicht die halbe
+ * Karte doppeln:
+ *  - Flughafen-Pickups RAUS, dafuer gibt es den flights-Tab (die Liste hier
+ *    verlinkte ohnehin nur dorthin).
+ *  - TimelineView RAUS, dafuer gibt es MissionTimelinePage im timeline-Tab.
+ *  - Die drei Chips unten RAUS, das macht die linke MC-Nav schon.
+ *  - NEU: "Was brennt" aus emergencyCases(), vorhandener reiner Helfer. Deckt
+ *    offene Probleme, kritische Fluege, Fahrten ohne Fahrer und nicht gestartete
+ *    Fahrer ab. KEINE neue Logik, kein zweiter Problembegriff.
+ *  - Toter Code aus Classic (freeCount: dort berechnet, nirgends benutzt)
+ *    bewusst NICHT mituebernommen.
+ *
+ * BYTE-GLEICH AUS OverviewTab UEBERNOMMEN: die 30s-Uhr, ln(), rides, activeNow,
+ * ref, soon, rep, anstehend. (openUnassigned haengt in Classic nur am Chip und
+ * faellt mit ihm weg.) "Offen" (rep.open) behaelt bewusst
+ * die Classic-Bedeutung, siehe UEBERGABE-Session-16 ("Offen" bedeutet an zwei
+ * Stellen Verschiedenes, nicht ungefragt vereinheitlichen).
+ *
+ * Rein praesentational: kein updateDyn/updateSetup, keine Status-, Zeit-,
+ * Zuteilungs- oder GPS-Logik. Liest nur und ruft dieselben Callbacks
+ * (onEdit/onAssign/setTab) wie Classic.
+ */
+function MissionOverviewTab({ setup, dyn, day, setTab, onEdit, onAssign }) {
+  const [, setTick] = useState(0);
+  useEffect(() => { const t = setInterval(() => setTick((x) => x + 1), 30000); return () => clearInterval(t); }, []);
+  const [ovRef, ovWidth] = useElementWidth();
+  const sideBySide = ovWidth >= 820; // gemessen statt Viewport-Breakpoint, wie Classic
+  const ln = (id, c) => setup.locations.find((l) => l.id === id)?.short || c || "—";
+  const now = dayNowMin(day);
+  const live = now >= 0 && now < 90000;
+
+  const rides = (dyn.rides || []).filter((r) => r.dayKey === day && r.status !== "cancelled");
+  const activeNow = rides.filter((r) => ["enroute_pickup", "onboard"].includes(r.status));
+  const ref = live ? now : Math.min(...rides.map((r) => sortMin(r.time)).concat([720]));
+  const soon = rides.filter((r) => r.status === "planned" && sortMin(r.time) >= ref && sortMin(r.time) <= ref + 60).sort((a, b) => sortMin(a.time) - sortMin(b.time));
+  const rep = dayReport(setup, dyn, day);
+  const anstehend = rides.filter((r) => r.status === "planned").length;
+  const emCases = emergencyCases(setup, dyn, day);
+
+  // Kachel = MetricCard im Button, damit der Sprung ins Fachtab erhalten bleibt
+  // (Classic hatte den auch, nur als eigene Stone-Kachel).
+  const Kpi = ({ label, value, icon, status, go }) => (
+    <button onClick={() => setTab(go)} className="text-left w-full">
+      <MetricCard label={label} value={value} icon={icon} status={status} />
+    </button>
+  );
+
+  const McList = ({ title, icon: I, items, empty, moreGo, renderItem }) => (
+    <MissionPanel padded={false}
+      header={(
+        <div className="flex items-center justify-between gap-2">
+          <span className="mc-eyebrow flex items-center gap-1.5">{I && <I className="w-3.5 h-3.5" />}{title}</span>
+          {moreGo && <button onClick={() => setTab(moreGo)} className="text-[11px]" style={{ color: "var(--mc-text-muted)" }}>alle</button>}
+        </div>
+      )}
+      bodyClassName="p-2 space-y-1 max-h-52 overflow-y-auto">
+      {items.length === 0
+        ? <div className="px-2 py-3 text-xs" style={{ color: "var(--mc-text-muted)" }}>{empty}</div>
+        : items.map(renderItem)}
+    </MissionPanel>
+  );
+
+  const Row = ({ onClick, children }) => (
+    <button onClick={onClick} className="w-full text-left flex items-center gap-1.5 text-xs rounded-lg px-2 py-1.5"
+      style={{ background: "var(--mc-inset)" }}>
+      {children}
+    </button>
+  );
+
+  return (
+    <div>
+      <div className="flex flex-wrap items-center gap-3 mb-4">
+        <h3 className="text-lg font-semibold flex items-center gap-2" style={{ color: "var(--mc-text)" }}>
+          <LayoutGrid className="w-5 h-5" style={{ color: "var(--mc-text-secondary)" }} />Mission Control
+        </h3>
+        <span className="text-xs" style={{ color: "var(--mc-text-muted)" }}>{fmtDate(day)}</span>
+        {live && (
+          <span className="flex items-center gap-1.5 text-xs" style={{ color: "var(--mc-text-secondary)" }}>
+            <span className="mc-live-dot" />live {fromMin(now)}
+          </span>
+        )}
+      </div>
+
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-4">
+        <Kpi label="Erledigt" value={rep.done} icon={CheckCircle2} status="done" go="board" />
+        <Kpi label="Offen" value={rep.open} icon={Navigation} status="assigned" go="board" />
+        <Kpi label="Anstehend" value={anstehend} icon={Clock} status="new" go="board" />
+        <Kpi label="Gesamt" value={rep.total} icon={Route} go="settings" />
+      </div>
+
+      <div ref={ovRef} className="grid gap-4" style={{ gridTemplateColumns: sideBySide ? "minmax(420px,1.7fr) minmax(260px,1fr)" : "1fr" }}>
+        {/* Live-Karte: bewusst die kompakte, kostenlose Schema-Ansicht.
+            Die grosse Karte mit Filtern/Simulation/Google liegt im map-Tab. */}
+        <div>
+          <BoardMiniMap setup={setup} dyn={dyn} day={day} SchematicComponent={MissionSchematicMap} onEdit={onEdit} />
+        </div>
+
+        <div className="space-y-3">
+          <McList title="Was brennt" icon={Siren} items={emCases} empty="alles ruhig"
+            moreGo="emergency"
+            renderItem={(c, i) => {
+              const CIcon = CASE_ICON[c.type] || AlertTriangle;
+              const drv = setup.drivers.find((d) => d.id === c.r.assignedDriverId);
+              return (
+                <Row key={`${c.r.id}-${c.type}-${i}`} onClick={() => (drv ? onEdit(c.r) : onAssign(c.r))}>
+                  <CIcon className="w-3.5 h-3.5 shrink-0" style={{ color: c.sev === "critical" ? "var(--mc-st-problem)" : "var(--mc-st-assigned)" }} />
+                  <span className="font-mono shrink-0" style={{ color: "var(--mc-text)" }}>{c.r.time}</span>
+                  <span className="truncate" style={{ color: "var(--mc-text-secondary)" }}>{c.r.djName || ln(c.r.toId, c.r.toCustom)}</span>
+                  <span className="ml-auto truncate max-w-[45%] text-[10px]" style={{ color: "var(--mc-text-muted)" }}>{c.label}</span>
+                </Row>
+              );
+            }} />
+
+          <McList title="Jetzt unterwegs" icon={Navigation} items={activeNow} empty="gerade niemand unterwegs"
+            renderItem={(r) => {
+              const drv = setup.drivers.find((d) => d.id === r.assignedDriverId);
+              return (
+                <Row key={r.id} onClick={() => onEdit(r)}>
+                  <span className="font-mono shrink-0" style={{ color: "var(--mc-text)" }}>{r.time}</span>
+                  <span className="truncate" style={{ color: "var(--mc-text-secondary)" }}>{ln(r.toId, r.toCustom)}</span>
+                  {drv && <span className="text-[9px] font-mono ml-auto shrink-0" style={{ color: "var(--mc-text-muted)" }}>{drv.vehicleType === "Van" ? "Van" : "Car"}</span>}
+                </Row>
+              );
+            }} />
+
+          <McList title="Naechste 60 Minuten" icon={Clock} items={soon} empty="nichts in der naechsten Stunde"
+            renderItem={(r) => {
+              const drv = setup.drivers.find((d) => d.id === r.assignedDriverId);
+              return (
+                <Row key={r.id} onClick={() => (drv ? onEdit(r) : onAssign(r))}>
+                  <span className="font-mono shrink-0" style={{ color: "var(--mc-text)" }}>{r.time}</span>
+                  <span className="truncate" style={{ color: "var(--mc-text-secondary)" }}>{ln(r.toId, r.toCustom)}</span>
+                  {flightDelayed(r) && <Plane className="w-3 h-3 shrink-0" style={{ color: "var(--mc-st-problem)" }} />}
+                  {!drv && <span className="text-[10px] ml-auto shrink-0" style={{ color: "var(--mc-st-assigned)" }}>zuteilen</span>}
+                </Row>
+              );
+            }} />
+        </div>
+      </div>
+    </div>
+  );
+}
+
 /* --------------------------- Tagesabschluss (Punkt 10) -------------------- */
 function ReportSection({ setup, dyn, day }) {
   const rep = dayReport(setup, dyn, day);
@@ -9826,7 +9975,7 @@ function MissionControl({ setup, dyn, session, updateDyn, updateSetup, onLogout,
             );
           })()}
 
-          {tab === "overview" && <OverviewTab setup={setup} dyn={dyn} day={day} setTab={setTab}
+          {tab === "overview" && <MissionOverviewTab setup={setup} dyn={dyn} day={day} setTab={setTab}
             onEdit={(r) => { setDay(r.dayKey); setEditRide(r); }} onAssign={(r) => setAssignRide(r)} />}
           {tab === "timeline" && <MissionTimelinePage setup={setup} dyn={dyn} day={day} updateDyn={updateDyn} by={meBy} onUndo={onUndo}
             onEdit={(r) => { setDay(r.dayKey); setEditRide(r); }} onAssign={(r) => setAssignRide(r)} />}
