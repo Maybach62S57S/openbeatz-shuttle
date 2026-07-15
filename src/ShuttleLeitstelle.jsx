@@ -8000,7 +8000,11 @@ function MissionControl({ setup, dyn, session, updateDyn, updateSetup, onLogout,
                         <span className="text-[10px] text-stone-500">{iss[0] && fmtClock(iss[0].at)}</span>
                         <span className={`text-[10px] px-1.5 py-0.5 rounded ${inProgress ? "bg-amber-500/20 text-amber-300" : "bg-red-500/20 text-red-300"}`}>{inProgress ? "in Bearbeitung" : "offen"}</span>
                         <div className="ml-auto flex items-center gap-1.5 shrink-0">
-                          <button onClick={() => setTab("emergency")} className="text-xs text-orange-300 hover:text-orange-200">Notfall</button>
+                          {/* setDay MUSS mit: der Banner ist taguebergreifend (7968, kein dayKey-Filter),
+                              der Probleme-Tab dagegen tagesgefiltert (emergencyCases, 5450). Ohne setDay
+                              landet man auf einem leeren Tab, wenn das Problem an einem anderen Tag haengt.
+                              Gleiches Muster wie "oeffnen" direkt darunter. */}
+                          <button onClick={() => { setDay(r.dayKey); setTab("emergency"); }} className="text-xs text-orange-300 hover:text-orange-200">Notfall</button>
                           <button onClick={() => { setDay(r.dayKey); setEditRide(r); }} className="text-xs text-stone-400 hover:text-stone-200">öffnen</button>
                           {!inProgress && <button onClick={() => setIssueState(r.id, "progress")} className="text-xs bg-amber-600/80 hover:bg-amber-600 text-white px-2 py-1 rounded">in Arbeit</button>}
                           <button onClick={() => setIssueState(r.id, "done")} className="text-xs bg-stone-800 hover:bg-stone-700 text-stone-200 px-2 py-1 rounded">erledigt</button>
