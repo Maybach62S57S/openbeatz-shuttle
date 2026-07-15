@@ -1326,7 +1326,12 @@ function ConnIssueBanner({ message, offline, reconnected }) {
   if (offline) {
     cls = "bg-amber-900/90 text-amber-100";
     Icon = WifiOff;
-    text = "Offline. Änderungen werden gerade nicht gespeichert, sobald die Verbindung zurück ist, geht es automatisch weiter.";
+    // Sagt bewusst NICHT "geht automatisch weiter". Es gibt keine Warteschlange
+    // (Session 24d nachgemessen: 0 Treffer fuer queue/outbox/pendingWrite), eine
+    // offline getippte Aenderung ist verloren und muss wiederholt werden. Der
+    // Abgleich-Banner unten darf "automatisch" sagen, dort stimmt es: das Polling
+    // liest wirklich von selbst weiter. Nur Schreiben wird nicht nachgeholt.
+    text = "Offline. Änderungen werden gerade nicht gespeichert und gehen verloren. Sobald die Verbindung zurück ist, bitte noch einmal tippen.";
   } else if (message) {
     cls = "bg-red-900/90 text-red-100";
     Icon = AlertTriangle;
@@ -2369,7 +2374,12 @@ function DriverApp({ setup, dyn, session, updateDyn, onLogout }) {
     busyRef.current = ride.id;
     setBusyRide(ride.id);
     try {
-      await Promise.all([arbeit(), new Promise((res) => setTimeout(res, STATUS_LOCK_MS))]);
+      // Ergebnis auswerten (Session 24d): updateDyn liefert seit jeher
+      // { ok, value, error }, advance/goBack haben es als einzige ignoriert.
+      // Ohne das tippt der Fahrer offline ins Leere, sieht "speichert…" und
+      // denkt, es sei gespeichert. Es gibt KEINE Warteschlange.
+      const [ergebnis] = await Promise.all([arbeit(), new Promise((fertig) => setTimeout(fertig, STATUS_LOCK_MS))]);
+      if (!ergebnis || !ergebnis.ok) notify(ergebnis?.error || "Nicht gespeichert. Bitte noch einmal tippen.");
     } finally {
       busyRef.current = null;
       setBusyRide(null);
@@ -2415,8 +2425,18 @@ function DriverApp({ setup, dyn, session, updateDyn, onLogout }) {
     }));
   };
 
-  const reportIssue = (ride, type, note) => {
-    updateDyn((d) => {
+  // Ergebnis auswerten (Session 24d). Das war der gefaehrlichste stille Fehler der
+  // App: der Fahrer meldet "Notfall", der Dialog schliesst sich, und ohne Netz kommt
+  // in der Leitstelle NIE etwas an, ohne dass es irgendwer merkt. Es gibt keine
+  // Warteschlange, die das nachholt.
+  // Der Dialog schliesst bewusst weiter SOFORT: IssueModal (3342) hat keinen
+  // Sende-Schutz, bliebe er bis zum Schreiben offen, waere ein zweiter Tipp eine
+  // zweite Meldung. Der Fahrer verliert im Fehlerfall seinen Text, erfaehrt es aber
+  // klar und kann neu melden. Wissen schlaegt Bequemlichkeit.
+  // triggerDispatcherPush geht jetzt nur noch bei Erfolg raus, vorher immer.
+  const reportIssue = async (ride, type, note) => {
+    setIssueFor(null);
+    const ergebnis = await updateDyn((d) => {
       const r = d.rides.find((x) => x.id === ride.id);
       if (r) {
         r.issues = r.issues || [];
@@ -2425,8 +2445,11 @@ function DriverApp({ setup, dyn, session, updateDyn, onLogout }) {
       }
       return d;
     });
+    if (!ergebnis || !ergebnis.ok) {
+      notify(ergebnis?.error || `Problem-Meldung "${type}" NICHT gesendet. Bitte noch einmal melden.`);
+      return;
+    }
     triggerDispatcherPush("Problem gemeldet", `${driver.firstName} ${driver.lastName[0]}. · ${type}`, `ride-${ride.id}`);
-    setIssueFor(null);
   };
 
   // Standort teilen — alle Fahrer haben zugestimmt, daher standardmäßig an;
