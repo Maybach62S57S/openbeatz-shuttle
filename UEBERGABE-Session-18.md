@@ -691,9 +691,14 @@ Dashboard, MissionControl, den sechs Forks, DriverApp/StageApp/GuestApp gegen
 
 ---
 
-# ⚠⚠ WARNUNG: DIE PLAN-REIHENFOLGE S22 -> S24 IST KAPUTT
+# ✅ ERLEDIGT IN SESSION 22: DIE KAPUTTE PLAN-REIHENFOLGE S22 -> S24
 
-**Das ist der wichtigste Punkt dieser Uebergabe. Vor Session 22 lesen.**
+> **Stand 15.07.2026: erledigt, Commit `1033d26` auf main.** Der Fallschirm
+> faellt nicht mehr auf Classic, `Dashboard` hat null Aufrufer. Der Abschnitt
+> bleibt als Begruendung stehen, warum die Reihenfolge getauscht wurde.
+> Details siehe "STAND SESSION 22" ganz unten.
+
+**Das war der wichtigste Punkt dieser Uebergabe.**
 
 Der Fallschirm laeuft heute so:
 1. MC stuerzt beim Rendern ab -> `MissionControlBoundary` (1255)
@@ -818,7 +823,183 @@ Rueckweg: `git revert ff05974 0859041`, Tag `stabil-classic-vorhanden-2026-07-15
 
 ---
 
-## Ready-to-paste Opener: naechste Session (Fallschirm umbauen)
+# STAND SESSION 22 (15.07.2026) — AUF MAIN, PRODUCTION
+
+`main` = `1033d26`, FF-Merge aus `fix/session-22-fallschirm` erledigt.
+`src/ShuttleLeitstelle.jsx`: **10322 Zeilen** (vorher 10298, +24, netto Kommentare).
+Bundle 783.0 -> 782.6 kb. esbuild gruen, Duplikat-Grep leer. Kein Schema-Re-Run offen.
+**Jordan hat Session 22 noch NICHT am Geraet getestet** (Session 21 ebenfalls nicht,
+deren Testfaelle stehen weiter offen).
+
+## Umgesetzt: Fallschirm-Umbau, Variante a
+
+Der Fallschirm faellt nicht mehr auf Classic, sondern zeigt eine Fehlerseite.
+
+| Stelle | vorher | nachher |
+|---|---|---|
+| Fallschirm-Zweig im App-Root | `<Dashboard .../>` + separater `mcFailReason`-Banner | `<MissionControlFallbackScreen reason={mcFailReason} />` |
+| `handleMcFallback` | `setUiMode("classic")` + `localStorage["obf:uiMode"]="classic"` + Sperre | nur noch `setMcBlocked` + `setMcFailReason` |
+| Boundary | `key={uiMode}` | kein key |
+| `MissionControlFallbackScreen` | "Zur klassischen Ansicht zurueckgewechselt", "Classic wird geladen…", Spinner | "Die Leitstelle hatte ein Problem", `reason`-Prop, **"Neu laden"-Knopf** |
+| `console.error` | "Rueckfall auf Classic" | "Fehlerseite statt Absturz" |
+
+`ConnIssueBanner` ist aus dem Fallschirm-Zweig raus: ueber einer Vollbild-Fehlerseite
+ohne Bedienelemente hat ein Netzwerk-Hinweis keinen Nutzen. Bewusst, nicht vergessen.
+
+`mcBlocked` und `mcFailReason` BLEIBEN. `mcBlocked` ist die Sperre auf App-Root-Ebene;
+ohne sie wuerde der naechste Poll-Re-Render (3 s) den abgestuerzten Baum erneut
+versuchen. Die Boundary allein reicht dafuer nicht.
+
+**Nicht angefasst:** Dashboard-Definition, die sechs Classic-Forks, `uiMode`-State,
+`setUiModeSafe`, `obf:uiMode`, die Prop `uiMode={uiMode}` an `MissionControl` (1157),
+DriverApp/StageApp/GuestApp, die Datenschicht.
+
+## Belege (esbuild war ausdruecklich nicht der Beweis)
+
+- **Render-Test in jsdom mit echtem React-Baum, 18/18.** Boundary, Fehlerseite,
+  State-Block und Fallschirm-Zweig wurden per Skript **wortwoertlich aus der Datei
+  extrahiert**, nicht nachgebaut. Gestubbt nur die Blaetter drumherum. Belegt:
+  Fehlerseite erscheint und bleibt stehen, kein Classic-Boden, Daten byte-identisch,
+  null `updateDyn`/`updateSetup`, null localStorage-Schreibzugriffe, Reload-Knopf
+  loest `reload()` aus, nach dem Reload laeuft MC wieder.
+- **Gegenprobe gegen `ff05974`:** derselbe Test faellt dort 9x durch und weist den
+  Schreibzugriff `["obf:uiMode","classic"]` nach. Der Test misst also wirklich.
+  (Die erste Testfassung hat diesen Punkt NICHT gemessen: `localStorage` wird im
+  Code ohne `window.`-Praefix gerufen, lief in jsdom gegen `globalThis` ins Leere,
+  und das `try/catch` hat es geschluckt. Wer den Test nachbaut: `globalThis.localStorage`
+  UND `dom.window.localStorage` setzen.)
+- **Kompilat:** `createElement(MissionControlBoundary, { onFallback: handleMcFallback },
+  createElement(MissionControl, {...}))`, kein key, `Dashboard` null Aufrufe,
+  `MissionControlFallbackScreen` bekommt `reason`.
+- **Echtes throw** in `MissionControl` eingebaut, im Kompilat als Kind der Boundary
+  nachgewiesen, wieder entfernt, md5 der Datei identisch. **esbuild hat das throw zu
+  keinem Zeitpunkt gemeldet** — der Punkt aus der Warnung, praktisch bestaetigt.
+- **Icons:** 42 importiert, Liste unveraendert, keines neu tot.
+  **Top-Level-Bezeichner:** genau einer neu ohne Aufrufer, `Dashboard`, beabsichtigt.
+
+Der jsdom-Test liegt NICHT im Repo (`jsdom` ist keine Projekt-Dependency, "keine
+neuen Libraries"). Er wurde mit `npm install --no-save jsdom` gefahren und danach
+entfernt. Bei Bedarf als devDependency wieder aufbauen.
+
+## Offene Testfaelle Session 22 (Jordan, am Geraet)
+
+1. [ ] MC oeffnet normal, Oberflaeche unveraendert.
+2. [ ] Absturz erzwingen (Wegwerf-Branch mit `throw` in `MissionControl`):
+       Fehlerseite mit Logo, "Die Leitstelle hatte ein Problem", Meldungstext,
+       "Deine Daten sind unveraendert", **"Neu laden"-Knopf**. Kein weisser
+       Bildschirm, **kein Classic-Dashboard**.
+3. [ ] "Neu laden" druecken -> MC ist wieder da.
+4. [ ] Nach dem Absturz eine Fahrt pruefen: Status, Zuteilung, Protokoll unveraendert.
+5. [ ] Konsole nach einem Absturz: `localStorage.getItem("obf:uiMode")` darf **nicht**
+       auf `"classic"` gesprungen sein.
+6. [ ] Fahrer-, Stage-, Gast-Login unveraendert.
+7. [ ] Die offenen Testfaelle aus Session 21 stehen weiter aus, besonders Nr. 4
+       (Karte-Tab Schema/Google umschalten).
+
+Rueckweg: `git revert 1033d26`, Tag `stabil-classic-vorhanden-2026-07-15` = `f7bb75d`,
+Tag `stabil-vor-design-2026-07-13` = `4d13e59`, oder Vercel -> Promote to Production.
+
+## AKTUELLE ANKER FUER SESSION 23 (Dashboard raus), Stand `1033d26`
+
+- `Dashboard` **3615 bis 4071 (457 Zeilen)**, **null Aufrufer** (der Fallschirm ist
+  weg). Loeschen ist damit gefahrlos, das war vorher nicht so.
+- `Dashboard` ist weiterhin der einzige Aufrufer aller sechs Classic-Forks:
+  `OverviewTab` 3962, `TimelinePage` 3964, `ReturnsTab` 3966, `EmergencyTab` 3969,
+  `MessagesInbox` 3971, `DriversTab` 3974. Definitionen: `DriversTab` 4566,
+  `MessagesInbox` 5238, `ReturnsTab` 5597, `EmergencyTab` 6331, `OverviewTab` 6683,
+  `TimelinePage` 7031. Nach dem Dashboard-Ausbau alle sechs verwaist, aber harmlos
+  (Session 24).
+- uiMode-Kette: `uiMode` 755, `setUiModeSafe` 759 (kein Aufrufer), `obf:uiMode`
+  756/762, Prop `uiMode={uiMode}` an `MissionControl` 1157. **Seit Session 22
+  schreibt niemand mehr `uiMode`**, der State ist konstant `"classic"` oder
+  `"mission-control"` je nach altem localStorage-Wert und steuert nichts mehr.
+- Umschalter "Oberflaeche" im Dashboard-Kopf: faellt mit dem Dashboard weg.
+
+## BEANTWORTET: die offene Kpi-Frage aus der Session-25-Liste
+
+Die Uebergabe fragte, ob die MC-Stelle das globale `Kpi` oder ein lokales meint.
+**Gemessen, Antwort: das lokale.**
+
+- Globales `Kpi`: Definition **4073**, Signatur `{ label, value, tone }`.
+  Aufrufer ausschliesslich `Dashboard` 3795 bis 3798. **Nach Session 23 tot.**
+- Lokales `Kpi` in `MissionOverviewTab` (6836 bis 6955): **Zeile 6855**, ein
+  `const Kpi = ({ label, value, icon, status, go }) => ...`, das `MetricCard`
+  rendert. Es beschattet das globale innerhalb der Komponente. Die Aufrufe
+  6898 bis 6901 meinen dieses lokale (erkennbar an den Props `icon`/`status`/`go`,
+  die das globale gar nicht kennt). **Bleibt.**
+- **Achtung fuer den, der es sucht:** das lokale ist ein `const`, kein `function`.
+  Ein Grep auf `^function Kpi` findet es NICHT und legt den Fehlschluss nahe, es
+  gebe nur eines.
+
+## Weitere gefundene Punkte fuer spaetere Sessions (aus Session 22)
+
+- `dynToRpcParams` hat **keinen Aufrufer, schon auf `ff05974`**. Nicht von Session 22
+  verursacht. Gehoert zu `tsToDayMin` (1737), `IconButton`, `ErrorState` in die
+  Session-25-Liste, die kannte es nicht.
+- Zeile 9395: Kommentar im MC-Kopf verweist noch auf `key={uiMode}`, den es seit
+  Session 22 nicht mehr gibt. Kosmetik, ausserhalb des Pakets gelassen, faellt mit
+  dem uiMode-Ausbau in Session 23.
+- Alle Punkte aus den Sessions 19 und 21 sind unveraendert offen (Chat-FAB ueberlappt
+  die MC-Handy-Leiste, "Was brennt" widerspricht dem Kopf-Banner, `favicon.ico` 404,
+  `onSwitchToMobile` in der `MissionControl`-Signatur). Ebenso die fuenf geparkten
+  Stabilitaetsbefunde aus Session 18.
+
+---
+
+## Ready-to-paste Opener: Session 23 (Dashboard + uiMode raus)
+
+```
+Erst PROJEKT-ANWEISUNGEN.md lesen, dann Repo holen. Repo:
+Maybach62S57S/openbeatz-shuttle. PAT setze ich hier ein: <PAT>
+Nach dem Klonen: git config (user.name/email), npm ci, Baseline-esbuild gruen:
+./node_modules/.bin/esbuild src/ShuttleLeitstelle.jsx --bundle=false --format=esm --outfile=/tmp/x.js
+
+STAND: main = 1033d26, 10322 Zeilen. Session 22 (Fallschirm umgebaut) ist
+gemerged und auf Production, von mir aber noch NICHT am Geraet getestet.
+Session 21 ebenfalls noch nicht. Rueckwege: git revert 1033d26, Tag
+stabil-classic-vorhanden-2026-07-15 = f7bb75d, Tag
+stabil-vor-design-2026-07-13 = 4d13e59. Vercel: altes Deployment per
+Promote to Production zurueckholen.
+
+Danach UEBERGABE-Session-18.md lesen, KOMPLETT, inklusive Nachtrag und der
+Abschnitte "STAND SESSION 19", "STAND SESSION 21" und "STAND SESSION 22".
+Die Anker im Abschnitt "AKTUELLE ANKER FUER SESSION 23" sind auf 1033d26,
+alle weiter oben in der Datei sind aelter. Per grep gegenpruefen.
+
+ENTSCHEIDUNG STEHT: Mission Control ist die einzige Leitstellen-Oberflaeche,
+Classic wird geloescht, nicht erhalten. Nicht neu verhandeln. Classic-Schutz
+ist hinfaellig. Weiter tabu: DriverApp/StageApp/GuestApp (Stage read-only),
+die Datenschicht, das dyn_data/RPC-Thema.
+
+AUFTRAG: Dashboard raus. Der Fallschirm ist seit Session 22 umgebaut,
+Dashboard hat null Aufrufer, Loeschen ist damit gefahrlos.
+- Dashboard (3615 bis 4071, 457 Zeilen) loeschen.
+- uiMode-State (755), setUiModeSafe (759), localStorage "obf:uiMode" (756/762)
+  und die Prop uiMode={uiMode} an MissionControl (1157) raus. Achtung: die
+  Prop haengt in der MissionControl-Signatur (9226), dort mit weg.
+- Das globale Kpi (4073) wird danach tot. Das LOKALE const Kpi in
+  MissionOverviewTab (6855) bleibt, es ist ein anderes. Nicht verwechseln,
+  Beleg steht in der Uebergabe.
+- Die sechs Classic-Forks in DIESER Session NICHT loeschen, sie sind danach
+  verwaist, aber harmlos. Das ist Session 24.
+- Fallschirm (MissionControlBoundary/handleMcFallback/mcBlocked/mcFailReason/
+  MissionControlFallbackScreen) NICHT anfassen, der ist frisch umgebaut.
+
+Branch: fix/session-23-dashboard-raus von main. Nach meinem OK FF-Merge auf main.
+
+Zum Schluss: Diff-Beleg, Regressionsrisiken, konkrete manuelle Testfaelle.
+esbuild ist kein Beweis: jede Referenz und jedes Icon einzeln gegenpruefen,
+Kompilat gegenpruefen, Pruefsummen der nicht angefassten Komponenten gegen
+den Vorstand vergleichen. Commit ueber /tmp/msg.txt. Sprache Deutsch,
+informell, keine Gedankenstriche, korrekte Umlaute. Warn mich rechtzeitig,
+wenn der Chat zu lang wird.
+
+STICHTAG: ab 21.07. wird nichts mehr geloescht (Festival 23. bis 27.07.).
+```
+
+---
+
+## Ready-to-paste Opener: Session 22 (erledigt, Historie)
 
 ```
 Erst PROJEKT-ANWEISUNGEN.md lesen, dann Repo holen. Repo:
