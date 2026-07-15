@@ -1637,3 +1637,74 @@ nicht ungefragt vereinheitlichen"). **Nach dem Festival, mit Kopf.**
   404, die MC-Kommentarkoepfe verweisen auf geloeschte Forks, 7712/7715,
   `onSetUiMode`/`onSwitchToMobile` in der `MissionControl`-Signatur, die fuenf
   geparkten Stabilitaetsbefunde aus Session 18, Session 25 (Totholz).
+
+---
+
+# KORREKTUR (16.07.2026): "Chat-FAB ueberlappt die MC-Handy-Leiste" ist FALSCH diagnostiziert
+
+Diese Notiz steht seit Session 19 in der Liste und wurde durch S21, S22 und S23
+unveraendert weitergereicht. **Sie stimmt nicht.** Kein Code geaendert, nur
+gemessen.
+
+## Was die Notiz behauptet
+
+> "Der Chat-FAB ist `fixed right-5 z-50 w-12 h-12 rounded-full bg-orange-600`,
+> die MC-Handy-Leiste ist `md:hidden fixed bottom-0 ... z-30`. Der Knopf liegt
+> also darueber. Ihm fehlt auf schmalen Bildschirmen ein Abstand nach unten,
+> der die Leiste freihaelt."
+
+## Was tatsaechlich im Code steht
+
+**Der Abstand existiert, seit es die Leiste gibt.** Beides kam im selben Commit
+`717d363` ("Session 5 / Slice 5.3: Mobile-Nav im MissionControl-Shell").
+
+| Stelle | Inhalt |
+|---|---|
+| `ChatPanel` **3544** | `style={{ bottom: \`calc(1.25rem + ${liftOffset \|\| "0px"})\` }}` |
+| `MissionControl` **8334** | `<ChatPanel ... liftOffset="var(--mc-fab-lift)" />` |
+| `MissionStyles` **8496** | `--mc-fab-lift: calc(56px + env(safe-area-inset-bottom));` |
+| `MissionStyles` **8654** | `@media (min-width: 768px) { .mc-scope { --mc-fab-lift: 0px; } }` |
+| `MissionControl` Wurzel **7841** | `<div className="mc-scope min-h-screen">` — `ChatPanel` (8334) haengt DRIN, die CSS-Variable vererbt sich also |
+
+Die Leiste ist 56px hoch (+ safe-area). Der FAB sitzt bei
+`1.25rem + 56px + safe-area`, also **rund 20px UEBER der Leiste**. Ab 768px
+faellt der Lift auf 0, weil es dort keine Leiste gibt.
+
+**Warum die Notiz danebenlag:** ihr Autor hat den `className` gelesen und den
+`bottom`-Wert im `style`-Attribut (3544) uebersehen. Ein Grep auf den className
+findet den Abstand nicht.
+
+## Was Jordan am iPhone wirklich gesehen hat
+
+Der FAB ist `fixed` und liegt damit ueber dem, was gerade an dieser
+Bildschirmposition steht. Auf dem Board ist das der Zeit-Schieber der
+`BoardMiniMap` (**6815**):
+
+- Der Schieber rendert **nur bei `!isToday`** (6812). Jordan war auf Di 21.07.,
+  deshalb war er ueberhaupt da. An "heute" gibt es ihn nicht.
+- Weder `BoardMiniMap` noch `MapTab` haben irgendetwas `sticky` oder `fixed`
+  (geprueft ueber beide Komponenten). Die Karte scrollt mit, der Kommentar bei
+  8144 sagt das auch woertlich ("mitscrollend").
+- Der Schieber ist `flex-1` und reicht bis an den rechten Kartenrand, der FAB
+  deckt dessen letzte ~48px ab, WENN die Karte gerade auf FAB-Hoehe steht.
+
+**Also: einmal scrollen und der Schieber ist frei.** Aergerlich, kein Blocker,
+und nur an Nicht-heute-Tagen ueberhaupt sichtbar.
+
+## Empfehlung: NICHT anfassen, schon gar nicht vor dem Festival
+
+Der behauptete Defekt existiert nicht. Was bleibt, ist das generische Verhalten
+eines schwebenden Knopfes ueber mitscrollendem Inhalt. Jeder "Fix" dafuer
+(Karte rechts einruecken, FAB verschieben) ist Design-Arbeit ohne Testabdeckung
+an `BoardMiniMap`, die an drei MC-Stellen haengt. Prioritaet 1 ist Stabilitaet.
+
+**Nach dem Festival**, falls es Jordan dann noch stoert: der ehrlichere Weg
+waere, dem Board auf schmal unten rechts Platz freizuhalten, nicht am FAB zu
+drehen.
+
+## Konsequenz fuer die offene Liste
+
+Der Punkt "Chat-FAB ueberlappt die MC-Handy-Leiste" ist **erledigt/hinfaellig**
+und faellt aus der Liste der offenen Punkte. Ersetzt durch: "FAB liegt auf
+schmal ueber dem mitscrollenden BoardMiniMap-Schieber (nur !isToday),
+Kosmetik, nach dem Festival."
