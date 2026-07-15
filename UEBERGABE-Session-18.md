@@ -2,6 +2,11 @@
 
 Ersetzt UEBERGABE-Session-17.md.
 
+> **NACHTRAG Session 19 weiter unten beachten** (Abschnitt
+> "NACHTRAG (15.07.2026, aus Session 19)", direkt vor der Testliste). Er
+> korrigiert die Aufwandsschaetzung fuer den Zustand NACH dem Classic-Ausbau
+> und nimmt einen Umbau aus dem Plan, der nicht noetig ist.
+
 ## Stand
 
 - `main` (Production) = `f7bb75d`. Merge aus Session 18 erledigt, Fast-Forward.
@@ -251,6 +256,201 @@ aber die Konstruktion ist scharf.
 Retry-Schleife (1000/1075) ohne Backoff, 6 Versuche so schnell wie das Netz
 hergibt. `last = result.value` (1014) wird nie benutzt, der naechste Durchlauf
 macht wieder ein `sget` -> ein Roundtrip zu viel pro Kollision.
+
+---
+
+# NACHTRAG (15.07.2026, aus Session 19)
+
+Zwei Teile. **Teil A ist Jordans Text, wortgleich uebernommen.** **Teil B ist
+mein Messergebnis dazu**, klar getrennt, damit erkennbar bleibt, was
+Entscheidung ist und was Befund.
+
+## Teil A: Jordans Nachtrag (unveraendert)
+
+```
+1. GETEILTE KOMPONENTEN: KEIN UMBAU NOETIG.
+Die in der Uebergabe als "geteilt, nicht mitloeschen" gelisteten Komponenten
+werden automatisch MC-only, sobald der Classic-Aufrufer weg ist. Kein
+Umbau, keine eigene Session. Geprueft per Aufrufstellen-Zuordnung:
+- DriverRow: Dashboard + MissionControl -> danach MC-only
+- BoardMiniMap: Dashboard/ReturnsTab/OverviewTab + MissionReturnsTab/
+  MissionOverviewTab/MissionControl -> danach MC-only
+- TimelineView: ReturnsTab/OverviewTab + MissionReturnsTab/MapTab -> MC-only
+- NoGpsSharingPanel + LiveGoogleMap: MobileMapPane + MapTab -> MC-only
+- MapTab/FlightTab/SettingsTab: Dashboard + MissionControl -> MC-only
+Die Warnung in der Uebergabe heisst NUR "nicht zusammen mit Classic loeschen",
+nicht "muss umgebaut werden".
+
+2. AUSNAHME, WICHTIG: StatusPill (2527) und StepProgress (2483) haengen in
+DriverApp, nicht in Classic. MC nutzt sie gar nicht (MC hat StatusBadge).
+Sie koennen nicht "auf MC umgebaut" werden und bleiben beim Fahrer.
+Fahrer ist tabu.
+
+3. NEUE SESSION 27 (nach dem Loeschen, vor Session 26/Stabilitaet einsortieren
+oder danach, Jordan entscheidet): FlightTab, MapTab und SettingsTab sind heute
+WOERTLICH derselbe Code in Classic und MC. Damit sehen drei von zehn Tabs
+innerhalb von Mission Control aus wie Classic. Sie wurden nie auf das
+MC-Design gezogen, weil jede Aenderung daran Classic getroffen haette.
+Sobald Classic raus ist, faellt dieser Grund weg -> die drei Tabs koennen
+MC-Design bekommen. Das ist der eigentliche Gewinn des Classic-Ausbaus,
+nicht die 1900 Zeilen.
+Wenn Jordan sagt "in MC sieht was komisch aus": mit hoher Wahrscheinlichkeit
+sind es genau diese drei Tabs.
+
+4. Umbenennen der MC-Forks (MissionOverviewTab -> OverviewTab usw.) ist
+kosmetisches Refactoring -> Jordans eigene Regel, NACH dem Festival.
+```
+
+## Teil B: gegengeprueft am Code (Session 19, Stand f205861)
+
+Aufrufstellen automatisch ihren Eltern-Komponenten zugeordnet, nicht per Auge.
+
+### Punkt 1: BESTAETIGT, exakt
+
+| Komponente | Aufrufer heute | Nach Classic-Ausbau |
+|---|---|---|
+| `DriverRow` | Dashboard(3943), MissionControl(9990) | MissionControl |
+| `BoardMiniMap` | Dashboard(3952), ReturnsTab(6181), OverviewTab(7097), MissionReturnsTab(6471), MissionOverviewTab(7253), MissionControl(9999) | 3 MC-Stellen |
+| `TimelineView` | ReturnsTab(6186), OverviewTab(7141), MissionReturnsTab(6477), MapTab(9015) | MissionReturnsTab, MapTab |
+| `NoGpsSharingPanel` | MobileMapPane(4412), MapTab(8977) | MapTab |
+| `LiveGoogleMap` | MobileMapPane(4399), MapTab(8963) | MapTab |
+| `MapTab` | Dashboard(3971), MissionControl(10018) | MissionControl |
+| `FlightTab` | Dashboard(3970), MissionControl(10017) | MissionControl |
+| `SettingsTab` | Dashboard(3973), MissionControl(10020) | MissionControl |
+
+Keine dieser Komponenten wird durch den Ausbau tot, keine braucht einen Umbau.
+**Zeilennummern sind der Stand NACH Session 19** (`f205861`), nicht `f7bb75d`.
+Offset gegenueber den Tabellen weiter oben: **+20 Zeilen** ab ca. Zeile 1200,
+**+29** ab ca. Zeile 9740.
+
+### Punkt 2: BESTAETIGT
+
+`StatusPill`: DriverApp(2547), Dashboard(3912), ReturnsTab(6038) -> danach nur
+DriverApp. `StepProgress`: nur DriverApp(2503). MC nutzt `StatusBadge`
+(Definition 10543, MC-Nutzung u. a. 9953). Fahrer bleibt tabu.
+
+### Punkt 3: in der Sache richtig, im Umfang deutlich zu klein
+
+Gemessen wurde jede geteilte Komponente, die MC nach dem Ausbau weiter rendert,
+auf `var(--mc-*)` (MC-Design) gegen `stone-*` (Classic-Palette):
+
+| Komponente | Zeilen | `var(--mc-*)` | `stone-*` | Optik |
+|---|---|---|---|---|
+| `SettingsTab` | 303 | 0 | 67 | Classic |
+| `RideForm` | 290 | 0 | 9 | Classic |
+| `FlightTab` | 166 | 0 | 29 | Classic |
+| `LiveGoogleMap` | 135 | 0 | 3 | Classic |
+| `MapTab` | 129 | 0 | 32 | Classic |
+| `AssignModal` | 114 | 0 | 23 | Classic |
+| `ChatPanel` | 106 | 0 | 22 | Classic |
+| `TimelineView` | 81 | 0 | 12 | Classic |
+| `BoardMiniMap` | 58 | 0 | 11 | Classic |
+| `WhatsAppModal` | 34 | 0 | 6 | Classic |
+| `NoGpsSharingPanel` | 28 | 0 | 3 | Classic |
+| `DriverRow` | 27 | 0 | 7 | Classic |
+| **Summe** | **1471** | **0** | | |
+
+**Kein einziges geteiltes Stueck hat MC-Design.** Es sind also nicht drei Tabs,
+sondern ~1470 Zeilen ueber zwoelf Komponenten. Besonders relevant: `RideForm`
+(Bearbeiten-Dialog) und `AssignModal` (Zuteilen) sind die zwei Sachen, die im
+Betrieb am haeufigsten aufgehen, und beide sind Classic-Optik mitten in MC.
+
+Das aendert **nichts an der Richtungsentscheidung**. Es aendert die
+Aufwandsschaetzung fuer Session 27: das ist kein Drei-Tab-Job und passt nicht in
+eine Session. Vorschlag fuer die Aufteilung, wenn es soweit ist:
+- 27a: `RideForm` + `AssignModal` + `WhatsAppModal` (die Modals, groesster
+  spuerbarer Effekt)
+- 27b: `SettingsTab` (303 Zeilen, alleine)
+- 27c: `FlightTab` + `MapTab` + die Karten-Helfer
+- 27d: die kleinen (`TimelineView`, `BoardMiniMap`, `DriverRow`,
+  `NoGpsSharingPanel`)
+
+**Alles davon ist nach dem Festival.** Es ist reines Design, kein
+Stabilitaetsthema, und faellt damit unter Jordans eigene Regel "keine
+kosmetischen Refactorings".
+
+### Zwei Praezisierungen zu Punkt 3
+
+- `FlightTab` und `SettingsTab` bekommen von Dashboard und MissionControl
+  **wortwoertlich identische Props**. Da stimmt "1:1" exakt.
+- `MapTab` **nicht**: MC uebergibt zusaetzlich
+  `SchematicComponent={MissionSchematicMap}` und `glideMarkers`, Classic nicht.
+  Die Karte darin ist also schon MC, nur der Rahmen drumherum ist Classic.
+  Wer das spaeter umbaut, darf `MapTab` nicht als "identisch" behandeln.
+
+### Punkt 4: BESTAETIGT, keine Anmerkung
+
+---
+
+# STAND SESSION 19 (15.07.2026)
+
+Branch `fix/session-19-mc-only`, Code-Commit `f205861`. **Noch nicht auf main**,
+wartet auf Jordans Testfreigabe, danach FF-Merge.
+
+Umgesetzt, genau der Auftrag, nichts geloescht:
+1. `if (useMobileView)` -> `MobileDispatcherView` entfaellt fuer die Dispo-Rolle.
+   MC laeuft jetzt auch auf dem Handy.
+2. `uiMode`-Weiche entfaellt. Gate ist nur noch `if (!mcBlocked)`.
+3. Umschalter "Oberflaeche" ausgeblendet via `onSetUiMode={null}` in beiden
+   Kopfzeilen. Dafuer musste der "Zu Classic"-Knopf im MC-Kopf konditional
+   gemacht werden (`{onSetUiMode && (...)}`, gleiches Muster wie Dashboard 3762)
+   - er war als einziger nicht konditional und haette sonst ueber `key={uiMode}`
+   den MC-Baum remountet, also Tag/Tab/Filter zurueckgesetzt, ohne etwas zu
+   wechseln.
+4. Tote Knoepfe ausgeblendet: `onSwitchToMobile={null}` in beiden Zweigen,
+   "Handy-Ansicht"-Notausstieg im Classic-Zweig auskommentiert (Original im
+   Kommentar erhalten, faellt in Session 21 mit `viewOverride` weg).
+
+**Fallschirm unveraendert, byte-fuer-byte:** `MissionControlBoundary`,
+`handleMcFallback`, `setUiModeSafe`, `uiMode`-State. MC-Absturz -> `mcBlocked`
+= true -> Classic-Dashboard faengt auf. Reload gibt MC wieder frei.
+
+Fahrer/Stage/Gast/Login: unveraendert, eigene Zweige davor.
+
+Belegt durch: esbuild gruen, Duplikat-Grep leer, **Kompilat** gegengeprueft
+(`MobileDispatcherView` und beide alten Weichen sind aus dem App-Root raus),
+Import-Liste unveraendert, Routing-Test 37/37.
+
+Datei: 10638 -> **10667 Zeilen** (Zuwachs = Kommentar + auskommentiertes
+Original).
+
+## RAUCHTEST SESSION 19 (vor dem Merge, ca. 10 Min, auf dem Branch-Preview)
+
+Nicht die grosse Testliste, nur: hat das Routing-Umlegen funktioniert.
+
+- [ ] Laptop, Dispo-Login -> MC oeffnet sofort. Kein "Oberflaeche"-Umschalter,
+      kein "Zu Classic", kein Handy-Icon im Kopf.
+- [ ] Konsole `localStorage.setItem("obf:uiMode","classic")` + F5 -> trotzdem MC.
+- [ ] Konsole `localStorage.setItem("obf:viewMode","mobile")` + F5 -> trotzdem
+      MC, nicht die alte Mobil-Ansicht.
+- [ ] iPhone, Dispo-Login -> MC oeffnet. **Der eigentliche Risikopunkt:** MC war
+      nie fuer schmale Bildschirme gebaut.
+- [ ] Fahrer-Login -> unveraendert. Stage-Login -> unveraendert. Gast-Link ->
+      unveraendert.
+
+## Rueckweg-Zeile
+
+| Wohin | Ref | Commit |
+|---|---|---|
+| Stand mit erreichbarem Classic | `stabil-classic-vorhanden-2026-07-15` = `backup/classic-vorhanden` | `f7bb75d` |
+| Session 19 zuruecknehmen | `git revert f205861` | |
+
+## Weitere gefundene Punkte fuer spaetere Sessions (aus Session 19)
+
+- `setUiModeSafe` (766) hat keinen Aufrufer mehr. Nur `handleMcFallback`
+  schreibt `uiMode` noch (direkt ueber `setUiMode`). Faellt in Session 22 weg.
+- `useMobileView` (755) hat keinen Aufrufer mehr; `viewOverride`/`isNarrow`/
+  `setViewMode` haengen nur noch aneinander. Session 21.
+- `key={uiMode}` an der Boundary (1150) ist faktisch konstant, weil `uiMode`
+  sich nur noch bei `handleMcFallback` aendert und MC dann nicht mehr rendert.
+  Bewusst nicht angefasst.
+- Kommentare bei 4974, 8495, 9563 behaupten noch "gated ueber uiMode" bzw.
+  "nach der useMobileView-Pruefung". Stimmt seit `f205861` nicht mehr.
+  Kosmetik, bewusst stehen gelassen.
+- **Neu und relevant:** der Fallschirm landet auf dem Handy jetzt im
+  Classic-**Desktop**-Dashboard, nicht mehr in der Mobil-Ansicht. Stuerzt MC
+  unterwegs ab, liegt eine Desktop-Oberflaeche auf 390 px. Daten sicher, Reload
+  hilft. Faellt mit Session 24 (Fallschirm umbauen) ohnehin weg.
 
 ---
 
