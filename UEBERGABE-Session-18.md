@@ -1708,3 +1708,142 @@ Der Punkt "Chat-FAB ueberlappt die MC-Handy-Leiste" ist **erledigt/hinfaellig**
 und faellt aus der Liste der offenen Punkte. Ersetzt durch: "FAB liegt auf
 schmal ueber dem mitscrollenden BoardMiniMap-Schieber (nur !isToday),
 Kosmetik, nach dem Festival."
+
+---
+
+# STAND SESSION 24c/24d (16.07.2026): AUF MAIN, PRODUCTION
+
+`main` = `a38d118`, FF-Merge aus `fix/session-24c-status-race`.
+Code-Commits: `a4e302d` (from-Waechter), `a7e12c1` (Doppeltipp-Sperre),
+`a38d118` (Offline-Ehrlichkeit). 8883 Zeilen. esbuild gruen, Duplikat-Grep leer.
+Kein Schema-Re-Run offen.
+
+**Bewusst VOR dem Wochenende gemergt**, obwohl ungetestet: Jordan testet Sa/So
+18./19.07. mit mehreren Fahrern. Der Test muss das treffen, was am Festival
+laeuft, sonst testen die Fahrer einen Stand, der danach ersetzt wird.
+Stichtag 21.07., also zwei Tage Puffer. Rueckweg: Vercel -> altes Deployment ->
+Promote to Production.
+
+## Erledigt: zwei der fuenf geparkten Stabilitaetsbefunde aus Session 18
+
+**Befund 1 (Statuswechsel-Race), zwei Mechanismen, sie decken VERSCHIEDENE Loecher:**
+
+1. `from`-Waechter in `advance`/`goBack`: der Zielstatus wurde aus dem
+   GERENDERTEN Prop berechnet und blind auf das FRISCHE `r` angewendet. Jetzt
+   `if (!r || r.status !== from) return d`. Muster wie die Zuteilungs-Handler.
+   Deckt Fall B (Leitstelle setzt zurueck) und D (zwei Tabs): andere
+   JS-Kontexte, dort hilft keine lokale Sperre.
+2. `STATUS_LOCK_MS = 500` + `mitSperre()`: `busyRef` (Ref, greift im selben Tick)
+   + `busyRide` (State, nur Anzeige). Alle vier Statusknoepfe `disabled`, der
+   gedrueckte zeigt "speichert…". Deckt den Doppeltipp im EIGENEN Browser.
+
+**JORDANS EINWAND WAR RICHTIG, das ist die Lehre dieser Session:** der
+`from`-Waechter allein schuetzt nur, SOLANGE der Schreibzyklus laeuft. Danach
+hat React neu gezeichnet, der zweite Tipp liest den neuen Status und laeuft
+legitim weiter. Gemessen: ab ~400 ms Tippabstand zwei Stufen, und **je
+schneller das Netz, desto kleiner das Schutzfenster**. Bei 20 ms Latenz rutscht
+schon ein 150-ms-Doppeltipp durch. Mein erster Node-Test hat das NICHT gesehen,
+weil er fuer beide Tipps denselben eingefrorenen Prop benutzt hat, also nur den
+Fall "keine Neuzeichnung dazwischen" modellierte. **Wer Races testet, muss die
+Zeit mitmodellieren, sonst misst er die Haelfte.**
+
+**WICHTIG, aus Jordans Screenshot (16.07.):** `nextRide` (2466) wird aus der
+Liste NICHT herausgefiltert, `rides.map(...)` rendert alles. Dieselbe Fahrt hat
+damit ZWEI aktive Statusknoepfe auf einem Bildschirm (Hero-Karte + Liste). Das
+ist der realistischere Doppeltipp: oben tippen, scheinbar passiert nichts,
+unten nochmal tippen. `busyRef` deckt es ab, weil beide in derselben `DriverApp`
+haengen und sich die Sperre teilen.
+
+**Befund 2 (Offline-Falschaussage):**
+- `ConnIssueBanner` (1329) versprach "geht automatisch weiter". Es gibt KEINE
+  Warteschlange (0 Treffer queue/outbox/pendingWrite). Text sagt jetzt die
+  Wahrheit. Der Abgleich-Banner (1333) darf "automatisch" sagen, dort stimmt es:
+  das Polling LIEST von selbst weiter, nur Schreiben wird nicht nachgeholt.
+- `mitSperre` wertet das `updateDyn`-Ergebnis aus (`{ok,value,error}` gab es
+  immer, `advance`/`goBack` haben es als einzige ignoriert) -> `notify()`.
+- `reportIssue`: der gefaehrlichste stille Fehler. Fahrer meldet "Notfall",
+  Dialog schliesst, ohne Netz kam NIE etwas an. Jetzt Toast. Und
+  `triggerDispatcherPush` geht nur noch bei ERFOLG raus, vorher immer (man
+  konnte also eine Push-Meldung ueber ein Problem bekommen, das nicht in den
+  Daten steht).
+- Dialog schliesst bewusst weiter SOFORT: `IssueModal` (3342) hat keinen
+  Sende-Schutz, bliebe er offen, waere ein zweiter Tipp eine zweite Meldung.
+  Preis: der Fahrer verliert im Fehlerfall seinen Text, erfaehrt es aber klar.
+
+**NICHT angefasst:** `isOffline` in `updateDyn`/`updateSetup` (Datenschicht,
+tabu), eine echte Warteschlange (Neuentwicklung), die ALLOWED_NEXT-Tabelle aus
+der Uebergabe (haette `setRideStatus` und alle 17 Aufrufstellen getroffen, zu
+grosser Radius vor dem Festival -> Session 26), `setRideStatus`,
+`STATUS_FLOW`/`STATUS_PREV`, Leitstelle, StageApp/GuestApp (0 Treffer im Diff).
+
+## Belege
+
+- Race A bis D: ALT 4 von 4 kaputt, NEU 4 von 4 korrekt. Reproduziert die
+  Uebergabe exakt, inkl. B = `["onboard","planned","done"]`.
+- Doppeltipp ueber Latenz 20/150/600 ms: Abstand 0 bis 400 ms IMMER eine Stufe,
+  bei allen drei Latenzen identisch (vorher latenzabhaengig). Ab 700 ms zwei
+  Stufen, gewollt: zweite Entscheidung auf neu beschriftetem Knopf.
+- Normale Ablaeufe 7 von 7, Offline-Test 7 von 7.
+- Pruefsummen (@babel/parser): 1 neu (`STATUS_LOCK_MS`), 0 entfernt, genau ZWEI
+  geaendert (`ConnIssueBanner`, `DriverApp`), 283 von 286 byte-identisch.
+- Laufzeit-Test mit echtem React: 25053 Zeichen, ueber alle Commits konstant.
+- esbuild gruen, Duplikat-Grep leer.
+
+## TESTLISTE WOCHENENDE (Sa/So 18./19.07., mehrere Fahrer, Production)
+
+Das hier findet KEIN Einzelgeraet. Die drei mit >>> sind der Kern.
+
+**Fahrer-App, normal**
+1. [ ] Fahrt annehmen bis abschliessen, fluessig. Die halbe Sekunde Sperre pro
+       Stufe: Schutz oder Haenger? Zahl ist eine Zeile (`STATUS_LOCK_MS`).
+2. [ ] "speichert…" erscheint kurz auf dem gedrueckten Knopf.
+3. [ ] Einmal "zurueck", dann wieder vor.
+
+**>>> Der Doppeltipp**
+4. [ ] Zweimal ganz schnell auf "Fahrt annehmen". Genau EINE Stufe.
+5. [ ] Dasselbe auf "Gast eingestiegen". Darf NIEMALS auf "abgeschlossen"
+       springen. Das ist der teuerste Fall: Fahrt zu, bevor sie stattfand,
+       und `driverState.locationId` springt aufs Ziel (Karte zeigt den Fahrer
+       am Hotel).
+6. [ ] **Zwei Knoepfe, eine Fahrt:** oben in der Hero-Karte tippen, sofort
+       runterscrollen und denselben Knopf in der Liste tippen. Eine Stufe.
+       Beide muessen gleichzeitig gesperrt sein.
+
+**>>> Flugmodus (Befund 2)**
+7. [ ] Flugmodus an, Status tippen -> Fehlermeldung MUSS kommen.
+8. [ ] Flugmodus an, "Notfall" melden -> "NICHT gesendet" MUSS kommen. Vorher
+       verschwand die Meldung lautlos und die Leitstelle bekam trotzdem einen
+       Push.
+9. [ ] Banner sagt jetzt "gehen verloren … bitte noch einmal tippen", nicht
+       mehr "geht automatisch weiter".
+10. [ ] Flugmodus aus -> "Wieder verbunden", Daten kommen nach.
+
+**>>> Fall B, braucht zwei Geraete**
+11. [ ] Fahrer laesst den Bildschirm auf "Gast an Bord" stehen, ANFASSEN
+        VERBOTEN. Du setzt die Fahrt in der Leitstelle zurueck auf "geplant".
+        Dann tippt der Fahrer seinen alten Knopf. Darf NICHT auf
+        "abgeschlossen" springen. Nach ~3 s beschriftet sich der Knopf neu.
+
+**Mehrere Fahrer gleichzeitig**
+12. [ ] Zwei Fahrer aendern gleichzeitig Status -> beide kommen an, kein
+        Ueberschreiben.
+13. [ ] GPS-Konflikttest (stand ohnehin offen): mehrere Fahrer teilen Standort,
+        Karte zeigt alle.
+14. [ ] Leitstelle sieht alles in ~3 s.
+
+**Alles andere (S21 bis S24 sind weiter ungetestet)**
+15. [ ] Alle sechs MC-Tabs oeffnen: Fahrer, Chat, Rueckfahrten, Probleme,
+        Ueberblick, Timeline.
+16. [ ] Karte-Tab Schema/Google umschalten (steht seit S21 offen).
+17. [ ] Banner "Notfall"-Knopf: Problem an Tag X, Tag Y gewaehlt, klicken ->
+        Problem da UND Tag springt auf X (Session 24b).
+18. [ ] Stage-Login nur lesen + Problem melden. Gast-Link oeffnen.
+19. [ ] Absturz-Test: Fehlerseite mit "Neu laden", kein weisser Bildschirm.
+
+## Rueckweg
+
+**Vercel -> altes Deployment -> Promote to Production.** Ein Klick, schneller
+als jeder Git-Befehl, und der richtige Weg waehrend eines laufenden Tests.
+Git: `git revert a38d118 a7e12c1 a4e302d` (nur die Fahrer-App-Fixes, in dieser
+Reihenfolge). Tags: `stabil-classic-vorhanden-2026-07-15` = `f7bb75d`,
+`stabil-vor-design-2026-07-13` = `4d13e59`.
