@@ -1978,3 +1978,85 @@ korrekte Umlaute. Warn mich rechtzeitig, wenn der Chat zu lang wird.
 ZEITFENSTER: muss VOR Sa 18.07. fertig sein, sonst deckt mein Fahrer-Test es
 nicht ab und es ginge ungetestet ins Festival (23. bis 27.07.).
 ```
+
+---
+
+# ⚠ SESSION 27a: DIE FALLE, DIE DEN UMBAU SPRENGT (gefunden 16.07., VOR dem Bauen)
+
+**`Modal` (7760) darf NICHT umgestylt werden.** Es ist die geteilte Huelle
+ALLER Dialoge, auch der von Fahrer, Stage und Gast.
+
+Direkte Eltern von `Modal`:
+`AssignModal`, `RideForm`, `WhatsAppModal` (Leitstelle) **und**
+`IssueModal` (DriverApp), `StageIssueModal` (StageApp), `GuestIssueModal`
+(GuestApp).
+
+**Ein Re-Skin von `Modal` landet also im Tabu-Bereich.** Der Rahmen ist heute
+`bg-stone-900 border-stone-800 rounded-2xl` mit `border-b border-stone-800`
+Kopfzeile.
+
+## METHODEN-WARNUNG, wichtiger als der Befund selbst
+
+Die erste Messung (direkte Eltern) meldete fuer `Modal` **"0 Treffer in
+DriverApp/StageApp/GuestApp"** — und das war FALSCH. `Modal`s direkte Eltern
+sind alles Modals, keine Rollen-App. Der Weg zum Fahrer geht ueber
+`DriverApp -> IssueModal -> Modal`, also EINE Ebene tiefer.
+
+**Erreichbarkeit muss TRANSITIV gemessen werden, nicht ueber direkte Eltern.**
+Rendergraph bauen (Eltern -> Kinder ueber JSXOpeningElement, Aufrufstelle per
+Textbereich der Top-Level-Funktion zuordnen), dann von `DriverApp`/`StageApp`/
+`GuestApp` aus die Huelle bilden. Alles darin ist tabu.
+
+## Transitiv nachgemessen, Stand `a38d118`: die zwoelf sind sauber
+
+| Komponente | von MissionControl | von Fahrer/Stage/Gast |
+|---|---|---|
+| `RideForm`, `AssignModal`, `WhatsAppModal` | ja | **nein** |
+| `SettingsTab`, `FlightTab`, `MapTab`, `LiveGoogleMap` | ja | **nein** |
+| `ChatPanel`, `TimelineView`, `BoardMiniMap` | ja | **nein** |
+| `NoGpsSharingPanel`, `DriverRow` | ja | **nein** |
+| **`Modal`** | ja | **JA -> TABU** |
+
+## Konsequenz: 27a braucht eine Entscheidung
+
+- **Variante A (empfohlen, entspricht der Projekt-Historie):** eigenes
+  `McModal` anlegen (~15 Zeilen, Kopie der Huelle im MC-Design), nur von
+  `RideForm`/`AssignModal`/`WhatsAppModal` benutzt. **`Modal` bleibt
+  byte-identisch**, die Rollen-Apps sind damit beweisbar unberuehrt. Das ist
+  derselbe "Ansatz A", mit dem die MC-Forks gebaut wurden: lieber duplizieren
+  als eine geteilte Komponente umbauen.
+- **Variante B:** `Modal` bekommt eine optionale Prop (`mc`), Default aus ->
+  Rollen-Apps rendern unveraendert. Weniger Duplikat, aber fasst eine
+  Komponente an, die im Tabu-Bereich haengt. Beweisbar ueber Pruefsumme +
+  Render-Test, aber die Beweislast liegt dann bei uns.
+- **Variante C:** nur den INHALT der drei Modals umbauen, Rahmen bleibt
+  Classic. **Wahrscheinlich das haesslichste Ergebnis**: MC-Inhalt in einem
+  Classic-Rahmen ist inkonsistenter als durchgehend Classic.
+
+## Designsystem-Notizen fuer den Umbau (gemessen)
+
+- **54 Tokens definiert, 41 benutzt.** Keine benutzte Variable ist undefiniert
+  (geprueft). `--mc-st-new-soft` steht auf einer GETEILTEN Zeile (8527), ein
+  zeilenweiser Grep findet sie nicht -> nicht faelschlich fuer fehlend halten.
+- `var(--mc-st-${key})` wird dynamisch aus `MC_STATUS` gebaut (new, assigned,
+  enroute, done, problem, idle). Alle sechs haben auch eine `-soft`-Variante.
+- **Fertige Klassen wiederverwenden statt neu bauen:** `.mc-panel`,
+  `.mc-input` (inkl. `:focus`-Ring), `.mc-btn-primary`, `.mc-btn-assign`,
+  `.mc-badge` (+ `--new/--assigned/--enroute/--done/--problem/--idle`),
+  `.mc-eyebrow`, `.mc-iconbtn`, `.mc-modal-fade`, `.mc-sheet-in`,
+  `.mc-ride-card`.
+- Radien: `--mc-r: 10px`, `--mc-r-lg: 14px`, `--mc-r-sm: 6px`, `--mc-r-pill`.
+  Abstaende: `--mc-space-1` bis `-6` (4/8/12/16/24/32px).
+- Ungenutzt und damit frei: die sechs `--mc-st-*-fill`, `--mc-font-mono`.
+- **Alles ist unter `.mc-scope` gescopt.** Die drei Modals werden von
+  `MissionControl` gerendert, dessen Wurzel (7841) `.mc-scope` traegt. Ein
+  eigenes `McModal` muss innerhalb dieses Baums bleiben, sonst greifen die
+  Tokens nicht (`var()` ohne Wert macht die ganze Regel ungueltig, und esbuild
+  meldet das NIE).
+
+## Rueckweg fuer den Design-Umbau
+
+Tag **`stabil-vor-mc-design-2026-07-16`** = Branch `backup/vor-mc-design`
+= `676b02b` (Classic raus, Fahrer-App-Fixes drin, 8883 Zeilen).
+Gefaellt Jordan das neue Design nicht: `git reset --hard` auf den Tag, oder
+Vercel -> altes Deployment -> Promote to Production.
