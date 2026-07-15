@@ -1931,7 +1931,7 @@ ersetzt wird. Damit gibt es nur zwei sinnvolle Fenster:
 
 ---
 
-## Ready-to-paste Opener: Session 27a (Modals auf MC-Design) — FINAL, Stand 16.07.
+## Ready-to-paste Opener: Session 27a — FINAL, Variante B, Stand 16.07.
 
 ```
 Erst PROJEKT-ANWEISUNGEN.md lesen, dann Repo holen. Repo:
@@ -1939,45 +1939,49 @@ Maybach62S57S/openbeatz-shuttle. PAT setze ich hier ein: <PAT>
 Nach dem Klonen: git config (user.name/email), npm ci, Baseline-esbuild gruen:
 ./node_modules/.bin/esbuild src/ShuttleLeitstelle.jsx --bundle=false --format=esm --outfile=/tmp/x.js
 
-STAND: main = 98f3d27, Code-Stand a38d118, 8883 Zeilen. Classic ist komplett
+STAND: main = 635d2d6, Code-Stand a38d118, 8883 Zeilen. Classic ist komplett
 raus (Sessions 19 bis 24), Mission Control ist die einzige Leitstellen-
 Oberflaeche. Die Fahrer-App-Fixes (from-Waechter, Doppeltipp-Sperre,
-Offline-Ehrlichkeit) sind auf Production, aber noch ungetestet. Ich teste
-Sa/So 18./19.07. mit mehreren Fahrern.
+Offline-Ehrlichkeit) sind auf Production, aber noch ungetestet.
 
-RUECKWEG fuer genau diesen Umbau: Tag stabil-vor-mc-design-2026-07-16 =
-Branch backup/vor-mc-design = 676b02b. Wenn mir das Design nicht gefaellt,
-gehe ich da zurueck. Sonst: Vercel -> altes Deployment -> Promote to
-Production. Aeltere Tags: stabil-classic-vorhanden-2026-07-15 = f7bb75d,
+RUECKWEG fuer den Design-Umbau: Tag stabil-vor-mc-design-2026-07-16 =
+Branch backup/vor-mc-design = 676b02b. Gefaellt mir das Design nicht, gehe ich
+da zurueck. Sonst: Vercel -> altes Deployment -> Promote to Production.
+Aeltere Tags: stabil-classic-vorhanden-2026-07-15 = f7bb75d,
 stabil-vor-design-2026-07-13 = 4d13e59.
 
 Danach UEBERGABE-Session-18.md lesen, KOMPLETT, vor allem die zwei Abschnitte
 ganz unten: "SESSION 27: MC-Design fuer die geteilten Komponenten" und
 "SESSION 27a: DIE FALLE, DIE DEN UMBAU SPRENGT". Die Datei waechst nach UNTEN
-an, alles weiter oben ist aelter. Die Anker unten sind auf a38d118, per grep
-gegenpruefen.
+an, alles weiter oben ist aelter. Anker sind auf a38d118, per grep gegenpruefen.
 
-AUFTRAG 27a: RideForm (3832), AssignModal (3718) und WhatsAppModal (4348) auf
-MC-Design ziehen. Zusammen 426 Zeilen, alle drei heute komplett Classic
+AUFTRAG 27a: RideForm (3832), AssignModal (3718), WhatsAppModal (4348) auf
+MC-Design. Zusammen 426 Zeilen, alle drei heute komplett Classic
 (0 var(--mc-*), gemessen). Transitiv belegt: nur von MissionControl
 erreichbar, nicht von DriverApp/StageApp/GuestApp.
 
-ENTSCHEIDUNG STEHT, Variante A: ein eigenes McModal bauen (~15 Zeilen, MC-
-Design). Modal (7760) bleibt BYTE-IDENTISCH und wird NICHT angefasst, es
-haengt ueber IssueModal/StageIssueModal/GuestIssueModal in allen drei
-Rollen-Apps. Das ist derselbe Ansatz A wie bei den MC-Forks: lieber
-duplizieren als eine geteilte Komponente umbauen. Nicht neu verhandeln.
-
-- NUR className/Style. KEINE Props, KEINE Handler, KEINE Feldlogik.
-  RideForm ist ein Formular mit Schreibweg, das ist die Grenze.
+MEINE ENTSCHEIDUNG, Variante B: Modal (7760) bekommt eine optionale Prop mc.
+Gesetzt -> MC-Design, nicht gesetzt -> rendert exakt wie heute. Die drei
+Leitstellen-Dialoge setzen sie, IssueModal/StageIssueModal/GuestIssueModal
+nicht. KEIN zweites McModal: wir haben gerade sechs Sessions lang Forks
+rausgeworfen, ich baue mir keinen neuen. Eine Huelle, ein Fehler, eine
+Reparatur.
+- Modal haengt ueber IssueModal/StageIssueModal/GuestIssueModal in ALLEN drei
+  Rollen-Apps. Der Beleg, den ich sehen will: Render-Test von IssueModal
+  vorher/nachher, ZEICHENIDENTISCH. Ohne den geht es nicht auf main.
+- NUR className/Style. KEINE Handler, KEINE Feldlogik. RideForm ist ein
+  Formular mit Schreibweg, das ist die Grenze. Die mc-Prop ist die einzige
+  erlaubte Signatur-Aenderung.
 - Designsystem ist MissionStyles, alles unter .mc-scope gescopt. Vorhandene
   Klassen wiederverwenden statt neu bauen: .mc-panel, .mc-input,
   .mc-btn-primary, .mc-btn-assign, .mc-badge, .mc-eyebrow, .mc-iconbtn,
-  .mc-modal-fade. Aesthetik: enterprise dark, ruhig, nachtschichttauglich.
-  Kein Gaming, kein Cyberpunk, kein Neon, keine uebertriebenen Animationen.
+  .mc-modal-fade. Enterprise dark, ruhig, nachtschichttauglich. Kein Gaming,
+  kein Cyberpunk, kein Neon, keine uebertriebenen Animationen.
 - Die anderen neun geteilten Komponenten NICHT anfassen, das sind 27b/c/d.
-- Weiter tabu: DriverApp/StageApp/GuestApp (Stage read-only), Modal, die
-  Datenschicht, das dyn_data/RPC-Thema, der Fallschirm.
+- NICHT aufmachen: ob Fahrer/Stage/Gast auch auf MC-Design sollen. Eigenes
+  Thema, nach dem Festival, siehe Uebergabe.
+- Weiter tabu: die Datenschicht, das dyn_data/RPC-Thema, der Fallschirm,
+  Stage bleibt read-only.
 
 Branch: fix/session-27a-modals von main. Nach meinem OK FF-Merge auf main.
 
@@ -1987,8 +1991,9 @@ belegt worden (kaputte Referenz -> esbuild gruen, Duplikat-Grep leer).
 Belege, die ich sehen will:
 - Pruefsummen ueber @babel/parser (schon transitive Abhaengigkeit ueber
   @vitejs/plugin-react, keine neue Library): genau RideForm, AssignModal,
-  WhatsAppModal geaendert, McModal neu, ALLES andere byte-identisch,
-  insbesondere Modal, DriverApp, StageApp, GuestApp.
+  WhatsAppModal, Modal geaendert. ALLES andere byte-identisch, insbesondere
+  DriverApp, StageApp, GuestApp, IssueModal, StageIssueModal, GuestIssueModal.
+- Render-Test von IssueModal ohne mc-Prop: zeichenidentisch zu vorher.
 - Laufzeit-Test mit echtem React (react-dom/server, --jsx=automatic):
   App-Root muss 25053 Zeichen rendern, die Zahl ist ueber alle Sessions
   konstant.
@@ -2003,9 +2008,11 @@ Belege, die ich sehen will:
 Commit ueber /tmp/msg.txt. Sprache Deutsch, informell, keine Gedankenstriche,
 korrekte Umlaute. Warn mich rechtzeitig, wenn der Chat zu lang wird.
 
-ZEITFENSTER: muss vor Sa 18.07. fertig und gemergt sein, sonst deckt mein
-Fahrer-Test es nicht ab und es ginge ungetestet ins Festival (23. bis 27.07.).
-Ab 21.07. wird nichts mehr geloescht.
+ZEITFENSTER: bis Freitagabend 17.07. darf gebaut werden, auch am Fahrer-Pfad.
+Ab Samstag 18.07. ist Ruhe, dann teste ich mit mehreren Fahrern. Was am
+Festival laufen soll, muss VOR dem Test drin sein, sonst testen wir einen
+Stand, der danach ersetzt wird. Ab 21.07. wird nichts mehr geloescht.
+Festival 23. bis 27.07.
 ```
 
 ---
@@ -2046,21 +2053,60 @@ Textbereich der Top-Level-Funktion zuordnen), dann von `DriverApp`/`StageApp`/
 | `NoGpsSharingPanel`, `DriverRow` | ja | **nein** |
 | **`Modal`** | ja | **JA -> TABU** |
 
-## Konsequenz: 27a braucht eine Entscheidung
+## Konsequenz: JORDANS ENTSCHEIDUNG 16.07. = VARIANTE B (eine Huelle, mit Schalter)
 
-- **Variante A (empfohlen, entspricht der Projekt-Historie):** eigenes
-  `McModal` anlegen (~15 Zeilen, Kopie der Huelle im MC-Design), nur von
-  `RideForm`/`AssignModal`/`WhatsAppModal` benutzt. **`Modal` bleibt
-  byte-identisch**, die Rollen-Apps sind damit beweisbar unberuehrt. Das ist
-  derselbe "Ansatz A", mit dem die MC-Forks gebaut wurden: lieber duplizieren
-  als eine geteilte Komponente umbauen.
-- **Variante B:** `Modal` bekommt eine optionale Prop (`mc`), Default aus ->
-  Rollen-Apps rendern unveraendert. Weniger Duplikat, aber fasst eine
-  Komponente an, die im Tabu-Bereich haengt. Beweisbar ueber Pruefsumme +
-  Render-Test, aber die Beweislast liegt dann bei uns.
-- **Variante C:** nur den INHALT der drei Modals umbauen, Rahmen bleibt
-  Classic. **Wahrscheinlich das haesslichste Ergebnis**: MC-Inhalt in einem
-  Classic-Rahmen ist inkonsistenter als durchgehend Classic.
+```
+Modal({ title, children, onClose, wide, mc })
+```
+
+`mc` gesetzt -> MC-Design. Nicht gesetzt -> rendert **exakt wie heute**. Die drei
+Leitstellen-Dialoge setzen es, `IssueModal`/`StageIssueModal`/`GuestIssueModal`
+nicht.
+
+**Begruendung (Jordans, nicht meine):** wir haben sechs Sessions lang Forks
+rausgeworfen, um die Fork-Steuer loszuwerden. Eine zweite Modal-Huelle daneben
+zu bauen waere genau das wieder, nur in klein. Eine Huelle = ein Fehler = eine
+Reparatur. Und wenn nach dem Festival entschieden wird "Fahrer/Stage auch auf
+MC", setzt man den Schalter um oder wirft ihn raus. Bei einem `McModal` muesste
+man erst wieder zusammenfuehren, was man vorher getrennt hat.
+
+**Beweislast:** Render-Test des Fahrer-Dialogs (`IssueModal`) vorher/nachher,
+muss **zeichenidentisch** sein. Ohne diesen Beleg geht es nicht auf main.
+
+### ZWEI FEHLER VON MIR, die Jordan gefunden hat. Nicht wiederholen.
+
+**1. "Ansatz A" war ein totes Argument.** Ich habe zuerst ein eigenes `McModal`
+empfohlen mit der Begruendung "lieber duplizieren als eine geteilte Komponente
+umbauen". Das war der Ansatz A aus der MC-Fork-Zeit, und sein Grund war
+*"Classic bleibt byte-fuer-byte unveraendert"*. **Diesen Grund hat Jordan am
+15.07. selbst kassiert** (siehe Abschnitt "REVIDIERT: die Nicht-Anfassen-Liste").
+`Modal` ist nicht mit Classic geteilt, Classic gibt es nicht mehr. Es ist mit
+Fahrer/Stage/Gast geteilt, und die waren nie Classic. Der Befund (Modal ist
+geteilt) stimmt, meine Schlussfolgerung war aus der Mottenkiste.
+
+**2. Ich habe den Fahrer-Pfad zwei Tage zu frueh eingefroren.** Ich habe
+argumentiert "bis Samstag nichts am Fahrer anfassen" und im selben Chat das
+Gegenteil begruendet, naemlich warum die Fahrer-Fixes VOR dem Test auf main
+muessen: was am Festival laeuft, muss der Test treffen. **Richtig ist: bis
+Freitagabend darf alles gebaut werden, ab Samstag ist Ruhe.** Nicht frueher.
+
+**3. Ich habe "ENTSCHEIDUNG STEHT" ueber etwas geschrieben, das Jordan nie
+entschieden hatte.** Er hatte nur nicht widersprochen. Der Marker ist fuer
+Sachen reserviert, die Jordan wirklich entschieden hat.
+
+## BEWUSST OFFEN, NICHT in 27a beantworten
+
+**Sollen Fahrer-App, Stage-App und Gast-App auch auf MC-Design?** Diese Frage
+hat noch nie jemand gestellt. Der Beschluss vom 15.07. sagt woertlich "Mission
+Control ist die einzige **Leitstellen**-Oberflaeche" - die Rollen-Apps waren nie
+Teil davon, es gab nie eine Classic- und eine MC-Variante von ihnen.
+
+Inhaltlich sind es verschiedene Aufgaben: MC ist Laptop, dichte Panels, viele
+Zustaende. Die Fahrer-App ist Handy im Auto, nachts, einhaendig, grosse Knoepfe.
+Gleiches Aussehen ist kein Selbstzweck.
+
+**Das ist ein eigenes Projekt, kein Nebeneffekt einer Modal-Huelle. Nach dem
+Festival, und nur wenn Jordan es aufmacht.**
 
 ## Designsystem-Notizen fuer den Umbau (gemessen)
 
