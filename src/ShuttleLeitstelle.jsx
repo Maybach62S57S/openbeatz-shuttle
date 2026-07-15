@@ -1114,25 +1114,36 @@ export default function App() {
     return <><BrandStyles /><ConnIssueBanner message={connIssue} offline={isOffline} reconnected={justReconnected} /><StageApp setup={setup} dyn={dyn}
       updateDyn={updateDyn} onLogout={() => setSession(null)} /></>;
   }
-  if (useMobileView) {
-    return <><BrandStyles /><ConnIssueBanner message={connIssue} offline={isOffline} reconnected={justReconnected} /><MobileDispatcherView setup={setup} dyn={dyn} session={session}
-      updateDyn={updateDyn} onLogout={() => { unsubscribePush(session.dispatcherId, "dispatcherState", updateDyn); setSession(null); }}
-      onSwitchToDesktop={() => setViewMode("desktop")} /></>;
-  }
-  // Mission Control Beta — nur Dispo-Desktop (dieser Zweig wird nach useMobileView
-  // erreicht, Handy behaelt also Vorrang). Slice 1: MissionControl ist ein reiner
-  // Passthrough auf Dashboard mit identischen Props; der sichtbare Unterschied ist
-  // vorerst nur der Umschalt-Button. Bei unbekanntem/defektem uiMode greift der
-  // harte Fallback in setUiModeSafe, hier landet dann "classic" (unten).
+  // ==========================================================================
+  // Session 19 (15.07.2026): Mission Control ist ab hier die EINZIGE
+  // Leitstellen-Oberflaeche. Nichts geloescht, nur nicht mehr erreichbar.
   //
-  // Emergency-Fallback: der MC-Baum laeuft in einer ErrorBoundary. Stuerzt er
-  // beim Rendern ab, ruft die Boundary handleMcFallback -> uiMode zurueck auf
-  // "classic" + mcBlocked=true (Session-Sperre gegen Crash-Loop). mcBlocked wird
-  // hier zusaetzlich vorgeschaltet, damit selbst im selben Render-Tick (bevor der
-  // State-Wechsel durch ist) nie erneut MC gemountet wird. Reset-Key = uiMode:
-  // wechselt der Nutzer nach einem Reload bewusst wieder auf MC, startet die
-  // Boundary frisch.
-  if (uiMode === "mission-control" && !mcBlocked) {
+  // Weggefallen sind genau zwei Weichen:
+  //   1. if (useMobileView) -> MobileDispatcherView. MC laeuft jetzt auch auf
+  //      dem Handy (Jordans Entscheidung vom 15.07., MC gefaellt ihm dort
+  //      besser als die schlanke Mobil-Ansicht). MobileDispatcherView bleibt
+  //      vollstaendig im Code, wird nur nicht mehr aufgerufen.
+  //   2. if (uiMode === "mission-control"). Es gibt keine Classic-Wahl mehr.
+  //      uiMode und localStorage "obf:uiMode" werden fuer die Routing-
+  //      Entscheidung nicht mehr ausgewertet; der Umschalter "Oberflaeche" ist
+  //      in beiden Kopfzeilen ueber onSetUiMode={null} ausgeblendet (Dashboard
+  //      3742, MC-Kopf "Zu Classic"). State + Setter bleiben bestehen, weil
+  //      handleMcFallback sie weiter benutzt.
+  //
+  // DER FALLSCHIRM BLEIBT UNVERAENDERT UND TRAEGT WEITER. Stuerzt der MC-Baum
+  // beim Rendern ab, ruft MissionControlBoundary -> handleMcFallback ->
+  // mcBlocked = true. Dann faellt dieser Zweig durch und das Classic-Dashboard
+  // unten faengt auf. Genau dafuer bleibt der Classic-Code liegen, bis Jordan
+  // MC scharf getestet und das Loeschen freigegeben hat. Ein Reload gibt MC
+  // wieder frei (mcBlocked lebt nur im Speicher, nicht in localStorage).
+  //
+  // key={uiMode} bewusst unveraendert gelassen: uiMode kann sich jetzt nur noch
+  // durch handleMcFallback aendern, und in dem Moment ist mcBlocked schon true,
+  // dieser Zweig rendert also ohnehin nicht mehr. Der Key ist damit faktisch
+  // konstant, kein ungewolltes Remount (das haette Tag/Tab/Filter in MC
+  // zurueckgesetzt).
+  // ==========================================================================
+  if (!mcBlocked) {
     return <>
       <BrandStyles />
       <ConnIssueBanner message={connIssue} offline={isOffline} reconnected={justReconnected} />
@@ -1140,8 +1151,8 @@ export default function App() {
         <MissionControl setup={setup} dyn={dyn} session={session}
           updateDyn={updateDyn} updateSetup={updateSetup} onLogout={() => { unsubscribePush(session.dispatcherId, "dispatcherState", updateDyn); setSession(null); }}
           onPreviewGuest={setPreviewGuestToken} onUndo={undo} undoCount={undoCount}
-          onSwitchToMobile={() => setViewMode("mobile")}
-          uiMode={uiMode} onSetUiMode={setUiModeSafe}
+          onSwitchToMobile={null}
+          uiMode={uiMode} onSetUiMode={null}
           offline={isOffline} connIssue={connIssue} />
       </MissionControlBoundary>
     </>;
@@ -1156,26 +1167,35 @@ export default function App() {
         </div>
       </div>
     )}
+    {/* Session 19: dieser Zweig ist NUR noch der Fallschirm, erreichbar
+        ausschliesslich ueber mcBlocked (MC ist beim Rendern abgestuerzt).
+        Kein normaler Weg fuehrt mehr hierher.
+        onSwitchToMobile: null, weil die useMobileView-Weiche oben weg ist und
+        setViewMode("mobile") deshalb wirkungslos waere (toter Knopf).
+        onSetUiMode: null, damit der Umschalter "Oberflaeche" im Dashboard-Kopf
+        (3742) ausgeblendet ist. War vorher mcBlocked ? null : setUiModeSafe,
+        was hier ohnehin immer null ergaebe; jetzt explizit, damit es nicht an
+        einem Nebeneffekt haengt. */}
     <Dashboard setup={setup} dyn={dyn} session={session}
       updateDyn={updateDyn} updateSetup={updateSetup} onLogout={() => { unsubscribePush(session.dispatcherId, "dispatcherState", updateDyn); setSession(null); }}
       onPreviewGuest={setPreviewGuestToken} onUndo={undo} undoCount={undoCount}
-      onSwitchToMobile={() => setViewMode("mobile")}
-      uiMode={uiMode} onSetUiMode={mcBlocked ? null : setUiModeSafe} />
-    {/* Notausstieg: falls die Desktop-Ansicht (durch einen früheren manuellen
-        Wechsel) auf einem schmalen Bildschirm feststeckt, ist der normale
-        Umschalt-Button im Dashboard-Header eventuell außerhalb des sichtbaren
-        Bereichs und nicht erreichbar (genau das ist Jordan auf dem iPhone
-        passiert). Dieser Button ist FEST positioniert (nicht Teil des
-        normalen Seitenflusses), bleibt also immer erreichbar, unabhängig
-        davon wie breit der übrige Seiteninhalt gerade ist. Setzt bewusst auf
-        "auto" statt fest "mobile", damit sich das Gerät ab jetzt wieder von
-        selbst an die Bildschirmbreite anpasst. */}
+      onSwitchToMobile={null}
+      uiMode={uiMode} onSetUiMode={null} />
+    {/* Session 19: Notausstieg "Handy-Ansicht" ausgeblendet, NICHT geloescht.
+        Er setzte viewMode auf "auto", damit ein auf schmalem Bildschirm
+        feststeckender Desktop-Zweig wieder auf MobileDispatcherView springt.
+        Diese Weiche gibt es nicht mehr, der Knopf waere also ein Knopf ohne
+        Wirkung mitten in einer Absturz-Situation. Wird in Session 21
+        zusammen mit viewOverride/useMobileView/setViewMode ganz entfernt.
+        Original unveraendert erhalten:
+
     {isNarrow && viewOverride === "desktop" && (
       <button onClick={() => setViewMode("auto")}
         className="fixed bottom-4 left-4 z-[100] flex items-center gap-1.5 bg-orange-600 hover:bg-orange-500 text-white text-xs px-3 py-2 rounded-full shadow-lg">
         <Smartphone className="w-3.5 h-3.5" />Handy-Ansicht
       </button>
     )}
+    */}
   </>;
 }
 
@@ -9714,12 +9734,21 @@ function MissionControl({ setup, dyn, session, updateDyn, updateSetup, onLogout,
           {onSwitchToMobile && (
             <button onClick={onSwitchToMobile} title="Zur schlanken Handy-Ansicht wechseln" className="p-2 rounded-lg hover:bg-white/5" style={{ color: "var(--mc-text-muted)" }}><Smartphone className="w-4 h-4" /></button>
           )}
-          {/* "Zu Classic" immer erreichbar - sicherer Rueckweg aus der Beta */}
-          <button onClick={() => onSetUiMode && onSetUiMode("classic")} title="Zurück zur Classic-Oberfläche"
-            className="flex items-center gap-1.5 text-xs px-2.5 py-1.5 rounded-lg hover:bg-white/5"
-            style={{ color: "var(--mc-text-secondary)", border: "1px solid var(--mc-border)" }}>
-            <RotateCcw className="w-3.5 h-3.5" /><span className="hidden md:inline">Zu Classic</span>
-          </button>
+          {/* "Zu Classic": Session 19 ausgeblendet, NICHT geloescht. Gleiches
+              Muster wie der Umschalter im Dashboard-Kopf (3742): sichtbar nur,
+              wenn onSetUiMode uebergeben wird. Der App-Root uebergibt jetzt
+              null, weil es keine Classic-Wahl mehr gibt. Wuerde der Knopf
+              bleiben, wechselte er nichts (das Routing haengt nicht mehr an
+              uiMode) und remountete ueber key={uiMode} nur den MC-Baum, was
+              Tag/Tab/Filter zuruecksetzt. Voll reversibel: onSetUiMode wieder
+              durchreichen und der Rueckweg ist zurueck. */}
+          {onSetUiMode && (
+            <button onClick={() => onSetUiMode("classic")} title="Zurück zur Classic-Oberfläche"
+              className="flex items-center gap-1.5 text-xs px-2.5 py-1.5 rounded-lg hover:bg-white/5"
+              style={{ color: "var(--mc-text-secondary)", border: "1px solid var(--mc-border)" }}>
+              <RotateCcw className="w-3.5 h-3.5" /><span className="hidden md:inline">Zu Classic</span>
+            </button>
+          )}
           <button onClick={onLogout} className="p-2 rounded-lg hover:bg-white/5" style={{ color: "var(--mc-text-muted)" }}><LogOut className="w-5 h-5" /></button>
         </div>
 
