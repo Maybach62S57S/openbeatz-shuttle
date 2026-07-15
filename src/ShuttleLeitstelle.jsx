@@ -764,17 +764,22 @@ export default function App() {
   // Emergency-Fallback: sperrt Mission Control fuer den REST DIESER SESSION,
   // nachdem der MC-Baum einmal beim Rendern abgestuerzt ist. Lebt bewusst nur
   // im Speicher (nicht in localStorage), damit ein Reload MC wieder frei gibt.
-  // Verhindert einen Crash-Loop (MC crasht -> Classic -> Nutzer klickt MC ->
-  // crasht sofort wieder). mcFailReason nur fuer eine dezente Notiz im Header.
+  //
+  // Session 22 (15.07.2026): der Boden ist nicht mehr Classic, sondern
+  // MissionControlFallbackScreen (Fehlerseite mit "Neu laden"-Knopf). Die Sperre
+  // bleibt trotzdem noetig: ohne sie wuerde React den abgestuerzten MC-Baum bei
+  // jedem Poll-Re-Render (alle 3 s) erneut versuchen. mcFailReason ist der Text
+  // auf der Fehlerseite.
   const [mcBlocked, setMcBlocked] = useState(false);
   const [mcFailReason, setMcFailReason] = useState(null);
   const handleMcFallback = useCallback(() => {
-    // Reiner Praeferenz-Wechsel auf Classic + Session-Sperre. KEIN Datenzugriff,
-    // kein updateDyn/updateSetup, keine Status-/Rollenaenderung.
-    setUiMode("classic");
-    try { localStorage.setItem("obf:uiMode", "classic"); } catch {}
+    // Session 22: KEIN Praeferenz-Wechsel mehr. Es gibt keine Classic-Oberflaeche
+    // mehr, auf die man zurueckstellen koennte, also schreibt der Fallschirm auch
+    // kein uiMode und kein localStorage mehr (war vorher setUiMode("classic") +
+    // localStorage "obf:uiMode"). Einziger Effekt sind Sperre und Meldungstext.
+    // KEIN Datenzugriff, kein updateDyn/updateSetup, keine Status-/Rollenaenderung.
     setMcBlocked(true);
-    setMcFailReason("Mission Control Beta wurde nach einem Fehler beendet. Nach einem Neuladen der Seite wieder verfügbar.");
+    setMcFailReason("Mission Control wurde nach einem Fehler beendet. Ein Neuladen der Seite startet die Leitstelle wieder.");
   }, []);
   const [loading, setLoading] = useState(true);
   // Unterscheidung "noch keine Daten" (loadError=null, ganz normaler erster
@@ -1123,24 +1128,28 @@ export default function App() {
   //      3742, MC-Kopf "Zu Classic"). State + Setter bleiben bestehen, weil
   //      handleMcFallback sie weiter benutzt.
   //
-  // DER FALLSCHIRM BLEIBT UNVERAENDERT UND TRAEGT WEITER. Stuerzt der MC-Baum
-  // beim Rendern ab, ruft MissionControlBoundary -> handleMcFallback ->
-  // mcBlocked = true. Dann faellt dieser Zweig durch und das Classic-Dashboard
-  // unten faengt auf. Genau dafuer bleibt der Classic-Code liegen, bis Jordan
-  // MC scharf getestet und das Loeschen freigegeben hat. Ein Reload gibt MC
-  // wieder frei (mcBlocked lebt nur im Speicher, nicht in localStorage).
+  // SESSION 22 (15.07.2026): DER FALLSCHIRM HAT EINEN NEUEN BODEN.
+  // Stuerzt der MC-Baum beim Rendern ab, ruft MissionControlBoundary ->
+  // handleMcFallback -> mcBlocked = true. Dann faellt dieser Zweig durch und
+  // unten kommt NICHT mehr das Classic-Dashboard, sondern
+  // MissionControlFallbackScreen: eine Fehlerseite mit "Neu laden".
+  // Grund: Classic wird geloescht (Session 23/24). Der alte Boden zeigte nach
+  // dem Loeschen auf eine nicht mehr existierende Komponente, und esbuild meldet
+  // undefinierte JSX-Referenzen nicht. Deshalb kommt dieser Umbau VOR dem
+  // Dashboard-Ausbau, nicht danach.
+  // Ein Reload gibt MC wieder frei (mcBlocked lebt nur im Speicher, nicht in
+  // localStorage).
   //
-  // key={uiMode} bewusst unveraendert gelassen: uiMode kann sich jetzt nur noch
-  // durch handleMcFallback aendern, und in dem Moment ist mcBlocked schon true,
-  // dieser Zweig rendert also ohnehin nicht mehr. Der Key ist damit faktisch
-  // konstant, kein ungewolltes Remount (das haette Tag/Tab/Filter in MC
-  // zurueckgesetzt).
+  // key an der Boundary entfernt (er stand auf uiMode): seit Session 22 schreibt
+  // niemand mehr uiMode (handleMcFallback tat es als letzter), der Key war damit
+  // konstant und ohne Wirkung. Ohne Key kann die Boundary auch nicht mehr
+  // versehentlich remounten und den abgestuerzten MC-Baum neu versuchen.
   // ==========================================================================
   if (!mcBlocked) {
     return <>
       <BrandStyles />
       <ConnIssueBanner message={connIssue} offline={isOffline} reconnected={justReconnected} />
-      <MissionControlBoundary onFallback={handleMcFallback} key={uiMode}>
+      <MissionControlBoundary onFallback={handleMcFallback}>
         <MissionControl setup={setup} dyn={dyn} session={session}
           updateDyn={updateDyn} updateSetup={updateSetup} onLogout={() => { unsubscribePush(session.dispatcherId, "dispatcherState", updateDyn); setSession(null); }}
           onPreviewGuest={setPreviewGuestToken} onUndo={undo} undoCount={undoCount}
@@ -1150,30 +1159,22 @@ export default function App() {
       </MissionControlBoundary>
     </>;
   }
+  // Dieser Zweig ist NUR der Fallschirm, erreichbar ausschliesslich ueber
+  // mcBlocked (MC ist beim Rendern abgestuerzt). Kein normaler Weg fuehrt hierher.
+  //
+  // Session 22: hier stand bis eben die Classic-Oberflaeche (Komponente Dashboard).
+  // Sie ist
+  // durch die Fehlerseite ersetzt, weil Classic geloescht wird. Damit ist
+  // Dashboard ab jetzt ohne Aufrufer und kann in Session 23 gefahrlos raus.
+  //
+  // Bewusst KEIN ConnIssueBanner mehr in diesem Zweig: die Fehlerseite ist eine
+  // Vollbild-Seite (min-h-screen), ein Netzwerk-Banner darueber waere hier ohne
+  // Nutzen (es gibt nichts mehr zu bedienen, was speichern koennte).
+  // Der frueher separate mcFailReason-Hinweis oben ist entfallen, der Text steht
+  // jetzt auf der Fehlerseite selbst.
   return <>
     <BrandStyles />
-    <ConnIssueBanner message={connIssue} offline={isOffline} reconnected={justReconnected} />
-    {mcFailReason && (
-      <div className="max-w-[1400px] 2xl:max-w-[1800px] mx-auto px-5 pt-2">
-        <div className="flex items-start gap-2 text-xs text-amber-300 bg-amber-950/40 border border-amber-900/50 rounded-lg px-3 py-2">
-          <AlertTriangle className="w-4 h-4 shrink-0 mt-px" /><span>{mcFailReason}</span>
-        </div>
-      </div>
-    )}
-    {/* Session 19: dieser Zweig ist NUR noch der Fallschirm, erreichbar
-        ausschliesslich ueber mcBlocked (MC ist beim Rendern abgestuerzt).
-        Kein normaler Weg fuehrt mehr hierher.
-        onSwitchToMobile: null, weil es seit Session 21 keine Handy-Ansicht und
-        keinen Umschalter dorthin mehr gibt (der Knopf waere ohne Wirkung).
-        onSetUiMode: null, damit der Umschalter "Oberflaeche" im Dashboard-Kopf
-        (3742) ausgeblendet ist. War vorher mcBlocked ? null : setUiModeSafe,
-        was hier ohnehin immer null ergaebe; jetzt explizit, damit es nicht an
-        einem Nebeneffekt haengt. */}
-    <Dashboard setup={setup} dyn={dyn} session={session}
-      updateDyn={updateDyn} updateSetup={updateSetup} onLogout={() => { unsubscribePush(session.dispatcherId, "dispatcherState", updateDyn); setSession(null); }}
-      onPreviewGuest={setPreviewGuestToken} onUndo={undo} undoCount={undoCount}
-      onSwitchToMobile={null}
-      uiMode={uiMode} onSetUiMode={null} />
+    <MissionControlFallbackScreen reason={mcFailReason} />
   </>;
 }
 
@@ -1233,25 +1234,30 @@ function LoadErrorScreen({ message, onRetry }) {
 // Emergency-Fallback fuer Mission Control Beta
 // ----------------------------------------------------------------------------
 // Faengt einen Render-/Lifecycle-Fehler im Mission-Control-Baum ab (z. B. ein
-// Bug in einem der Animations-Effekte oder einer MC-Tab-Kopie) und faellt sauber
-// auf die Classic-Oberflaeche zurueck, statt die ganze App weiss werden zu
+// Bug in einem der Animations-Effekte oder einer Tab-Komponente) und zeigt eine
+// verstaendliche Fehlerseite mit "Neu laden", statt die ganze App weiss werden zu
 // lassen. Bewusst eine KLASSEN-Komponente, weil componentDidCatch/
 // getDerivedStateFromError nur so verfuegbar sind (es gibt keinen Hook dafuer).
+//
+// SESSION 22 (15.07.2026): frueher fiel diese Boundary auf die Classic-
+// Oberflaeche zurueck. Classic wird geloescht, damit hat sie keinen Boden mehr.
+// Neuer Boden: MissionControlFallbackScreen. Kein Oberflaechen-Wechsel mehr,
+// kein Schreiben von uiMode/localStorage.
 //
 // WICHTIG - was diese Boundary NICHT tut:
 //   - Sie fasst NIE updateDyn/updateSetup an, ruft keine Schreibwege auf, aendert
 //     keine Fahrten/Status/Rollen. Der einzige Seiteneffekt ist onFallback(),
-//     das die reine GERAETE-Praeferenz uiMode auf "classic" zurueckstellt
-//     (localStorage). Ein abgefangener Render-Fehler kann also keine Daten
-//     veraendern.
-//   - Sie umschliesst ausschliesslich den MC-Zweig. Classic, Dashboard, Fahrer,
-//     Stage und Gast laufen voellig ausserhalb und sind unberuehrt.
+//     und das setzt seit Session 22 nur noch zwei React-States im Aufrufer
+//     (mcBlocked, mcFailReason). Ein abgefangener Render-Fehler kann also keine
+//     Daten veraendern, weder in der DB noch in localStorage.
+//   - Sie umschliesst ausschliesslich den MC-Zweig. Fahrer, Stage und Gast laufen
+//     voellig ausserhalb und sind unberuehrt.
 //
-// Selbstheilung gegen Crash-Loop: Nach dem ersten abgefangenen Fehler wird der
-// Fallback ausgeloest UND MC fuer den Rest dieser Session gesperrt (der Aufrufer
-// merkt sich das). So kann ein sofortiger Wieder-Wechsel nicht in eine
-// Endlosschleife MC-crasht-Classic-MC-crasht laufen. Nach einem Reload ist MC
-// wieder frei probierbar (die Sperre lebt nur im Speicher, nicht in localStorage).
+// Selbstheilung gegen Crash-Loop: Nach dem ersten abgefangenen Fehler wird MC
+// fuer den Rest dieser Session gesperrt (der Aufrufer merkt sich das ueber
+// mcBlocked). Ohne diese Sperre wuerde der naechste Poll-Re-Render (alle 3 s)
+// den abgestuerzten Baum erneut versuchen. Nach einem Reload ist MC wieder frei
+// (die Sperre lebt nur im Speicher, nicht in localStorage).
 class MissionControlBoundary extends Component {
   constructor(props) {
     super(props);
@@ -1262,37 +1268,55 @@ class MissionControlBoundary extends Component {
     return { failed: true };
   }
   componentDidCatch(error, info) {
-    // Effekt-Phase: protokollieren und den Aufrufer informieren, damit der auf
-    // Classic zurueckstellt + MC fuer die Session sperrt. Reine Praeferenz-
-    // Umschaltung, kein Datenzugriff.
-    console.error("Mission Control Beta abgefangen, Rueckfall auf Classic:", error, info);
+    // Effekt-Phase: protokollieren und den Aufrufer informieren, damit der MC
+    // fuer diese Session sperrt. Kein Datenzugriff, kein localStorage.
+    console.error("Mission Control abgefangen, Fehlerseite statt Absturz:", error, info);
     if (this.props.onFallback) this.props.onFallback(error);
   }
   render() {
     if (this.state.failed) {
-      // Kurze, verstaendliche Meldung. Der eigentliche Wechsel auf Classic
-      // passiert ueber onFallback im Aufrufer (Re-Render zeigt dann Classic);
-      // dieser Screen ist nur fuer den einen Render-Tick sichtbar, in dem der
-      // State-Wechsel noch nicht durch ist. Defensive Doppel-Absicherung.
+      // Session 22: dieselbe Fehlerseite, die der Aufrufer nach mcBlocked zeigt.
+      // Sichtbar ist dieser Pfad nur fuer den einen Render-Tick zwischen
+      // getDerivedStateFromError und dem State-Wechsel im Aufrufer. Bewusst
+      // beibehalten als Doppel-Absicherung: sollte onFallback je fehlen oder
+      // nicht durchkommen, bleibt es trotzdem bei der Fehlerseite statt einem
+      // weissen Bildschirm.
       return <MissionControlFallbackScreen />;
     }
     return this.props.children;
   }
 }
 
-// Verstaendliche Meldung fuer den Nutzer, falls Mission Control abstuerzt.
-// Bewusst im Classic-Stone-Look (nicht im mc-scope), weil der MC-Baum in diesem
-// Moment gerade als defekt gilt und wir keine MC-Styles mehr rendern wollen.
-function MissionControlFallbackScreen() {
+// Verstaendliche Fehlerseite, falls Mission Control abstuerzt.
+// Bewusst im Stone-Look (nicht im mc-scope), weil der MC-Baum in diesem Moment
+// gerade als defekt gilt und wir keine MC-Styles mehr rendern wollen.
+//
+// Session 22: der Text hier behauptete vorher, es werde auf die alte Oberflaeche
+// zurueckgewechselt und diese gerade geladen. Ohne Classic ist das eine
+// Falschaussage und ist deshalb raus. Neu ist
+// der "Neu laden"-Knopf: das ist der einzige Weg zurueck, weil mcBlocked nur im
+// Speicher lebt und ein Reload ihn zuruecksetzt.
+//
+// reason ist optional: der Aufrufer (mcBlocked-Zweig) reicht mcFailReason durch,
+// die Boundary selbst rendert den Screen fuer ihren einen Render-Tick ohne Text.
+// Wichtig: KEIN Datenzugriff, kein updateDyn, kein localStorage. Reine Anzeige
+// plus ein Reload auf Knopfdruck.
+function MissionControlFallbackScreen({ reason }) {
+  const reload = () => { try { window.location.reload(); } catch {} };
   return (
     <div className="min-h-screen w-full flex flex-col items-center justify-center gap-4 bg-stone-950 text-stone-300 px-6 text-center">
       <img src={OB_HORIZ} alt="Open Beatz" style={obInvert} className="h-10 w-auto opacity-90" />
       <AlertTriangle className="w-8 h-8 text-amber-400" />
-      <div className="font-mono text-sm text-stone-100">Mission Control Beta hatte ein Problem</div>
-      <div className="text-xs text-stone-500 max-w-sm">Zur klassischen Ansicht zurückgewechselt. Deine Daten sind unverändert. Du kannst Mission Control später erneut öffnen.</div>
-      <div className="flex items-center gap-2 text-xs text-stone-600 mt-1">
-        <RefreshCw className="w-3.5 h-3.5 animate-spin" /> Classic wird geladen…
+      <div className="font-mono text-sm text-stone-100">Die Leitstelle hatte ein Problem</div>
+      <div className="text-xs text-stone-500 max-w-sm">
+        {reason || "Mission Control wurde nach einem Fehler beendet. Ein Neuladen der Seite startet die Leitstelle wieder."}
       </div>
+      <div className="text-xs text-stone-500 max-w-sm">Deine Daten sind unverändert. Es ging nichts verloren, was schon gespeichert war.</div>
+      <button type="button" onClick={reload}
+        className="mt-1 flex items-center gap-2 text-sm px-4 py-2 rounded-lg bg-stone-800 hover:bg-stone-700 text-stone-100 border border-stone-700 transition-colors">
+        <RefreshCw className="w-4 h-4" /> Neu laden
+      </button>
+      <div className="text-[11px] text-stone-600 max-w-sm mt-1">Wenn das Problem nach dem Neuladen sofort wiederkommt: Fahrer, Stage Manager und die Gast-Links laufen unabhängig davon weiter.</div>
     </div>
   );
 }
