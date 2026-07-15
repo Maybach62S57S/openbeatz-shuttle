@@ -1863,6 +1863,12 @@ const STATUS_FLOW = {
 // einen Schritt zurück, ohne die Leitstelle anzurufen. "planned" hat bewusst
 // keinen Eintrag (ganz am Anfang, nichts davor).
 const STATUS_PREV = { accepted: "planned", enroute_pickup: "accepted", onboard: "enroute_pickup", done: "onboard" };
+// Sperrfenster fuer die Statusknoepfe der Fahrer-App (Session 24c). Bewusst
+// NICHT an die Netzlaufzeit gekoppelt: der from-Vergleich in advance/goBack
+// schuetzt nur, solange der Schreibzyklus laeuft, und der ist bei schneller
+// Verbindung kuerzer als ein hektischer Doppeltipp. Ohne feste Sperre wuerden
+// zwei schnelle Tipps auf "Gast eingestiegen" die Fahrt auf "done" schieben.
+const STATUS_LOCK_MS = 500;
 const STATUS_LABEL = {
   planned: "Geplant", accepted: "Angenommen", enroute_pickup: "Auf Anfahrt",
   onboard: "Gast an Bord", done: "Abgeschlossen", cancelled: "Storniert",
@@ -2347,6 +2353,29 @@ function DriverApp({ setup, dyn, session, updateDyn, onLogout }) {
     }]));
   }, [dyn.rides, driver.id]);
 
+  // Doppeltipp-Sperre (Session 24c). Der from-Vergleich unten schuetzt die Daten,
+  // aber nur solange der Schreibzyklus laeuft. Danach hat React neu gezeichnet und
+  // ein zweiter Tipp waere ein legitimer zweiter Schritt: aus zwei hektischen
+  // Tipps auf "Gast eingestiegen" wuerde "done", also eine Fahrt abgeschlossen,
+  // die nie stattgefunden hat. Deshalb zusaetzlich mindestens STATUS_LOCK_MS
+  // sperren, unabhaengig vom Netz.
+  // busyRef ist der eigentliche Waechter: er greift schon im selben Tick, bevor
+  // React neu zeichnen und "disabled" setzen kann. busyRide ist nur fuer die
+  // Anzeige. Gleiches Muster wie "resolving" in MissionEmergencyTab.
+  const busyRef = useRef(null);
+  const [busyRide, setBusyRide] = useState(null);
+  const mitSperre = async (ride, arbeit) => {
+    if (busyRef.current) return;
+    busyRef.current = ride.id;
+    setBusyRide(ride.id);
+    try {
+      await Promise.all([arbeit(), new Promise((res) => setTimeout(res, STATUS_LOCK_MS))]);
+    } finally {
+      busyRef.current = null;
+      setBusyRide(null);
+    }
+  };
+
   // Schutz gegen das Status-Race (Session 24c). flow wird aus dem GERENDERTEN
   // Prop berechnet, angewendet wird aber auf das FRISCHE r aus der DB. Ohne den
   // from-Vergleich IM Mutator wandert ein veralteter Zielstatus blind in die
@@ -2360,14 +2389,14 @@ function DriverApp({ setup, dyn, session, updateDyn, onLogout }) {
     const from = ride.status;
     const flow = STATUS_FLOW[from];
     if (!flow || !flow.next) return;
-    updateDyn((d) => {
+    mitSperre(ride, () => updateDyn((d) => {
       const r = d.rides.find((x) => x.id === ride.id);
       if (!r || r.status !== from) return d;
       setRideStatus(r, flow.next, `driver:${driver.id}`);
       d.driverState[driver.id] = d.driverState[driver.id] || {};
       if (flow.next === "done") d.driverState[driver.id].locationId = ride.toId;
       return d;
-    });
+    }));
   };
 
   // Korrektur bei Versehen (z. B. "Gast eingestiegen" fälschlich angetippt,
@@ -2378,12 +2407,12 @@ function DriverApp({ setup, dyn, session, updateDyn, onLogout }) {
     const from = ride.status;
     const prev = STATUS_PREV[from];
     if (!prev) return;
-    updateDyn((d) => {
+    mitSperre(ride, () => updateDyn((d) => {
       const r = d.rides.find((x) => x.id === ride.id);
       if (!r || r.status !== from) return d; // gleicher Schutz wie in advance()
       setRideStatus(r, prev, `driver:${driver.id}`);
       return d;
-    });
+    }));
   };
 
   const reportIssue = (ride, type, note) => {
@@ -2509,14 +2538,15 @@ function DriverApp({ setup, dyn, session, updateDyn, onLogout }) {
             )}
             <StepProgress status={nextRide.status} />
             {STATUS_FLOW[nextRide.status]?.next && (
-              <button onClick={() => advance(nextRide)}
-                className={`w-full mt-3 py-3 rounded-xl font-semibold text-white ${STATUS_FLOW[nextRide.status].btn} transition flex items-center justify-center gap-2`}>
+              <button onClick={() => advance(nextRide)} disabled={busyRide !== null}
+                className={`w-full mt-3 py-3 rounded-xl font-semibold text-white ${STATUS_FLOW[nextRide.status].btn} transition flex items-center justify-center gap-2 disabled:opacity-60`}>
                 {nextRide.status === "onboard" ? <Flag className="w-5 h-5" /> : <Play className="w-5 h-5" />}
-                {STATUS_FLOW[nextRide.status].label}
+                {busyRide === nextRide.id ? "speichert…" : STATUS_FLOW[nextRide.status].label}
               </button>
             )}
             {STATUS_PREV[nextRide.status] && (
-              <button onClick={() => goBack(nextRide)} className="w-full mt-1.5 py-1.5 text-xs text-stone-500 hover:text-stone-300">
+              <button onClick={() => goBack(nextRide)} disabled={busyRide !== null}
+                className="w-full mt-1.5 py-1.5 text-xs text-stone-500 hover:text-stone-300 disabled:opacity-50">
                 aus Versehen? zurück zu „{STATUS_LABEL[STATUS_PREV[nextRide.status]]}"
               </button>
             )}
@@ -2588,10 +2618,10 @@ function DriverApp({ setup, dyn, session, updateDyn, onLogout }) {
 
               <div className="flex gap-2 mt-3">
                 {flow && flow.next && (
-                  <button onClick={() => advance(r)}
-                    className={`flex-1 py-3 rounded-xl font-medium text-white ${flow.btn} transition flex items-center justify-center gap-2`}>
+                  <button onClick={() => advance(r)} disabled={busyRide !== null}
+                    className={`flex-1 py-3 rounded-xl font-medium text-white ${flow.btn} transition flex items-center justify-center gap-2 disabled:opacity-60`}>
                     {r.status === "onboard" ? <Flag className="w-4 h-4" /> : <Play className="w-4 h-4" />}
-                    {flow.label}
+                    {busyRide === r.id ? "speichert…" : flow.label}
                   </button>
                 )}
                 {!done && navUrlForRide(setup, r) && (
@@ -2609,7 +2639,8 @@ function DriverApp({ setup, dyn, session, updateDyn, onLogout }) {
                 )}
               </div>
               {STATUS_PREV[r.status] && (
-                <button onClick={() => goBack(r)} className="w-full mt-1.5 py-1 text-xs text-stone-500 hover:text-stone-300">
+                <button onClick={() => goBack(r)} disabled={busyRide !== null}
+                  className="w-full mt-1.5 py-1 text-xs text-stone-500 hover:text-stone-300 disabled:opacity-50">
                   aus Versehen? zurück zu „{STATUS_LABEL[STATUS_PREV[r.status]]}"
                 </button>
               )}
