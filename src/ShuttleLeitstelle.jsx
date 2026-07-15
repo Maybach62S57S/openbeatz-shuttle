@@ -747,20 +747,14 @@ export default function App() {
   // Schluessel "obf:viewMode" ersatzlos weg, sie hatten seit Session 19 keinen
   // Aufrufer mehr. Ein alter "obf:viewMode"-Wert auf einem Geraet wird ab jetzt
   // einfach ignoriert und schadet nicht.
-  // UI-Modus (Classic vs. Mission Control Beta): pro GERAET gemerkt (localStorage,
-  // wie obf:viewMode), NICHT in Supabase. Harter Fallback: alles ausser exakt
-  // "mission-control" faellt auf "classic" zurueck — auch ein defekter/unbekannter
-  // gespeicherter Wert. Wird nur im Dispo-Desktop-Zweig ausgewertet (siehe unten),
-  // Handy behaelt Vorrang, Driver/Stage/Guest sind unberuehrt.
-  const [uiMode, setUiMode] = useState(() => {
-    try { return localStorage.getItem("obf:uiMode") === "mission-control" ? "mission-control" : "classic"; }
-    catch { return "classic"; }
-  });
-  const setUiModeSafe = (mode) => {
-    const val = mode === "mission-control" ? "mission-control" : "classic";
-    setUiMode(val);
-    try { localStorage.setItem("obf:uiMode", val); } catch {}
-  };
+  // Session 23 (15.07.2026): hier stand der uiMode-State (Classic vs. Mission
+  // Control) samt setUiModeSafe und dem localStorage-Schluessel "obf:uiMode".
+  // Ersatzlos weg: seit Session 19 wertet das Routing ihn nicht mehr aus, seit
+  // Session 22 schreibt ihn niemand mehr (handleMcFallback war der letzte), und
+  // mit dem Classic-Dashboard faellt auch der letzte Leser weg. Mission Control
+  // ist die einzige Leitstellen-Oberflaeche, es gibt nichts mehr umzuschalten.
+  // Ein alter "obf:uiMode"-Wert auf einem Geraet wird ab jetzt ignoriert und
+  // schadet nicht (wie "obf:viewMode" seit Session 21).
   // Emergency-Fallback: sperrt Mission Control fuer den REST DIESER SESSION,
   // nachdem der MC-Baum einmal beim Rendern abgestuerzt ist. Lebt bewusst nur
   // im Speicher (nicht in localStorage), damit ein Reload MC wieder frei gibt.
@@ -1122,11 +1116,9 @@ export default function App() {
   //      besser als die schlanke Mobil-Ansicht). Session 21 hat
   //      MobileDispatcherView samt viewOverride-Kette dann ganz geloescht.
   //   2. if (uiMode === "mission-control"). Es gibt keine Classic-Wahl mehr.
-  //      uiMode und localStorage "obf:uiMode" werden fuer die Routing-
-  //      Entscheidung nicht mehr ausgewertet; der Umschalter "Oberflaeche" ist
-  //      in beiden Kopfzeilen ueber onSetUiMode={null} ausgeblendet (Dashboard
-  //      3742, MC-Kopf "Zu Classic"). State + Setter bleiben bestehen, weil
-  //      handleMcFallback sie weiter benutzt.
+  //      Session 23 hat State, Setter und localStorage "obf:uiMode" dann ganz
+  //      geloescht; onSetUiMode wird hier weiter fest als null uebergeben, damit
+  //      der (unerreichbare) "Zu Classic"-Knopf im MC-Kopf ausgeblendet bleibt.
   //
   // SESSION 22 (15.07.2026): DER FALLSCHIRM HAT EINEN NEUEN BODEN.
   // Stuerzt der MC-Baum beim Rendern ab, ruft MissionControlBoundary ->
@@ -1154,7 +1146,7 @@ export default function App() {
           updateDyn={updateDyn} updateSetup={updateSetup} onLogout={() => { unsubscribePush(session.dispatcherId, "dispatcherState", updateDyn); setSession(null); }}
           onPreviewGuest={setPreviewGuestToken} onUndo={undo} undoCount={undoCount}
           onSwitchToMobile={null}
-          uiMode={uiMode} onSetUiMode={null}
+          onSetUiMode={null}
           offline={isOffline} connIssue={connIssue} />
       </MissionControlBoundary>
     </>;
@@ -3612,463 +3604,22 @@ function ChatPanel({ setup, dyn, day, updateDyn, by, liftOffset }) {
   );
 }
 
-function Dashboard({ setup, dyn, session, updateDyn, updateSetup, onLogout, onPreviewGuest, onUndo, undoCount, onSwitchToMobile, uiMode, onSetUiMode }) {
-  // Wer ist gerade angemeldet — fließt in jede Protokoll-Zeile statt anonym "Leitstelle".
-  const me = (setup.dispatchers || []).find((p) => p.id === session?.dispatcherId);
-  const meBy = `dispo:${session?.dispatcherId || ""}`;
-  // Nachtrag 4: Push-Benachrichtigungen auch für die Leitstelle (bei Problem-
-  // Meldungen und kritischem Flugstatus, siehe triggerDispatcherPush). Ein
-  // Abo pro angemeldetem Namen, nicht pro Gerät — meldet sich dieselbe
-  // Person auf einem zweiten Gerät neu an, ersetzt das dortige Aktivieren
-  // das vorherige Abo (wie bei Fahrern auch).
-  const push = usePushNotifications(session?.dispatcherId, "dispatcherState", updateDyn, setup.config.vapidPublicKey);
-  const days = dayTabs(setup, dyn);
-  const [day, setDay] = useState(days[0]?.key || "");
-  useEffect(() => {
-    if (days.length === 0) { if (day) setDay(""); return; }
-    if (!days.some((d) => d.key === day)) setDay(days[0].key);
-  }, [days, day]);
-
-  const [tab, setTab] = useState("overview"); // overview | board | emergency | returns | flights | map | drivers | settings
-  const [filter, setFilter] = useState("all"); // all | unassigned | active | done
-  const [q, setQ] = useState("");
-  const [assignRide, setAssignRide] = useState(null);
-  const [editRide, setEditRide] = useState(null);
-  const [waRide, setWaRide] = useState(null);
-  const [clock, setClock] = useState(nowHM());
-  useEffect(() => { const t = setInterval(() => setClock(nowHM()), 20000); return () => clearInterval(t); }, []);
-  const [boardRef, boardWidth] = useElementWidth();
-
-  // Geteilter Fehler-Hinweis fuer die Leitstelle. Kleinere Aktionen (Problem-
-  // status, Flug-Korrektur, Rueckfahrt-/Anwesenheits-Flags) feuern updateDyn;
-  // schlaegt das Speichern fehl (Netz/Konflikt), sah es bisher aus wie "hat
-  // nicht reagiert". Jetzt: kurzer roter Hinweis oben. Gleiche Idee wie das
-  // Fahrer-Toast (~Z. 2068), aber ohne Ton/Vibration (Leitstelle sitzt am
-  // Bildschirm) und mit laengerer Standzeit (Fehler soll man mitkriegen).
-  // Wird an die Tabs (Returns/Flight/Emergency) als onErr durchgereicht und
-  // hier direkt von setIssueState genutzt.
-  const [errToasts, setErrToasts] = useState([]);
-  const notifyErr = useCallback((text) => {
-    const id = Date.now() + Math.random();
-    setErrToasts((t) => [{ id, text }, ...t].slice(0, 4));
-    setTimeout(() => setErrToasts((cur) => cur.filter((x) => x.id !== id)), 8000);
-  }, []);
-
-  const dayRides = useMemo(() => (dyn.rides || [])
-    .filter((r) => r.dayKey === day)
-    .sort((a, b) => sortMin(a.time) - sortMin(b.time)), [dyn.rides, day]);
-
-  const filtered = dayRides.filter((r) => {
-    if (filter === "unassigned" && r.assignedDriverId) return false;
-    if (filter === "active" && !["accepted", "enroute_pickup", "onboard"].includes(r.status)) return false;
-    if (filter === "done" && r.status !== "done") return false;
-    if (r.status === "cancelled" && filter !== "all") return false;
-    if (q) {
-      const hay = `${r.djName} ${r.passengers} ${r.flightNo} ${r.zone}`.toLowerCase();
-      if (!hay.includes(q.toLowerCase())) return false;
-    }
-    return true;
-  });
-
-  const kpi = {
-    total: dayRides.filter((r) => r.status !== "cancelled").length,
-    unassigned: dayRides.filter((r) => !r.assignedDriverId && r.status !== "cancelled").length,
-    active: dayRides.filter((r) => ["accepted", "enroute_pickup", "onboard"].includes(r.status)).length,
-    done: dayRides.filter((r) => r.status === "done").length,
-  };
-
-  const locName = (id, txt) => setup.locations.find((l) => l.id === id)?.short || txt || "—";
-
-  // Für das Warn-Badge am Notfall-Reiter: dieselbe Logik wie im Notfall-Tab
-  // (emergencyCases), damit man aus jedem Reiter sieht, wenn dort etwas
-  // Akutes wartet, ohne aktiv reinschauen zu müssen. Nur der Zähler, die
-  // eigentliche Liste bleibt im Notfall-Tab.
-  const emCases = emergencyCases(setup, dyn, day);
-  const emCrit = emCases.filter((c) => c.sev === "critical").length;
-  const emCount = emCases.length;
-  const msgOpen = openMessages(dyn).length; // offene (unbeantwortete) Nachrichten -> Tab-Badge
-
-  return (
-    <div className="min-h-screen bg-stone-950 text-stone-100">
-      {/* Fehler-Hinweise (fehlgeschlagenes Speichern kleinerer Aktionen) */}
-      {errToasts.length > 0 && (
-        <div className="fixed left-1/2 -translate-x-1/2 z-50 px-3 space-y-1.5 w-full max-w-md" style={{ top: "max(0.75rem, env(safe-area-inset-top))" }}>
-          {errToasts.map((t) => (
-            <div key={t.id} onClick={() => setErrToasts((cur) => cur.filter((x) => x.id !== t.id))}
-              className="bg-red-600 text-white text-sm px-3.5 py-2.5 rounded-xl shadow-lg flex items-center gap-2 cursor-pointer">
-              <AlertTriangle className="w-4 h-4 shrink-0" /><span className="flex-1">{t.text}</span><X className="w-4 h-4 shrink-0 opacity-70" />
-            </div>
-          ))}
-        </div>
-      )}
-      {/* Kopf */}
-      <header className="sticky top-0 z-20 bg-stone-950/95 backdrop-blur border-b border-stone-800">
-        <div className="max-w-[1400px] 2xl:max-w-[1800px] mx-auto px-5 py-3 flex items-center gap-4">
-          <div className="flex items-center gap-2.5">
-            <span className="ob-pulse inline-block w-2 h-2 rounded-full bg-orange-500 shrink-0" />
-            <img src={OB_HORIZ} alt="Open Beatz" style={obInvert} className="h-8 w-auto shrink-0" />
-            <div className="hidden md:block text-orange-400 text-[10px] font-mono tracking-[0.15em] border-l border-stone-700 pl-2.5 leading-tight">DISPO</div>
-          </div>
-          <div className="ml-2 flex items-center gap-1 text-stone-500 text-sm font-mono"><Clock className="w-4 h-4" />{clock}</div>
-          <div className="flex-1" />
-          <nav className="flex gap-1 overflow-x-auto min-w-0">
-            {/* overflow-x-auto: bei schmaleren Fenstern (aber noch breit genug
-                für die Desktop-Ansicht) passen die 9 Reiter nicht immer alle
-                nebeneinander. Vorher lief das ohne Begrenzung, hat dadurch
-                die GANZE Seite seitlich überlaufen lassen (sichtbar als
-                weißer Rand, siehe index.css). Jetzt bleibt der Überlauf auf
-                diese eine Zeile begrenzt, scrollt bei Bedarf für sich. */}
-            {[["overview", "Überblick", LayoutGrid], ["board", "Board", Route], ["timeline", "Timeline", Gauge], ["emergency", "Notfall", Siren], ["messages", "Nachrichten", MessageSquare], ["returns", "Rückfahrten", Moon], ["flights", "Flughafen", Plane], ["map", "Karte", MapIcon], ["drivers", "Fahrer", Users], ["settings", "Einstellungen", Settings]].map(([t, l, I]) => (
-              <button key={t} onClick={() => setTab(t)}
-                className={`shrink-0 px-3 py-1.5 rounded-lg text-sm flex items-center gap-1.5 relative ${tab === t ? "bg-stone-800 text-stone-100" : "text-stone-400 hover:text-stone-200"}`}>
-                <I className="w-4 h-4" />{l}
-                {t === "emergency" && emCount > 0 && (
-                  <span className={`ml-0.5 min-w-[1.1rem] h-[1.1rem] px-1 inline-flex items-center justify-center rounded-full text-[10px] font-bold ${emCrit > 0 ? "bg-red-500 text-white ob-pulse" : "bg-amber-500/80 text-stone-900"}`}>
-                    {emCount}
-                  </span>
-                )}
-                {t === "messages" && msgOpen > 0 && (
-                  <span className="ml-0.5 min-w-[1.1rem] h-[1.1rem] px-1 inline-flex items-center justify-center rounded-full text-[10px] font-bold bg-orange-500 text-white">
-                    {msgOpen}
-                  </span>
-                )}
-              </button>
-            ))}
-            {/* Rückgängig: auf Jordans Wunsch direkt neben Einstellungen, als
-                Teil derselben Reihe statt als eigenes, separat stehendes
-                Element daneben — läuft dadurch auch mit derselben
-                overflow-x-auto-Zeile mit statt eine zusätzliche eigene
-                Position im Kopfbereich zu beanspruchen. */}
-            <button onClick={onUndo} disabled={undoCount === 0} title={undoCount > 0 ? "Letzte Änderung rückgängig machen" : "Nichts zum Rückgängigmachen"}
-              className={`shrink-0 flex items-center gap-1.5 text-sm px-3 py-1.5 rounded-lg ${undoCount > 0 ? "text-stone-400 hover:text-stone-200" : "text-stone-700 cursor-not-allowed"}`}>
-              <RefreshCw className="w-4 h-4 -scale-x-100" />Rückgängig{undoCount > 1 ? ` (${undoCount})` : ""}
-            </button>
-          </nav>
-          {me && <span className="hidden sm:inline text-xs text-stone-500 ml-1">{me.name}</span>}
-          {push.status !== "unconfigured" && (
-            <button onClick={push.enable} title={push.status === "active" ? `${PUSH_STATUS_LABEL[push.status]} · antippen zum erneuten Synchronisieren` : PUSH_STATUS_LABEL[push.status]}
-              className="hidden sm:flex items-center gap-1.5 text-[11px] text-stone-500 hover:text-stone-300 px-1.5">
-              <span className={`w-2 h-2 rounded-full shrink-0 ${push.status === "active" ? "bg-emerald-400" : push.status === "denied" || push.status === "error" ? "bg-red-400" : "bg-stone-600"}`} />
-              Push{push.status === "idle" ? " · antippen" : ""}
-            </button>
-          )}
-          {onSwitchToMobile && (
-            <button onClick={onSwitchToMobile} title="Zur schlanken Handy-Ansicht wechseln" className="text-stone-500 hover:text-stone-300 p-2"><Smartphone className="w-4 h-4" /></button>
-          )}
-          {/* Mission-Control-Beta-Umschalter: nur sichtbar, wenn onSetUiMode
-              uebergeben wurde. Das ist ausschliesslich im Dispo-Desktop-Zweig der
-              Fall (Login-Rolle "dispo"). Driver/Stage/Guest rendern das Dashboard
-              nie, sehen den Button also grundsaetzlich nicht. Zwei-Segment-
-              Umschalter (Classic / Mission Control Beta), aktive Option gefuellt.
-              Bewusst nur zwei Optionen, kein drittes Theme. */}
-          {onSetUiMode && (
-            <div className="flex items-center gap-1.5">
-              <span className="hidden md:inline text-[11px] uppercase tracking-wide text-stone-500">Oberfläche</span>
-              <div className="inline-flex items-center rounded-lg border border-stone-700 p-0.5 bg-stone-900/60">
-                <button onClick={() => onSetUiMode("classic")}
-                  title="Classic-Oberfläche"
-                  className={`text-xs px-2.5 py-1 rounded-md transition-colors ${uiMode !== "mission-control" ? "bg-stone-800 text-stone-100" : "text-stone-400 hover:text-stone-200"}`}>
-                  Classic
-                </button>
-                <button onClick={() => onSetUiMode("mission-control")}
-                  title="Mission Control Beta öffnen"
-                  className={`flex items-center gap-1.5 text-xs px-2.5 py-1 rounded-md transition-colors ${uiMode === "mission-control" ? "bg-stone-800 text-stone-100" : "text-stone-400 hover:text-stone-200"}`}>
-                  <Radio className="w-3.5 h-3.5" />Mission Control Beta
-                </button>
-              </div>
-            </div>
-          )}
-          <button onClick={onLogout} className="text-stone-500 hover:text-stone-300 p-2"><LogOut className="w-5 h-5" /></button>
-        </div>
-        {/* Tage + KPIs */}
-        <div className="max-w-[1400px] 2xl:max-w-[1800px] mx-auto px-5 pb-3 flex items-center gap-3 flex-wrap">
-          <div className="flex gap-1.5">
-            {days.length === 0 && <span className="text-stone-500 text-sm">Noch keine Tage – Fahrten importieren oder anlegen.</span>}
-            {days.map((d) => (
-              <button key={d.key} onClick={() => setDay(d.key)}
-                className={`px-3 py-1.5 rounded-lg text-sm ${day === d.key ? "bg-stone-100 text-stone-900 font-medium" : "bg-stone-900 text-stone-400 hover:text-stone-200"}`}>
-                {d.label}
-              </button>
-            ))}
-          </div>
-          <div className="flex-1" />
-          <Kpi label="Fahrten" value={kpi.total} />
-          <Kpi label="Offen" value={kpi.unassigned} tone={kpi.unassigned ? "orange" : "stone"} />
-          <Kpi label="Aktiv" value={kpi.active} tone="blue" />
-          <Kpi label="Erledigt" value={kpi.done} tone="emerald" />
-        </div>
-      </header>
-
-      <main className="max-w-[1400px] 2xl:max-w-[1800px] mx-auto px-5 py-5">
-        {(() => {
-          const withIssues = (dyn.rides || []).filter((r) => rideHasOpenIssue(r) && r.status !== "cancelled");
-          if (withIssues.length === 0) return null;
-          const setIssueState = async (rideId, st) => {
-            const res = await updateDyn((d) => {
-              const rr = d.rides.find((x) => x.id === rideId);
-              if (rr) { (rr.issues || []).filter(issueOpen).forEach((i) => { i.state = st; }); logRide(rr, st === "done" ? "problem_done" : "problem_progress", meBy); }
-              return d;
-            });
-            if (!res || !res.ok) notifyErr(res?.error || "Problemstatus konnte nicht gespeichert werden, bitte erneut versuchen.");
-          };
-          const critical = withIssues.filter((r) => (r.issues || []).some((i) => issueOpen(i) && CRITICAL_ISSUES.includes(i.type)));
-          return (
-            <div className="mb-4 rounded-xl border border-red-500/40 bg-red-500/10 p-3">
-              <div className="text-sm text-red-200 font-medium mb-2 flex items-center gap-2">
-                <AlertTriangle className="w-4 h-4" />{withIssues.length} offene Problem-Meldung{withIssues.length > 1 ? "en" : ""}
-                {critical.length > 0 && <span className="text-[10px] bg-red-500 text-white px-1.5 py-0.5 rounded-full uppercase tracking-wide">{critical.length}× kritisch</span>}
-              </div>
-              <div className="space-y-1.5">
-                {withIssues.map((r) => {
-                  const drv = setup.drivers.find((d) => d.id === r.assignedDriverId);
-                  const iss = (r.issues || []).filter(issueOpen);
-                  const inProgress = iss.every((i) => i.state === "progress");
-                  const isCrit = iss.some((i) => CRITICAL_ISSUES.includes(i.type));
-                  return (
-                    <div key={r.id} className={`flex items-center flex-wrap gap-x-3 gap-y-1 text-sm rounded-lg px-3 py-2 ${isCrit ? "bg-red-500/15 border border-red-500/30" : "bg-stone-950/40"}`}>
-                      <span className="font-mono text-stone-300">{r.time}</span>
-                      <span className="text-stone-300">{drv ? `${drv.firstName} ${drv.lastName[0]}. (${drv.vehicleType === "Van" ? "Van" : "Car"})` : "kein Fahrer"}</span>
-                      <span className="text-orange-300 font-medium truncate max-w-[140px]">{r.djName || locName(r.fromId, r.fromCustom)}</span>
-                      <span className="text-red-300 truncate flex items-center gap-1.5">
-                        {isCrit && <span className="text-[9px] bg-red-500 text-white px-1 rounded uppercase">!</span>}
-                        {iss.map((i) => i.type + (i.note ? `: ${i.note}` : "")).join(" · ")}
-                      </span>
-                      <span className="text-[10px] text-stone-500">{iss[0] && fmtClock(iss[0].at)}</span>
-                      <span className={`text-[10px] px-1.5 py-0.5 rounded ${inProgress ? "bg-amber-500/20 text-amber-300" : "bg-red-500/20 text-red-300"}`}>{inProgress ? "in Bearbeitung" : "offen"}</span>
-                      <div className="ml-auto flex items-center gap-1.5 shrink-0">
-                        <button onClick={() => setTab("emergency")} className="text-xs text-orange-300 hover:text-orange-200">Notfall</button>
-                        <button onClick={() => { setDay(r.dayKey); setEditRide(r); }} className="text-xs text-stone-400 hover:text-stone-200">öffnen</button>
-                        {!inProgress && <button onClick={() => setIssueState(r.id, "progress")} className="text-xs bg-amber-600/80 hover:bg-amber-600 text-white px-2 py-1 rounded">in Arbeit</button>}
-                        <button onClick={() => setIssueState(r.id, "done")} className="text-xs bg-stone-800 hover:bg-stone-700 text-stone-200 px-2 py-1 rounded">erledigt</button>
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-            </div>
-          );
-        })()}
-        {tab === "board" && (() => {
-          const wide = boardWidth >= 960;    // Liste + Fahrer + Karte
-          const twoCol = boardWidth >= 640;  // Liste + Fahrer
-          const cols = wide ? "minmax(360px,1.7fr) minmax(160px,0.8fr) minmax(360px,1.5fr)" : twoCol ? "minmax(300px,2fr) minmax(160px,1fr)" : "1fr";
-          return (
-          <div ref={boardRef} className="grid gap-5" style={{ gridTemplateColumns: cols }}>
-            {/* Fahrtenliste */}
-            <section>
-              <div className="flex items-center gap-2 mb-3">
-                <div className="flex gap-1 bg-stone-900 rounded-lg p-1 border border-stone-800">
-                  {[["all", "Alle"], ["unassigned", "Offen"], ["active", "Aktiv"], ["done", "Erledigt"]].map(([f, l]) => (
-                    <button key={f} onClick={() => setFilter(f)}
-                      className={`px-2.5 py-1 rounded text-sm ${filter === f ? "bg-stone-700 text-stone-100" : "text-stone-400"}`}>{l}</button>
-                  ))}
-                </div>
-                <div className="relative flex-1 max-w-xs">
-                  <Search className="w-4 h-4 absolute left-2.5 top-2.5 text-stone-600" />
-                  <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="DJ, Gast, Flug…"
-                    className="w-full bg-stone-900 border border-stone-800 rounded-lg pl-8 pr-8 py-2 text-sm placeholder-stone-600 focus:outline-none focus:border-orange-500" />
-                  {q && <button onClick={() => setQ("")} aria-label="Suche leeren" className="absolute right-2 top-2.5 text-stone-500 hover:text-stone-300"><X className="w-4 h-4" /></button>}
-                </div>
-                <button onClick={() => setEditRide({ _new: true, dayKey: day, date: day })}
-                  className="ml-auto bg-orange-600 hover:bg-orange-500 text-white text-sm px-3 py-2 rounded-lg flex items-center gap-1.5">
-                  <Plus className="w-4 h-4" />Fahrt
-                </button>
-              </div>
-
-              <div className="space-y-2">
-                {filtered.length === 0 && (() => {
-                  const es = rideListEmpty({ total: dayRides.length, query: q, filterLabel: filter === "all" ? null : ({ unassigned: "Offen", active: "Aktiv", done: "Erledigt" }[filter]) });
-                  return (
-                    <div className="text-stone-500 text-sm py-10 text-center border border-dashed border-stone-800 rounded-xl">
-                      {es.text}
-                      {es.reset === "search" && <button onClick={() => setQ("")} className="ml-2 text-orange-400 hover:text-orange-300 underline">Suche zurücksetzen</button>}
-                      {es.reset === "filter" && <button onClick={() => setFilter("all")} className="ml-2 text-orange-400 hover:text-orange-300 underline">Alle anzeigen</button>}
-                    </div>
-                  );
-                })()}
-                {filtered.map((r) => {
-                  const drv = setup.drivers.find((d) => d.id === r.assignedDriverId);
-                  return (
-                    <div key={r.id} className="bg-stone-900 border border-stone-800 rounded-xl px-4 py-3 flex items-center gap-4 hover:border-stone-700 transition">
-                      <div className="text-center min-w-[52px]">
-                        <div className="font-mono text-lg font-semibold leading-none">{r.time}</div>
-                        <div className={`text-[10px] mt-1 ${r.estDurationMin == null ? "text-orange-400" : "text-stone-500"}`}>{r.estDurationMin != null ? `${r.estDurationMin}′` : "?′"}</div>
-                      </div>
-                      <div className="w-px self-stretch bg-stone-800" />
-                      <div className="flex-1 min-w-0">
-                        {r.djName && <div className="text-base font-semibold text-orange-300 truncate mb-0.5">{r.djName}</div>}
-                        <div className="flex items-center gap-2 text-sm">
-                          <span className="text-stone-400">{locName(r.fromId, r.fromCustom)}</span>
-                          <ArrowRight className="w-3.5 h-3.5 text-stone-600 shrink-0" />
-                          <span className="text-stone-100 font-medium truncate">{locName(r.toId, r.toCustom)}</span>
-                          {r.zone && <ZoneChip zone={r.zone} className="shrink-0" />}
-                          {rideHasOpenIssue(r) && <span className="text-[10px] bg-red-500/20 text-red-300 px-1.5 py-0.5 rounded shrink-0 flex items-center gap-0.5"><AlertTriangle className="w-2.5 h-2.5" />Problem</span>}
-                          {flightDelayed(r) && <span className="text-[10px] bg-red-500/20 text-red-300 px-1.5 py-0.5 rounded shrink-0 flex items-center gap-0.5"><Plane className="w-2.5 h-2.5" />Flug {flightStyle(r.flightStatus).l}</span>}
-                        </div>
-                        <div className="flex items-center gap-3 mt-1 text-xs text-stone-500">
-                          <span className="flex items-center gap-1"><Users className="w-3 h-3" />{r.passengerCount}</span>
-                          {r.flightNo && <span className={`flex items-center gap-1 ${flightDelayed(r) ? "text-red-400 font-medium" : "text-sky-400"}`}><Plane className="w-3 h-3" />{r.flightNo}{r.flightStatus ? ` · ${flightStyle(r.flightStatus).l}` : ""}{flightDelayed(r) && " ⚠"}</span>}
-                          {r.onDemand && <span className="text-orange-400">on demand</span>}
-                        </div>
-                      </div>
-                      <div className="shrink-0"><StatusPill status={r.status} /></div>
-                      <div className="w-[150px] shrink-0">
-                        {drv ? (
-                          <button onClick={() => setAssignRide(r)} className="w-full text-left group">
-                            <div className="text-sm text-stone-200 flex items-center gap-1.5">
-                              <span className={`w-2 h-2 rounded-full ${drv.vehicleType === "Van" ? "bg-orange-400" : "bg-sky-400"}`} />
-                              {drv.firstName} {drv.lastName[0]}.
-                            </div>
-                            <div className="text-[10px] text-stone-500 font-mono">{drv.vehicleType === "Van" ? "Van" : "Car"}</div>
-                          </button>
-                        ) : (
-                          <button onClick={() => setAssignRide(r)}
-                            className="w-full bg-orange-500/15 hover:bg-orange-500/25 text-orange-300 text-sm px-2.5 py-1.5 rounded-lg flex items-center justify-center gap-1">
-                            <Navigation className="w-3.5 h-3.5" />Zuteilen
-                          </button>
-                        )}
-                      </div>
-                      <button onClick={() => setWaRide(r)} title="WhatsApp-Text" className="text-stone-600 hover:text-emerald-400 shrink-0"><MessageSquare className="w-4 h-4" /></button>
-                      <button onClick={() => setEditRide(r)} className="text-stone-600 hover:text-stone-300 shrink-0"><ChevronRight className="w-5 h-5" /></button>
-                    </div>
-                  );
-                })}
-              </div>
-            </section>
-
-            {/* Fahrer-Live-Spalte */}
-            <section>
-              <h3 className="text-sm font-medium text-stone-400 mb-3 flex items-center gap-2"><Radio className="w-4 h-4" />Fahrer live</h3>
-              <div className="space-y-1.5">
-                {setup.drivers.map((d) => {
-                  const s = computeDriverStats(setup, dyn, d.id, day);
-                  return <DriverRow key={d.id} setup={setup} driver={d} stats={s} />;
-                })}
-              </div>
-            </section>
-
-            {/* Live-Karte (nur wenn genug Platz gemessen wurde, mitscrollend) */}
-            {wide && (
-              <section>
-                <div className="sticky top-4">
-                  <BoardMiniMap setup={setup} dyn={dyn} day={day} onEdit={(r) => { setDay(r.dayKey); setEditRide(r); }} />
-                </div>
-              </section>
-            )}
-          </div>
-          );
-        })()}
-
-        {tab === "overview" && <OverviewTab setup={setup} dyn={dyn} day={day} setTab={setTab}
-          onEdit={(r) => { setDay(r.dayKey); setEditRide(r); }} onAssign={(r) => setAssignRide(r)} />}
-        {tab === "timeline" && <TimelinePage setup={setup} dyn={dyn} day={day} updateDyn={updateDyn} by={meBy} onUndo={onUndo}
-          onEdit={(r) => { setDay(r.dayKey); setEditRide(r); }} onAssign={(r) => setAssignRide(r)} />}
-        {tab === "returns" && <ReturnsTab setup={setup} dyn={dyn} day={day} updateDyn={updateDyn} by={meBy} onErr={notifyErr}
-          onAssign={(r) => setAssignRide(r)} onWhatsApp={(r) => setWaRide(r)} onEdit={(r) => { setDay(r.dayKey); setEditRide(r); }}
-          onNewReturn={(artistName) => setEditRide({ _new: true, dayKey: day, date: day, djName: artistName, fromId: "festival", toId: "" })} />}
-        {tab === "emergency" && <EmergencyTab setup={setup} dyn={dyn} day={day} updateDyn={updateDyn} by={meBy} onErr={notifyErr}
-          onAssign={(r) => setAssignRide(r)} onWhatsApp={(r) => setWaRide(r)} onEdit={(r) => { setDay(r.dayKey); setEditRide(r); }} />}
-        {tab === "messages" && <MessagesInbox dyn={dyn} updateDyn={updateDyn} by={meBy} />}
-        {tab === "flights" && <FlightTab setup={setup} dyn={dyn} day={day} updateDyn={updateDyn} by={meBy} onErr={notifyErr} onEdit={(r) => { setDay(r.dayKey); setEditRide(r); }} />}
-        {tab === "map" && <MapTab setup={setup} dyn={dyn} day={day} onEdit={(r) => { setDay(r.dayKey); setEditRide(r); }} />}
-        {tab === "drivers" && <DriversTab setup={setup} dyn={dyn} day={day} />}
-        {tab === "settings" && <SettingsTab setup={setup} dyn={dyn} day={day} updateSetup={updateSetup} updateDyn={updateDyn} onPreviewGuest={onPreviewGuest} />}
-      </main>
-
-      {assignRide && (
-        <AssignModal setup={setup} dyn={dyn} ride={assignRide}
-          onClose={() => setAssignRide(null)}
-          onAssign={async (driverId) => {
-            const res = await updateDyn((d) => {
-              const r = d.rides.find((x) => x.id === assignRide.id);
-              if (r) {
-                const changed = r.assignedDriverId !== driverId;
-                const drvName = (id) => { const dr = setup.drivers.find((x) => x.id === id); return dr ? `${dr.firstName} ${dr.lastName[0]}. (${dr.vehicleType === "Van" ? "Van" : "Car"})` : "—"; };
-                if (changed) logRide(r, r.assignedDriverId ? "reassigned" : "assigned", meBy, driverId ? `→ ${drvName(driverId)}` : "Zuteilung entfernt");
-                r.assignedDriverId = driverId;
-                // Punkt 7: neuer/kein Fahrer -> laufende Status verwerfen, zurück auf planned (mit Verlauf)
-                if ((!driverId || changed) && r.status !== "planned") setRideStatus(r, "planned", meBy);
-                else r.updatedAt = Date.now();
-                if (changed && driverId) triggerPush(driverId, "Neue Fahrt zugeteilt", `${r.time} · ${r.djName || "Fahrt"}`, `ride-${r.id}`);
-              }
-              return d;
-            });
-            // Nur bei bestaetigtem Erfolg schliessen. Scheitert das Speichern
-            // (Netz/Konflikt), bleibt das Modal offen und AssignModal zeigt die
-            // Meldung -> keine still fehlgeschlagene Zuteilung mehr.
-            if (res && res.ok) setAssignRide(null);
-            return res;
-          }} />
-      )}
-
-      {editRide && (
-        <RideForm setup={setup} ride={editRide}
-          onClose={() => setEditRide(null)}
-          onSave={async (data) => {
-            // Konflikt-Erkennung: hat sich die Fahrt geändert, seit das Formular geöffnet wurde
-            // (z. B. Fahrer hat währenddessen den Status weitergesetzt, ein Kollege hat zugeteilt)?
-            // Geprüft gegen den aktuell im Speicher vorliegenden (laufend synchronisierten) Stand.
-            if (!editRide._new) {
-              const live = dyn.rides.find((x) => x.id === editRide.id);
-              if (live && editRide.updatedAt && live.updatedAt && live.updatedAt !== editRide.updatedAt) {
-                const lastLog = (live.log || [])[(live.log || []).length - 1];
-                const who = lastLog ? byLabel(setup, lastLog.by) : "jemand anderes";
-                const what = lastLog ? (LOG_LABEL[lastLog.event] || lastLog.event) : "eine Änderung";
-                const ok = window.confirm(`Diese Fahrt wurde inzwischen von ${who} geändert (${what}, ${fmtClock(live.updatedAt)} Uhr).\n\nStatus, Fahrer und Problemmeldungen bleiben in jedem Fall erhalten. Trotzdem mit deinen übrigen Eingaben speichern?`);
-                // Abbruch im Konflikt-Dialog: nicht speichern, Formular offen lassen,
-                // aber KEIN Fehler (der Nutzer hat sich bewusst dagegen entschieden).
-                if (!ok) return { ok: false, cancelled: true };
-              }
-            }
-            const res = await updateDyn((d) => {
-              if (editRide._new) {
-                const nr = { id: "r" + Date.now() + Math.random().toString(36).slice(2, 6), assignedDriverId: null, ...data };
-                logRide(nr, "created", meBy, "");
-                setRideStatus(nr, "planned", meBy);
-                d.rides.push(nr);
-              } else {
-                const r = d.rides.find((x) => x.id === editRide.id);
-                if (r) {
-                  // Punkt 9: relevante Änderungen protokollieren
-                  const timeChanged = data.time !== r.time || data.date !== r.date;
-                  const routeChanged = data.fromId !== r.fromId || data.toId !== r.toId || data.fromCustom !== r.fromCustom || data.toCustom !== r.toCustom;
-                  const meetChanged = (data.meetingPoint || "") !== (r.meetingPoint || "");
-                  if (timeChanged) logRide(r, "time", meBy, `${r.time} → ${data.time}`);
-                  if (routeChanged) logRide(r, "route", meBy, "Route geändert");
-                  if ((data.flightStatus || "") !== (r.flightStatus || "")) logRide(r, "flight", meBy, `Flug: ${flightStyle(data.flightStatus).l}`);
-                  // Betriebliche Felder gehören nicht diesem Formular und werden nie überschrieben –
-                  // auch nicht mit einem veralteten Snapshot – damit Status-/Zuteilungsänderungen von
-                  // Fahrern oder anderen Leitstellen-Nutzern nie verloren gehen (siehe Konflikt-Check oben).
-                  const { status, assignedDriverId, issues, log, statusHistory, acceptedAt, enrouteAt, onboardAt, doneAt, cancelledAt, plannedAt, id, ...safeData } = data;
-                  Object.assign(r, safeData);
-                  if ((timeChanged || routeChanged || meetChanged) && r.assignedDriverId) {
-                    triggerPush(r.assignedDriverId, "Fahrt geändert", `${r.djName || "Fahrt"} · ${r.time}${meetChanged ? " · neuer Treffpunkt" : ""}`, `ride-${r.id}`);
-                  }
-                }
-              }
-              return d;
-            });
-            // Nur bei bestätigtem Erfolg schließen. Bei Fehler bleibt das Formular
-            // offen (die Eingabe geht nicht verloren) und RideForm zeigt die Meldung.
-            if (res && res.ok) setEditRide(null);
-            return res;
-          }}
-          onDelete={editRide._new ? null : async () => {
-            const res = await updateDyn((d) => { const r = d.rides.find((x) => x.id === editRide.id); if (r) setRideStatus(r, "cancelled", meBy); return d; });
-            if (res && res.ok) setEditRide(null);
-            return res;
-          }} />
-      )}
-
-      {waRide && (
-        <WhatsAppModal ride={waRide} setup={setup} onClose={() => setWaRide(null)}
-          onCopied={(which) => updateDyn((d) => { const r = d.rides.find((x) => x.id === waRide.id); if (r) logRide(r, "whatsapp", meBy, which); return d; })} />
-      )}
-
-      <ChatPanel setup={setup} dyn={dyn} day={day} updateDyn={updateDyn} by={meBy} />
-    </div>
-  );
-}
+// ==========================================================================
+// SESSION 23 (15.07.2026): HIER STAND DIE CLASSIC-OBERFLAECHE (Dashboard).
+// 457 Zeilen, ersatzlos geloescht. Mission Control ist die einzige
+// Leitstellen-Oberflaeche (Jordans Entscheidung vom 15.07.).
+// Vorgeschichte, damit das nachvollziehbar bleibt:
+//   Session 19: Routing zeigt nur noch auf Mission Control, Dashboard war ab
+//               da nur noch ueber den Fallschirm erreichbar.
+//   Session 22: Fallschirm umgebaut, Boden ist MissionControlFallbackScreen
+//               statt Dashboard. Damit hatte Dashboard NULL Aufrufer.
+//   Session 23: geloescht (dieser Stand).
+// Die sechs Classic-Forks (DriversTab, MessagesInbox, ReturnsTab,
+// EmergencyTab, OverviewTab, TimelinePage) waren nur von hier aus erreichbar
+// und sind ab jetzt verwaist, aber harmlos. Sie fallen in Session 24, nicht
+// hier nebenbei (Regel: keine Aenderungen ausserhalb des Pakets).
+// Rueckweg: git revert dieses Commits.
+// ==========================================================================
 
 function Kpi({ label, value, tone = "stone" }) {
   const c = { stone: "text-stone-200", orange: "text-orange-400", blue: "text-blue-400", emerald: "text-emerald-400" }[tone];
@@ -9223,7 +8774,7 @@ function Modal({ title, children, onClose, wide }) {
 // vorerst nur die Huelle (sichtbar am Umschalt-Button, der ueber onSetUiMode in den
 // Dashboard-Kopf gereicht wird). Eigenes Shell/KPI-Layout und die duplizierte Glue
 // nach Ansatz A folgen in Slice 2/3, ohne Classic anzufassen.
-function MissionControl({ setup, dyn, session, updateDyn, updateSetup, onLogout, onPreviewGuest, onUndo, undoCount, onSwitchToMobile, uiMode, onSetUiMode, offline, connIssue }) {
+function MissionControl({ setup, dyn, session, updateDyn, updateSetup, onLogout, onPreviewGuest, onUndo, undoCount, onSwitchToMobile, onSetUiMode, offline, connIssue }) {
   // Session 5 (Slice 5.2): Mission-Control-Shell. Ansatz A - die Controller-
   // Glue ist eine EIGENE Kopie der Dashboard-Glue (bewusst dupliziert statt
   // Hook-Extraktion, Stabilitaet vor Eleganz). Der Inhaltsbereich rendert die
@@ -9389,14 +8940,12 @@ function MissionControl({ setup, dyn, session, updateDyn, updateSetup, onLogout,
           {onSwitchToMobile && (
             <button onClick={onSwitchToMobile} title="Zur schlanken Handy-Ansicht wechseln" className="p-2 rounded-lg hover:bg-white/5" style={{ color: "var(--mc-text-muted)" }}><Smartphone className="w-4 h-4" /></button>
           )}
-          {/* "Zu Classic": Session 19 ausgeblendet, NICHT geloescht. Gleiches
-              Muster wie der Umschalter im Dashboard-Kopf (3742): sichtbar nur,
-              wenn onSetUiMode uebergeben wird. Der App-Root uebergibt jetzt
-              null, weil es keine Classic-Wahl mehr gibt. Wuerde der Knopf
-              bleiben, wechselte er nichts (das Routing haengt nicht mehr an
-              uiMode) und remountete ueber key={uiMode} nur den MC-Baum, was
-              Tag/Tab/Filter zuruecksetzt. Voll reversibel: onSetUiMode wieder
-              durchreichen und der Rueckweg ist zurueck. */}
+          {/* "Zu Classic": Session 19 ausgeblendet ueber onSetUiMode={null} aus
+              dem App-Root, NICHT geloescht. Seit Session 23 gibt es kein Classic
+              und keinen uiMode mehr, der Knopf ist damit endgueltig unerreichbar
+              und wechselte auch nichts mehr. Er faellt in einer eigenen kleinen
+              Scheibe zusammen mit onSetUiMode/onSwitchToMobile aus der
+              MissionControl-Signatur, nicht hier nebenbei. */}
           {onSetUiMode && (
             <button onClick={() => onSetUiMode("classic")} title="Zurück zur Classic-Oberfläche"
               className="flex items-center gap-1.5 text-xs px-2.5 py-1.5 rounded-lg hover:bg-white/5"
