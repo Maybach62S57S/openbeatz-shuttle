@@ -1054,9 +1054,10 @@ wenn der Chat zu lang wird.
 
 # STAND SESSION 23 (15.07.2026): BRANCH, NOCH NICHT AUF MAIN
 
-Branch `fix/session-23-dashboard-raus`, Code-Commit `7e4fc47`. **Wartet auf
-Jordans OK**, danach FF-Merge (geprueft: main ist Vorfahre).
-`src/ShuttleLeitstelle.jsx`: **9871 Zeilen** (vorher 10322, -451).
+Branch `fix/session-23-dashboard-raus`, Code-Commits `7e4fc47` (Dashboard +
+uiMode) und `8aa1bfe` (globales Kpi). **Wartet auf Jordans OK**, danach
+FF-Merge (geprueft: main ist Vorfahre).
+`src/ShuttleLeitstelle.jsx`: **9861 Zeilen** (vorher 10322, -461).
 esbuild gruen, Duplikat-Grep leer. Kein Schema-Re-Run offen.
 **Jordan hat Session 21, 22 und 23 noch NICHT am Geraet getestet.**
 
@@ -1117,20 +1118,30 @@ beschattete Namen prinzipiell NICHT sehen und meldet `Kpi` faelschlich als
 - **Icons: 42 importiert, 0 tot vorher wie nachher.** Importliste unveraendert.
   Kein Icon ist durch den Dashboard-Ausbau tot geworden.
 
-## OFFENE ENTSCHEIDUNG: das globale Kpi
+## ERLEDIGT: das globale Kpi ist raus (Commit `8aa1bfe`)
 
-`Kpi` (jetzt **3624**, 9 Zeilen) ist seit diesem Commit bewiesen tot, null
-Aufrufer. **Nicht geloescht**, weil Jordans Auftrag ueberall sonst "loeschen"
-bzw. "raus" sagt und beim Kpi nur "wird danach tot" plus die Verwechslungs-
-Warnung. Session 25 (Totholz) listet es bereits. Steht als Frage bei Jordan.
-Das **lokale** `const Kpi` in `MissionOverviewTab` (jetzt **6406**) bleibt in
-jedem Fall, es ist ein anderes Ding (siehe Kpi2-Beleg oben).
+Jordan hat es in derselben Session entschieden ("Kpi mit raus"), deshalb ein
+eigener dritter Commit statt Session 25. Das globale `Kpi` (vormals 3624, 9
+Zeilen, Signatur `{ label, value, tone }`) hatte als einzigen Aufrufer das
+geloeschte Dashboard.
+
+**Der Beleg, dass das richtige getroffen wurde, ist elegant:** vorher benannte
+esbuild das lokale Kpi nach `Kpi2` um (Beschattung). Nach dem Loeschen gibt es
+`Kpi2` null mal mehr und das lokale heisst wieder `Kpi`, mit Definition plus
+genau seinen vier Aufrufen. Waere das falsche erwischt worden, haette es null
+Aufrufer. Pruefsummen: genau ein Baustein entfernt, 205 von 205 uebrigen
+byte-identisch, darunter `MissionOverviewTab`.
+
+Das **lokale** `const Kpi` in `MissionOverviewTab` (jetzt **6396**) bleibt und
+ist damit ab sofort das einzige `Kpi` in der Datei. Die Verwechslungsgefahr aus
+den frueheren Uebergaben existiert nicht mehr.
 
 ## Rueckweg
 
-`git revert 7e4fc47`, Tag `stabil-classic-vorhanden-2026-07-15` = `f7bb75d`,
-Tag `stabil-vor-design-2026-07-13` = `4d13e59`, oder Vercel -> altes
-Deployment -> Promote to Production.
+`git revert 8aa1bfe 7e4fc47` (beide, in dieser Reihenfolge), Tag
+`stabil-classic-vorhanden-2026-07-15` = `f7bb75d`, Tag
+`stabil-vor-design-2026-07-13` = `4d13e59`, oder Vercel -> altes Deployment ->
+Promote to Production.
 
 ## Offene Testfaelle Session 23 (Jordan, auf Production)
 
@@ -1157,16 +1168,20 @@ Deployment -> Promote to Production.
 
 # VORARBEIT FUER SESSION 24 (gemessen in Session 23, nicht nochmal messen)
 
-## Anker, Stand `7e4fc47`
+**Alle Zeilennummern hier sind auf `8aa1bfe`**, dem letzten Commit des
+Branches, nicht auf `7e4fc47`. Der Kpi-Ausbau liegt VOR den Forks und hat
+alles darunter um 10 Zeilen verschoben. Trotzdem per grep gegenpruefen.
+
+## Anker, Stand `8aa1bfe`
 
 | Fork (raus) | Def. | Zeilen | Gegenstueck (bleibt) | Def. |
 |---|---|---|---|---|
-| `DriversTab` | 4117 | 61 | `MissionDriversTab` | 4190 |
-| `MessagesInbox` | 4789 | 82 | `MissionMessagesInbox` | 4875 |
-| `ReturnsTab` | 5148 | 248 | `MissionReturnsTab` | 5407 |
-| `EmergencyTab` | 5882 | 129 | `MissionEmergencyTab` | 6015 |
-| `OverviewTab` | 6234 | 124 | `MissionOverviewTab` | 6387 |
-| `TimelinePage` | 6582 | 393 | `MissionTimelinePage` | 6976 |
+| `DriversTab` | 4107 | 61 | `MissionDriversTab` | 4180 |
+| `MessagesInbox` | 4779 | 82 | `MissionMessagesInbox` | 4865 |
+| `ReturnsTab` | 5138 | 248 | `MissionReturnsTab` | 5397 |
+| `EmergencyTab` | 5872 | 129 | `MissionEmergencyTab` | 6005 |
+| `OverviewTab` | 6224 | 124 | `MissionOverviewTab` | 6377 |
+| `TimelinePage` | 6572 | 393 | `MissionTimelinePage` | 6966 |
 
 **Summe: 1037 Zeilen** (die Uebergabe schaetzte ~1100). Alle sechs haben seit
 `7e4fc47` **null Aufrufer**, belegt im Kompilat (je genau 1 Vorkommen = nur die
@@ -1213,16 +1228,16 @@ messen**, das ist eine Prognose, kein Beleg.
   plus eine Verwendung. Nicht analysiert, ausserhalb des Pakets, aber die
   Session-25-Liste stimmt an dieser Stelle moeglicherweise nicht. Vor dem
   Loeschen nachmessen.
-- Kommentar bei **8775** ("reiner PASSTHROUGH auf Dashboard", "Ansatz A, ohne
+- Kommentar bei **8761** ("reiner PASSTHROUGH auf Dashboard", "Ansatz A, ohne
   Classic anzufassen") beschreibt einen Zustand, den es nicht mehr gibt.
   Gehoert zu S24.
 - `onSetUiMode` und `onSwitchToMobile` stecken weiter in der
-  `MissionControl`-Signatur (**8777**), beide am Aufruf fest `null`, ihre
+  `MissionControl`-Signatur (**8767**), beide am Aufruf fest `null`, ihre
   Knoepfe unerreichbar. Eigene kleine Scheibe, absichtlich nicht hier.
-- Totholz-Liste fuer Session 25, Stand `7e4fc47`: `Kpi` global (3624, neu),
-  `ErrorState`, `IconButton`, `tsToDayMin`, evtl. `dynToRpcParams` (siehe
-  oben). Vorher jeweils per Kompilat gegenpruefen, nicht per Grep auf die
-  Quelle (Beschattung, siehe Kpi).
+- Totholz-Liste fuer Session 25, Stand `8aa1bfe`: `ErrorState`, `IconButton`,
+  `tsToDayMin`, evtl. `dynToRpcParams` (siehe oben). Das globale `Kpi` ist
+  bereits raus. Vorher jeweils per Kompilat gegenpruefen, nicht per Grep auf
+  die Quelle (Beschattung, siehe Kpi).
 - Unveraendert offen: Chat-FAB ueberlappt die MC-Handy-Leiste, "Was brennt"
   widerspricht dem Kopf-Banner (nicht analysiert, Verdacht Tagesfilter),
   `favicon.ico` 404. Ebenso die fuenf geparkten Stabilitaetsbefunde aus
@@ -1238,9 +1253,10 @@ Maybach62S57S/openbeatz-shuttle. PAT setze ich hier ein: <PAT>
 Nach dem Klonen: git config (user.name/email), npm ci, Baseline-esbuild gruen:
 ./node_modules/.bin/esbuild src/ShuttleLeitstelle.jsx --bundle=false --format=esm --outfile=/tmp/x.js
 
-STAND: main = <Commit nach dem S23-Merge>, 9871 Zeilen. Session 23 (Dashboard
-und uiMode raus) ist gemerged, von mir aber noch NICHT am Geraet getestet.
-Session 21 und 22 ebenfalls nicht. Rueckwege: git revert 7e4fc47, Tag
+STAND: main = <Commit nach dem S23-Merge>, 9861 Zeilen. Session 23 (Dashboard,
+uiMode und das globale Kpi raus) ist gemerged, von mir aber noch NICHT am
+Geraet getestet. Session 21 und 22 ebenfalls nicht.
+Rueckwege: git revert 8aa1bfe 7e4fc47, Tag
 stabil-classic-vorhanden-2026-07-15 = f7bb75d, Tag
 stabil-vor-design-2026-07-13 = 4d13e59. Vercel: altes Deployment per
 Promote to Production zurueckholen.
@@ -1255,19 +1271,19 @@ DriverApp/StageApp/GuestApp (Stage read-only), die Datenschicht, das
 dyn_data/RPC-Thema, der Fallschirm.
 
 AUFTRAG: die sechs verwaisten Classic-Forks raus, zusammen 1037 Zeilen.
-DriversTab (4117), MessagesInbox (4789), ReturnsTab (5148),
-EmergencyTab (5882), OverviewTab (6234), TimelinePage (6582).
+DriversTab (4107), MessagesInbox (4779), ReturnsTab (5138),
+EmergencyTab (5872), OverviewTab (6224), TimelinePage (6572).
 Alle sechs haben seit Session 23 null Aufrufer.
 - Die Mission-Gegenstuecke bleiben, nicht verwechseln: MissionDriversTab
-  (4190), MissionMessagesInbox (4875), MissionReturnsTab (5407),
-  MissionEmergencyTab (6015), MissionOverviewTab (6387),
-  MissionTimelinePage (6976).
+  (4180), MissionMessagesInbox (4865), MissionReturnsTab (5397),
+  MissionEmergencyTab (6005), MissionOverviewTab (6377),
+  MissionTimelinePage (6966).
 - In Session 23 bereits gemessen: NICHTS stirbt mit den sechs Forks, kein
   Helfer ist fork-exklusiv. Nach dem Loeschen trotzdem neu messen.
 - StatusPill faellt danach auf DriverApp zurueck, also Fahrer, tabu.
 - Umbenennen der MC-Forks (MissionOverviewTab -> OverviewTab): NICHT,
   kosmetisches Refactoring, nach dem Festival.
-- Das globale Kpi (3624) und die uebrige Totholz-Liste: Session 25.
+- Die Totholz-Liste (ErrorState, IconButton, tsToDayMin): Session 25.
 
 Branch: fix/session-24-forks-raus von main. Nach meinem OK FF-Merge auf main.
 
