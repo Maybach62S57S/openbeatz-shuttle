@@ -1302,3 +1302,237 @@ lang wird.
 
 STICHTAG: ab 21.07. wird nichts mehr geloescht (Festival 23. bis 27.07.).
 ```
+
+---
+
+# STAND SESSION 24 (15.07.2026): AUF BRANCH, WARTET AUF JORDANS OK
+
+Branch `fix/session-24-forks-raus`, Code-Commit `fce0635`, von `main` = `0085061`.
+**Noch nicht auf main**, FF-Merge nach Jordans OK.
+`src/ShuttleLeitstelle.jsx`: **8812 Zeilen** (vorher 9861, -1049).
+Bundle 752,8 -> 687,4 kb. esbuild gruen, Duplikat-Grep leer. Kein Schema-Re-Run offen.
+
+**Weiterhin gilt der wichtigste Satz: Jordan hat Session 21, 22, 23 UND 24 noch
+NICHT am Geraet getestet.** Das sind jetzt fuenf Loeschungen uebereinander, alle
+nur maschinell belegt. Rueckweg im Zweifel: Vercel -> Promote to Production.
+
+## Geloescht: die sechs verwaisten Classic-Forks
+
+Je Block der eigene Kommentarkopf, die Funktion und eine Leerzeile:
+
+| Fork | Bereich (Stand `0085061`) | Zeilen |
+|---|---|---|
+| `DriversTab` | 4106..4168 | 63 (61 + Kopf "Fahrer-Tab") |
+| `MessagesInbox` | 4775..4861 | 87 (82 + 4 Zeilen Kopf) |
+| `ReturnsTab` | 5138..5386 | 249 (248, kein Kopf) |
+| `EmergencyTab` | 5872..6001 | 130 (129, kein Kopf) |
+| `OverviewTab` | 6223..6348 | 126 (124 + Kopf "Punkt 12") |
+| `TimelinePage` | 6572..6965 | 394 (393, kein Kopf) |
+
+1037 Funktionszeilen + 12 Kommentar/Leerzeilen = **1049**. Die 1037 aus der
+Vorarbeit haben exakt gestimmt.
+
+**Sonst nichts.** Keine Umbenennung, kein Refactoring, keine Kommentar-Korrektur
+ausserhalb der Bloecke, kein Totholz (das ist S25).
+
+## Belege (esbuild war ausdruecklich nicht der Beweis)
+
+- **Pruefsummen aller Top-Level-Bausteine, mit echtem Parser** (`@babel/parser`,
+  schon transitive Abhaengigkeit ueber `@vitejs/plugin-react`, also keine neue
+  Library): 292 -> 286. **Genau 6 entfernt, 0 geaendert, 0 neu, 286 von 286
+  byte-identisch**, darunter der komplette Fallschirm, alle Mission-Teile und
+  DriverApp/StageApp/GuestApp. Das ist der staerkste Beleg dieser Session.
+- **Kompilat:** die sechs Forks je **0 Vorkommen**. Erschoepfend, nicht
+  stichprobenhaft. Gegenstuecke je 2 (Definition + Aufruf).
+- **AST-Referenzzaehlung:** ohne jede echte Referenz vorher 9, nachher 3.
+  Differenz = genau die sechs Forks. **Nichts ist neu tot geworden**, die
+  Prognose aus Session 23 ist bestaetigt, kein Helfer war fork-exklusiv.
+- **Geteilte Nachbarn** fallen wie vorhergesagt um einen Nutzer, keiner auf null:
+  `StatusPill` 2->1 (nur noch DriverApp, Fahrer, **tabu**), `computeArtistPresence`
+  und `PresenceManager` -> `MissionReturnsTab`, `useElementWidth` -> 2 MC-Stellen,
+  `TL_LABEL_W` 4->2, `CASE_ICON` 3->2, `emergencyCases` 4->3, `flightAlert` lebt.
+- **Icons:** 42 importiert, Importliste unveraendert, 0 tot vorher wie nachher.
+- **Laufzeit-Test mit echtem React** (`react-dom/server`, keine neue Library):
+  App-Root rendert, **25053 Zeichen, exakt dieselbe Zahl wie in Session 23**.
+- **Gegenprobe:** `<DriversTab />` in den erreichbaren MC-Zweig (Zeile 1142)
+  eingebaut. **esbuild GRUEN, Duplikat-Grep leer** — beide blind, die Warnung ist
+  erneut praktisch bestaetigt. Der AST-Scan schlaegt an. Danach zurueckgebaut,
+  md5 der Datei identisch.
+- **Diff:** `--patience` und `--histogram` zeigen **1049 Loeschungen, 0
+  Einfuegungen**, sechs Hunks, in jedem genau ein Fork.
+
+## FALLE FUER DEN NAECHSTEN: der Standard-Diff luegt hier
+
+`git diff --stat` zeigt **"9 insertions(+), 1058 deletions(-)"**. Das sind KEINE
+echten Einfuegungen. `MissionEmergencyTab` ist eine fast byte-gleiche Kopie von
+`EmergencyTab`; der Standard-Algorithmus verankert lieber die gemeinsamen
+Rumpfzeilen und stellt das als "Signatur getauscht" dar, statt einen ganzen Block
+zu loeschen. Netto 1058 - 9 = 1049, dieselbe Zahl. Mit `--patience` oder
+`--histogram` loest es sich auf. **Nicht erschrecken, nicht "korrigieren".**
+
+## ZWEITE FALLE: Textsuche im Kompilat zaehlt zu viel
+
+Beim Messen zweimal reingefallen, beide Male gemerkt:
+- **esbuilds `transform` behaelt Kommentare.** Ein `grep` auf das Kompilat zaehlt
+  Kommentar-Erwaehnungen mit.
+- **Bezeichner in Strings zaehlen auch mit.** `IconButton` sah mit 2 Vorkommen
+  lebendig aus. Das zweite ist `/* IconButton */` **in einem CSS-String** in
+  `MissionStyles` (Quelle 8532). Es ist tot.
+- Ebenso: `scope.hasGlobal()` von Babel liefert fuer jede ungebundene Referenz
+  `true` und macht einen Undefiniert-Scan wertlos. `scope.getBinding()` nehmen.
+
+**Konsequenz: Totholz nur ueber AST-Referenzen messen, nicht per Grep.** (Die
+0-Treffer-Aussage fuer die sechs Forks ist davon unberuehrt: 0 ist 0, auch in
+Strings und Kommentaren.)
+
+## KORREKTUR AN DER TOTHOLZ-LISTE FUER SESSION 25 (gemessen, Stand `fce0635`)
+
+| Bezeichner | Def. | Befund |
+|---|---|---|
+| `tsToDayMin` | 1753 | **tot**, 0 echte Referenzen |
+| `IconButton` | 8715 | **tot**, 0 echte Referenzen (das CSS-`/* IconButton */` bei 8532 taeuscht) |
+| `ErrorState` | 8749 | **tot**, 0 echte Referenzen |
+| `dynToRpcParams` | 264 | **LEBT**, 1 echte Referenz in **Zeile 307** (`...dynToRpcParams(val)`) im RPC-Schreibpfad. **NICHT loeschen.** |
+
+Damit ist die offene Frage aus Session 23 beantwortet: `dynToRpcParams` gehoert
+nicht auf die Liste. Die Liste fuer S25 ist genau: `tsToDayMin`, `IconButton`,
+`ErrorState`. Vorher trotzdem neu messen, die Anker verschieben sich.
+
+## Anker, Stand `fce0635`
+
+| Was | Zeile |
+|---|---|
+| `MissionControlBoundary` (class) | 1253 |
+| `MissionControlFallbackScreen` | 1296 |
+| erreichbarer MC-Zweig / `if (!mcBlocked)` | 1140 |
+| `MissionDriversTab` | 4117 |
+| `MissionMessagesInbox` | 4715 |
+| `MissionReturnsTab` | 4998 |
+| `MissionEmergencyTab` | 5476 |
+| `MissionOverviewTab` | 5722 |
+| `MissionTimelinePage` | 5917 |
+| `MissionControl` (Signatur) | 7718 |
+| Kommentar "reiner PASSTHROUGH auf Dashboard" | 7712 |
+
+## Rueckweg
+
+`git revert fce0635` (nur dieser Commit, sauber). Weiter zurueck:
+`git revert fce0635 8aa1bfe 7e4fc47`, Tag `stabil-classic-vorhanden-2026-07-15`
+= `f7bb75d`, Tag `stabil-vor-design-2026-07-13` = `4d13e59`, oder
+Vercel -> altes Deployment -> Promote to Production.
+
+## Offene Testfaelle Session 24 (Jordan, auf Production)
+
+Der Sinn: die sechs Forks waren seit S23 unerreichbar, also darf **nichts**
+anders sein. Jeder Tab muss genau so aussehen wie vor dem Merge. Getestet wird
+faktisch, ob versehentlich das Mission-Gegenstueck statt des Forks getroffen
+wurde. **Deshalb alle sechs Tabs einmal oeffnen, das ist der Kern.**
+
+1. [ ] **Fahrer-Tab** oeffnet, Fahrerliste mit Online/Offline + letztem Kontakt.
+2. [ ] **Chat/Nachrichten** oeffnet, Fahrer-Nachricht da, Antworten geht.
+3. [ ] **Rueckfahrten** oeffnet, Liste + Suche + "ueberfaellig"-Markierung.
+       Neue Rueckfahrt anlegen, zuteilen, WhatsApp-Text.
+4. [ ] **Probleme/Notfall** oeffnet, gemeldetes Problem da, Prioritaets-Filter
+       geht, "Problem erledigt" landet im Protokoll.
+5. [ ] **Ueberblick** oeffnet, die vier KPI-Kacheln da und klickbar, "Was brennt".
+6. [ ] **Timeline** oeffnet, Drag-and-Drop + Bestaetigung + Rueckgaengig,
+       Jetzt-Linie.
+7. [ ] Fahrt zuteilen (`AssignModal`), Fahrt bearbeiten (`RideForm`), Chat-Knopf.
+8. [ ] iPhone: MC mit unterer Leiste, alle Punkte + "Mehr".
+9. [ ] **Fahrer-Login: annehmen bis abschliessen.** Der Test fuer `StatusPill`,
+       das jetzt nur noch dort haengt.
+10. [ ] Stage-Login: nur lesen + Problem melden. Gast-Link oeffnen.
+11. [ ] Absturz-Test aus S23 (Wegwerf-Branch mit `throw`) -> Fehlerseite mit
+        "Neu laden", kein weisser Bildschirm.
+12. [ ] Die offenen Testfaelle aus S21 (besonders Nr. 4, Karte-Tab Schema/Google),
+        S22 und S23 stehen weiter aus.
+
+## Regressionsrisiken
+
+- **Sehr niedrig, aber nicht null.** Der Beleg "0 Vorkommen im Kompilat" ist
+  erschoepfend, und 286 von 286 verbliebenen Bausteinen sind byte-identisch. Es
+  gibt keinen bekannten Pfad, auf dem sich etwas geaendert haben koennte.
+- **Das echte Risiko liegt nicht in dieser Session, sondern darunter:** S21 bis
+  S24 sind vier ungetestete Loeschungen uebereinander. Faellt beim Testen etwas
+  auf, ist die Ursache mit hoeherer Wahrscheinlichkeit in S21/S22/S23 als hier.
+- Kein Verhalten geaendert: die Forks waren seit S23 nicht erreichbar.
+- Kein Schema-Re-Run.
+
+---
+
+# Weitere gefundene Punkte fuer spaetere Sessions (aus Session 24)
+
+- **Die Kommentarkoepfe der Mission-Varianten sind jetzt Falschaussagen.** Sie
+  gehoeren dem Nachbarn und lagen damit ausserhalb dieses Pakets, deshalb
+  bewusst nicht angefasst (Prioritaet Stabilitaet, Nutzen null). Betroffen,
+  Stand `fce0635`: 4106..4115 ("Eigenstaendige Kopie von DriversTab",
+  "Classic DriversTab bleibt byte-genau unveraendert"), 4121, 4712..4714
+  ("Classic MessagesInbox bleibt unangetastet"), 4988..4997, 5007, 5018,
+  5473..5475, 5695, 5712. Dazu 4107 "nur fuer uiMode === mission-control" —
+  `uiMode` gibt es seit S23 nicht mehr. **Eine eigene kleine Scheibe nach dem
+  Festival**, zusammen mit dem Umbenennen der MC-Forks. Beides ist Kosmetik.
+- Kommentar **7712** ("Slice 1: reiner PASSTHROUGH auf Dashboard mit identischen
+  Props") und **7715** ("sichtbar am Umschalt-Button, der ueber onSetUiMode...")
+  beschreiben einen Zustand, den es nicht mehr gibt. Stand schon als S24-Punkt
+  in der Liste, bleibt offen: er haengt an `MissionControl`, nicht an den Forks,
+  und "keine Aenderungen ausserhalb des Pakets" gilt. Gehoert in dieselbe
+  Kosmetik-Scheibe.
+- `onSetUiMode` und `onSwitchToMobile` stecken weiter in der
+  `MissionControl`-Signatur (**7718**), am Aufruf fest `null` (1148/1149), ihre
+  Knoepfe unerreichbar. Eigene kleine Scheibe.
+- Unveraendert offen: Chat-FAB ueberlappt die MC-Handy-Leiste, "Was brennt"
+  widerspricht dem Kopf-Banner (nicht analysiert, Verdacht Tagesfilter),
+  `favicon.ico` 404. Ebenso die fuenf geparkten Stabilitaetsbefunde aus
+  Session 18.
+
+---
+
+## Ready-to-paste Opener: Session 25 (toter Code raus)
+
+```
+Erst PROJEKT-ANWEISUNGEN.md lesen, dann Repo holen. Repo:
+Maybach62S57S/openbeatz-shuttle. PAT setze ich hier ein: <PAT>
+Nach dem Klonen: git config (user.name/email), npm ci, Baseline-esbuild gruen:
+./node_modules/.bin/esbuild src/ShuttleLeitstelle.jsx --bundle=false --format=esm --outfile=/tmp/x.js
+
+STAND: main = <nach dem FF-Merge eintragen>, Code-Stand fce0635, 8812 Zeilen.
+Session 24 (die sechs Classic-Forks raus) ist gemerged. Session 21, 22, 23 und
+24 sind von mir noch NICHT am Geraet getestet.
+Rueckwege: git revert fce0635 8aa1bfe 7e4fc47, Tag
+stabil-classic-vorhanden-2026-07-15 = f7bb75d, Tag
+stabil-vor-design-2026-07-13 = 4d13e59. Vercel: altes Deployment per
+Promote to Production zurueckholen.
+
+Danach UEBERGABE-Session-18.md lesen, KOMPLETT, vor allem "STAND SESSION 24"
+ganz unten. Die Datei waechst nach UNTEN an, alles weiter oben ist aelter.
+Die Anker unten sind auf fce0635. Per grep gegenpruefen.
+
+ENTSCHEIDUNG STEHT: Mission Control ist die einzige Leitstellen-Oberflaeche,
+Classic ist geloescht. Nicht neu verhandeln. Weiter tabu:
+DriverApp/StageApp/GuestApp (Stage read-only), die Datenschicht, das
+dyn_data/RPC-Thema, der Fallschirm.
+
+AUFTRAG: toter Code raus. Genau drei, in Session 24 per AST gemessen:
+tsToDayMin (1753), IconButton (8715), ErrorState (8749).
+- dynToRpcParams (264) LEBT, 1 echte Referenz in Zeile 307. NICHT loeschen.
+  Die alte Uebergabe hatte es faelschlich auf der Liste, das ist geklaert.
+- Achtung beim Messen: Grep auf das Kompilat zaehlt Kommentare UND Strings mit.
+  IconButton sieht dadurch lebendig aus (/* IconButton */ im CSS bei 8532).
+  Totholz nur ueber AST-Referenzen messen. @babel/parser ist schon da
+  (transitiv ueber @vitejs/plugin-react), das ist keine neue Library.
+- Kommentar-Kosmetik (die MC-Kommentarkoepfe verweisen auf geloeschte Forks,
+  7712/7715, Umbenennen der MC-Forks): NICHT, nach dem Festival.
+
+Branch: fix/session-25-totholz von main. Nach meinem OK FF-Merge auf main.
+
+Zum Schluss: Diff-Beleg, Regressionsrisiken, konkrete manuelle Testfaelle.
+esbuild ist kein Beweis, das ist in Session 23 und 24 je mit einer Gegenprobe
+belegt worden (kaputte Referenz -> esbuild gruen, Duplikat-Grep leer).
+Kompilat gegenpruefen, Pruefsummen der nicht angefassten Bausteine gegen den
+Vorstand, Icons einzeln. Achtung: git diff --stat kann bei fast gleichen
+Bloecken scheinbare Einfuegungen zeigen, --patience nutzen.
+Commit ueber /tmp/msg.txt. Sprache Deutsch, informell, keine Gedankenstriche,
+korrekte Umlaute. Warn mich rechtzeitig, wenn der Chat zu lang wird.
+
+STICHTAG: ab 21.07. wird nichts mehr geloescht (Festival 23. bis 27.07.).
+```
