@@ -1539,3 +1539,101 @@ korrekte Umlaute. Warn mich rechtzeitig, wenn der Chat zu lang wird.
 
 STICHTAG: ab 21.07. wird nichts mehr geloescht (Festival 23. bis 27.07.).
 ```
+
+---
+
+# STAND SESSION 24b (16.07.2026): AUF MAIN
+
+`main` = `413042e`, FF-Merge aus `fix/session-24b-notfall-knopf` erledigt.
+`src/ShuttleLeitstelle.jsx`: **8816 Zeilen** (8812 + 4 Zeilen Kommentar).
+esbuild gruen, Duplikat-Grep leer. Kein Schema-Re-Run offen.
+
+## ANALYSIERT: "Was brennt" widerspricht dem Kopf-Banner (stand seit Session 19 offen)
+
+**Ergebnis: "Was brennt" ist NICHT kaputt.** Es waren drei verschiedene Dinge,
+nur eins davon war ein Fehler. Der ist behoben.
+
+### 1. Dass der Banner den Tag ignoriert, ist Absicht und richtig. NICHT "reparieren".
+
+| | Filter |
+|---|---|
+| Kopf-Banner (**7968**) | `rideHasOpenIssue(r) && r.status !== "cancelled"` |
+| `emergencyCases` (**5450**) | `r.dayKey === day && r.status !== "cancelled" && r.status !== "done"` |
+
+Der Verdacht "Tagesfilter" aus Session 19 stimmt, aber die Richtung ist
+andersrum als es aussieht. Der Banner haengt in **7966** direkt in `<main>` und
+ist damit ueber JEDEM Tab sichtbar. Er ist die tagUEBERGREIFENDE Aufgabenliste:
+eine offene Problem-Meldung hoert nicht auf zu existieren, weil man den
+Tag-Reiter wechselt. Das ist gutes Verhalten.
+
+"Was brennt" ist bewusst etwas anderes: tagesbezogen, dafuer breiter (Probleme
+PLUS kritische Fluege, Fahrten ohne Fahrer, Fahrer nicht gestartet). Zwei
+Begriffe, beide heissen "kritisch". Das ist die eigentliche Verwirrung, aber
+kein Logikfehler.
+
+### 2. Der echte Fehler war der "Notfall"-Knopf. BEHOBEN in `413042e`.
+
+Der Banner-Knopf machte nur `setTab("emergency")`, ohne den Tag. Der
+Probleme-Tab ist tagesgefiltert. Also: Alarm sagt "1x KRITISCH", Klick auf
+"Notfall", leerer Tab. Der Knopf EINE ZEILE DARUNTER ("oeffnen") machte es
+schon immer richtig (`setDay(r.dayKey); setEditRide(r);`).
+
+Fix: `onClick={() => { setDay(r.dayKey); setTab("emergency"); }}`.
+Beleg: Pruefsummen 285 -> 285, genau ein Baustein geaendert (`MissionControl`),
+284 byte-identisch. Node-Test: alter Knopf bei falschem Tag = 0 Faelle, neuer =
+1 Fall; bei richtigem Tag alt und neu identisch, also keine Regression.
+
+### 3. OFFEN, NEUER BEFUND: der `done`-Unterschied
+
+Der Banner nimmt `done`-Fahrten mit, `emergencyCases` schliesst sie aus.
+Node-Test, beide Filter verbatim nachgebaut:
+
+```
+Fall                                | Banner oben      | Was brennt   | stimmt?
+A  gleicher Tag, Fahrt laeuft       | 1 offen, 1 krit. | 1 Fall       | ja
+B  ANDERER Tag gewaehlt             | 1 offen, 1 krit. | alles ruhig  | Widerspruch (= Punkt 2, behoben)
+C  gleicher Tag, Fahrt ERLEDIGT     | 1 offen, 1 krit. | alles ruhig  | >>> WIDERSPRUCH, OFFEN
+D  storniert                        | nichts           | alles ruhig  | ja
+E  Problem erledigt                 | nichts           | alles ruhig  | ja
+```
+
+**Fall C konkret:** Fahrer meldet "Stau", Fahrt wird abgeschlossen, niemand hakt
+die Meldung ab -> sie steht FUER IMMER im Banner und taucht im Probleme-Tab nie
+auf. Ueber fuenf Festivaltage sammelt sich das an, der rote Alarm wird zu
+Hintergrundrauschen. Abhaken geht, aber nur ueber den "erledigt"-Knopf im
+Banner selbst (**8010**).
+
+**Bewusst NICHT angefasst:** dafuer muesste man entscheiden, was "offen"
+bedeuten soll, und genau das ist laut UEBERGABE-Session-16 schon einmal bewusst
+nicht vereinheitlicht worden ("Offen bedeutet an zwei Stellen Verschiedenes,
+nicht ungefragt vereinheitlichen"). **Nach dem Festival, mit Kopf.**
+
+## Testfaelle Session 24b (Jordan, auf Production)
+
+1. [ ] Ein Problem an einer Fahrt an Tag X melden (oder ein vorhandenes nehmen).
+2. [ ] Einen ANDEREN Tag Y waehlen. Der rote Banner oben muss trotzdem stehen.
+3. [ ] **Im Banner auf "Notfall" klicken -> Probleme-Tab MIT dem Problem drin,
+       und der Tag oben muss auf X gesprungen sein.** Das ist der Fix.
+4. [ ] Auf Tag X klicken, im Banner "Notfall" -> unveraendert, Problem da.
+5. [ ] "oeffnen" im Banner -> Bearbeiten-Dialog der Fahrt, Tag springt auf X.
+6. [ ] "in Arbeit" und "erledigt" im Banner -> Meldung verschwindet, Protokoll.
+
+## Rueckweg
+
+`git revert 413042e`. Der Commit haengt an nichts.
+
+---
+
+# Weitere gefundene Punkte fuer spaetere Sessions (aus Session 24b)
+
+- **Fall C oben** (Banner behaelt Probleme von `done`-Fahrten, `emergencyCases`
+  nicht). Nach dem Festival.
+- **Zwei Begriffe, ein Wort:** der Banner zaehlt nur Problem-Meldungen,
+  "Was brennt"/`emergencyCases` zaehlt Probleme + Fluege + ohne Fahrer + nicht
+  gestartet. Beide sagen "kritisch". Kein Fehler, aber die Zahlen werden nie
+  uebereinstimmen und das verwirrt. Falls es je vereinheitlicht wird: erst
+  entscheiden, was der Kopf-Alarm eigentlich melden soll.
+- Unveraendert offen: Chat-FAB ueberlappt die MC-Handy-Leiste, `favicon.ico`
+  404, die MC-Kommentarkoepfe verweisen auf geloeschte Forks, 7712/7715,
+  `onSetUiMode`/`onSwitchToMobile` in der `MissionControl`-Signatur, die fuenf
+  geparkten Stabilitaetsbefunde aus Session 18, Session 25 (Totholz).
