@@ -744,7 +744,7 @@ export default function App() {
   // ist geloescht, Mission Control ist auf jeder Bildschirmbreite die einzige
   // Leitstellen-Oberflaeche und bringt seine eigene Handy-Navigation mit. Damit
   // sind viewOverride/isNarrow/useMobileView/setViewMode und der localStorage-
-  // Schluessel "obf:viewMode" ersatzlos weg — sie hatten seit Session 19 keinen
+  // Schluessel "obf:viewMode" ersatzlos weg, sie hatten seit Session 19 keinen
   // Aufrufer mehr. Ein alter "obf:viewMode"-Wert auf einem Geraet wird ab jetzt
   // einfach ignoriert und schadet nicht.
   // UI-Modus (Classic vs. Mission Control Beta): pro GERAET gemerkt (localStorage,
