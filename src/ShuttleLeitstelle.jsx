@@ -5,7 +5,7 @@ import {
   ArrowRight, Plus, Settings, Upload, LogOut, Radio, Navigation, AlertTriangle,
   RefreshCw, Search, X, Route, Timer, Gauge, ChevronRight, Play, Flag, Ban,
   MessageSquare, Copy, Check, Moon, LayoutGrid, BarChart3, Siren, History, Link2, Eye, Trash2,
-  Smartphone, Wifi, WifiOff, Phone, RotateCcw, MoreHorizontal,
+  Smartphone, Wifi, WifiOff, RotateCcw, MoreHorizontal,
 } from "lucide-react";
 
 /* ============================================================================
@@ -65,7 +65,7 @@ function apiHeaders() {
  * Optionale echte Kartenansicht (Live-Fahrer-GPS) zusätzlich zur kostenlosen
  * Schema-Karte, siehe LiveGoogleMap weiter unten. Bewusst NICHT automatisch
  * geladen: das Google-Skript wird erst angefordert, wenn die Leitstelle aktiv
- * auf die Google-Maps-Ansicht wechselt (Toggle in MapTab/MobileMapPane), und
+ * auf die Google-Maps-Ansicht wechselt (Toggle in MapTab), und
  * danach nur EIN EINZIGES Mal pro Browser-Sitzung (google.maps.Map wird nicht
  * bei jedem 3s-Poll neu erzeugt, nur die Marker-Positionen werden aktualisiert).
  * Das hält den Verbrauch weit im kostenlosen Google-Kontingent (aktuell rund
@@ -740,20 +740,13 @@ export default function App() {
   // Wrapper statt des rohen State-Setters: schreibt jeden Login/Logout zusätzlich
   // in localStorage, damit die Anmeldung einen Tab-Neustart/App-Kill übersteht.
   const setSession = useCallback((s) => { setSessionState(s); saveSession(s); }, []);
-  // Handy-Leitstellen-Ansicht: automatisch bei schmalem Bildschirm (< 768px,
-  // dieselbe Grenze wie Tailwinds "md", an der die App schon an anderen
-  // Stellen unterscheidet), jederzeit manuell umschaltbar. Präferenz wird wie
-  // der Login pro GERÄT gemerkt (localStorage), nicht zwischen Geräten
-  // geteilt — jedes Handy/jeder Laptop entscheidet für sich.
-  const [viewOverride, setViewOverride] = useState(() => { try { return localStorage.getItem("obf:viewMode") || "auto"; } catch { return "auto"; } }); // auto | mobile | desktop
-  const [isNarrow, setIsNarrow] = useState(() => typeof window !== "undefined" && window.innerWidth < 768);
-  useEffect(() => {
-    const onResize = () => setIsNarrow(window.innerWidth < 768);
-    window.addEventListener("resize", onResize);
-    return () => window.removeEventListener("resize", onResize);
-  }, []);
-  const useMobileView = viewOverride === "mobile" || (viewOverride === "auto" && isNarrow);
-  const setViewMode = (mode) => { setViewOverride(mode); try { localStorage.setItem("obf:viewMode", mode); } catch {} };
+  // Session 21 (15.07.2026): die Handy-Leitstellen-Ansicht (MobileDispatcherView)
+  // ist geloescht, Mission Control ist auf jeder Bildschirmbreite die einzige
+  // Leitstellen-Oberflaeche und bringt seine eigene Handy-Navigation mit. Damit
+  // sind viewOverride/isNarrow/useMobileView/setViewMode und der localStorage-
+  // Schluessel "obf:viewMode" ersatzlos weg — sie hatten seit Session 19 keinen
+  // Aufrufer mehr. Ein alter "obf:viewMode"-Wert auf einem Geraet wird ab jetzt
+  // einfach ignoriert und schadet nicht.
   // UI-Modus (Classic vs. Mission Control Beta): pro GERAET gemerkt (localStorage,
   // wie obf:viewMode), NICHT in Supabase. Harter Fallback: alles ausser exakt
   // "mission-control" faellt auf "classic" zurueck — auch ein defekter/unbekannter
@@ -1121,8 +1114,8 @@ export default function App() {
   // Weggefallen sind genau zwei Weichen:
   //   1. if (useMobileView) -> MobileDispatcherView. MC laeuft jetzt auch auf
   //      dem Handy (Jordans Entscheidung vom 15.07., MC gefaellt ihm dort
-  //      besser als die schlanke Mobil-Ansicht). MobileDispatcherView bleibt
-  //      vollstaendig im Code, wird nur nicht mehr aufgerufen.
+  //      besser als die schlanke Mobil-Ansicht). Session 21 hat
+  //      MobileDispatcherView samt viewOverride-Kette dann ganz geloescht.
   //   2. if (uiMode === "mission-control"). Es gibt keine Classic-Wahl mehr.
   //      uiMode und localStorage "obf:uiMode" werden fuer die Routing-
   //      Entscheidung nicht mehr ausgewertet; der Umschalter "Oberflaeche" ist
@@ -1170,8 +1163,8 @@ export default function App() {
     {/* Session 19: dieser Zweig ist NUR noch der Fallschirm, erreichbar
         ausschliesslich ueber mcBlocked (MC ist beim Rendern abgestuerzt).
         Kein normaler Weg fuehrt mehr hierher.
-        onSwitchToMobile: null, weil die useMobileView-Weiche oben weg ist und
-        setViewMode("mobile") deshalb wirkungslos waere (toter Knopf).
+        onSwitchToMobile: null, weil es seit Session 21 keine Handy-Ansicht und
+        keinen Umschalter dorthin mehr gibt (der Knopf waere ohne Wirkung).
         onSetUiMode: null, damit der Umschalter "Oberflaeche" im Dashboard-Kopf
         (3742) ausgeblendet ist. War vorher mcBlocked ? null : setUiModeSafe,
         was hier ohnehin immer null ergaebe; jetzt explizit, damit es nicht an
@@ -1181,21 +1174,6 @@ export default function App() {
       onPreviewGuest={setPreviewGuestToken} onUndo={undo} undoCount={undoCount}
       onSwitchToMobile={null}
       uiMode={uiMode} onSetUiMode={null} />
-    {/* Session 19: Notausstieg "Handy-Ansicht" ausgeblendet, NICHT geloescht.
-        Er setzte viewMode auf "auto", damit ein auf schmalem Bildschirm
-        feststeckender Desktop-Zweig wieder auf MobileDispatcherView springt.
-        Diese Weiche gibt es nicht mehr, der Knopf waere also ein Knopf ohne
-        Wirkung mitten in einer Absturz-Situation. Wird in Session 21
-        zusammen mit viewOverride/useMobileView/setViewMode ganz entfernt.
-        Original unveraendert erhalten:
-
-    {isNarrow && viewOverride === "desktop" && (
-      <button onClick={() => setViewMode("auto")}
-        className="fixed bottom-4 left-4 z-[100] flex items-center gap-1.5 bg-orange-600 hover:bg-orange-500 text-white text-xs px-3 py-2 rounded-full shadow-lg">
-        <Smartphone className="w-3.5 h-3.5" />Handy-Ansicht
-      </button>
-    )}
-    */}
   </>;
 }
 
@@ -4064,353 +4042,6 @@ function Dashboard({ setup, dyn, session, updateDyn, updateSetup, onLogout, onPr
       )}
 
       <ChatPanel setup={setup} dyn={dyn} day={day} updateDyn={updateDyn} by={meBy} />
-    </div>
-  );
-}
-
-/* =========================================================================
-   MOBILE-LEITSTELLE — schlanke Ansicht für unterwegs (auf Jordans Wunsch,
-   Scoping: nur Übersicht/Zuteilen/Status + Timeline/Karte/Rückfahrten/Chat,
-   NICHT alle 9 Desktop-Reiter). Nutzt bewusst dieselben Daten- und
-   Schreibwege wie das Desktop-Dashboard (AssignModal, ChatPanel,
-   buildMapNodes/computeMapPositions/SchematicMap, logRide/setRideStatus,
-   triggerPush) — kein eigener Datenpfad, nur eine eigene, handygerechte
-   Oberfläche obendrauf.
-========================================================================= */
-function MobileDispatcherView({ setup, dyn, session, updateDyn, onLogout, onSwitchToDesktop }) {
-  const meBy = `dispo:${session?.dispatcherId || ""}`;
-  const push = usePushNotifications(session?.dispatcherId, "dispatcherState", updateDyn, setup.config.vapidPublicKey);
-
-  const days = dayTabs(setup, dyn);
-  const [day, setDay] = useState(days[0]?.key || "");
-  useEffect(() => {
-    if (days.length === 0) { if (day) setDay(""); return; }
-    if (!days.some((d) => d.key === day)) setDay(days[0].key);
-  }, [days, day]);
-
-  const [tab, setTab] = useState("rides"); // rides | timeline | map | returns
-  const [q, setQ] = useState("");
-  const [filter, setFilter] = useState("all"); // all | open | active | critical
-  const [assignRide, setAssignRide] = useState(null);
-  const [clock, setClock] = useState(nowHM());
-  useEffect(() => { const t = setInterval(() => setClock(nowHM()), 20000); return () => clearInterval(t); }, []);
-
-  const dayRides = useMemo(() => (dyn.rides || [])
-    .filter((r) => r.dayKey === day && r.status !== "cancelled")
-    .sort((a, b) => sortMin(a.time) - sortMin(b.time)), [dyn.rides, day]);
-  const returnRides = useMemo(() => dayRides.filter((r) => r.type === "return" || r.fromId === "festival"), [dayRides]);
-
-  const kpi = {
-    all: dayRides.length,
-    open: dayRides.filter((r) => !r.assignedDriverId).length,
-    active: dayRides.filter((r) => ["accepted", "enroute_pickup", "onboard"].includes(r.status)).length,
-    critical: dayRides.filter((r) => rideHasOpenIssue(r) || needsDispatcherFlightAlert(r)).length,
-  };
-
-  const matchesSearch = (r) => {
-    if (!q.trim()) return true;
-    const drv = setup.drivers.find((d) => d.id === r.assignedDriverId);
-    const hay = `${r.djName || ""} ${drv ? drv.firstName + " " + drv.lastName : ""}`.toLowerCase();
-    return hay.includes(q.trim().toLowerCase());
-  };
-  const matchesFilter = (r) => {
-    if (filter === "open") return !r.assignedDriverId;
-    if (filter === "active") return ["accepted", "enroute_pickup", "onboard"].includes(r.status);
-    if (filter === "critical") return rideHasOpenIssue(r) || needsDispatcherFlightAlert(r);
-    return true;
-  };
-  const visibleRides = dayRides.filter((r) => matchesSearch(r) && matchesFilter(r));
-  const visibleReturns = returnRides.filter((r) => matchesSearch(r));
-
-  const locName = (id, txt) => setup.locations.find((l) => l.id === id)?.short || txt || "—";
-  const msgOpenMobile = openMessages(dyn).length; // offene Nachrichten -> Badge am mobilen Nachrichten-Tab
-
-  const doAssign = async (rideId, driverId) => {
-    const res = await updateDyn((d) => {
-      const r = d.rides.find((x) => x.id === rideId);
-      if (r) {
-        const changed = r.assignedDriverId !== driverId;
-        const drvName = (id) => { const dr = setup.drivers.find((x) => x.id === id); return dr ? `${dr.firstName} ${dr.lastName[0]}. (${dr.vehicleType === "Van" ? "Van" : "Car"})` : "—"; };
-        if (changed) logRide(r, r.assignedDriverId ? "reassigned" : "assigned", meBy, driverId ? `→ ${drvName(driverId)}` : "Zuteilung entfernt");
-        r.assignedDriverId = driverId;
-        if ((!driverId || changed) && r.status !== "planned") setRideStatus(r, "planned", meBy);
-        else r.updatedAt = Date.now();
-        if (changed && driverId) triggerPush(driverId, "Neue Fahrt zugeteilt", `${r.time} · ${r.djName || "Fahrt"}`, `ride-${r.id}`);
-      }
-      return d;
-    });
-    if (res && res.ok) setAssignRide(null);
-    return res;
-  };
-
-  // Ein-Tap-Zuteilen (Slice 7): duenner Wrapper vor doAssign, der genau denselben
-  // Slice-4-Guard traegt wie das AssignModal. Bei unzugeteilten Fahrten (Status
-  // "geplant") feuert er faktisch nie, ist aber defensiv identisch zum Modal-Weg.
-  // Bewusst NICHT im geteilten doAssign, sonst wuerde der Guard beim Modal-Weg
-  // doppelt fragen (das Modal hat ihn schon in seinem eigenen doAssign).
-  const assignOneTap = async (r, driverId) => {
-    if (wouldResetLiveStatus(r.status, r.assignedDriverId, driverId)) {
-      const verb = driverId ? "Fahrerwechsel" : "Zuteilung entfernen";
-      if (!window.confirm(`Diese Fahrt läuft schon (Status: ${STATUS_LABEL[r.status] || r.status}).\n\n${verb} setzt sie zurück auf „Geplant“ und verwirft den aktuellen Stand. Trotzdem?`)) return;
-    }
-    return doAssign(r.id, driverId);
-  };
-
-  const RideCard = ({ r }) => {
-    const drv = setup.drivers.find((d) => d.id === r.assignedDriverId);
-    const issue = rideHasOpenIssue(r);
-    const alert = flightAlert(r);
-    const borderColor = issue || alert.level === "critical" ? "border-red-500" : alert.level === "warn" ? "border-amber-500" : r.assignedDriverId ? "border-blue-500" : "border-amber-500";
-    return (
-      <div className={`rounded-xl p-3 bg-stone-900 border-l-2 ${borderColor}`}>
-        <div className="flex items-baseline justify-between gap-2">
-          <span className="text-orange-300 font-medium truncate">{r.djName || "Fahrt"}</span>
-          <span className="font-mono text-sm text-stone-100 shrink-0">{r.time}</span>
-        </div>
-        <div className="text-xs text-stone-400 mt-0.5 truncate">{locName(r.fromId, r.fromCustom)} → {locName(r.toId, r.toCustom)}</div>
-        {(r.flightNo || issue) && (
-          <div className="flex gap-1.5 mt-1.5 flex-wrap">
-            {r.flightNo && <span className="text-[11px] px-1.5 py-0.5 rounded bg-red-500/10 text-red-300 flex items-center gap-1"><Plane className="w-3 h-3" />{r.flightNo}{alert.label ? ` · ${alert.label}` : ""}</span>}
-            {issue && <span className="text-[11px] px-1.5 py-0.5 rounded bg-red-500/10 text-red-300 flex items-center gap-1"><AlertTriangle className="w-3 h-3" />Problem</span>}
-          </div>
-        )}
-        {drv ? (
-          <div className="flex items-center justify-between mt-2 gap-2">
-            <span className="text-[11px] px-2 py-0.5 rounded bg-stone-800 text-stone-300 shrink-0">{STATUS_LABEL[r.status] || r.status}</span>
-            <div className="flex items-center gap-2 min-w-0 ml-auto">
-              <span className="text-xs text-stone-300 truncate">{drv.firstName} {drv.lastName[0]}. · {drv.vehicleType === "Van" ? "Van" : "Car"}</span>
-              {drv.phone && <a href={`tel:${drv.phone}`} aria-label={`${drv.firstName} anrufen`} className="shrink-0 flex items-center gap-1.5 text-xs bg-emerald-600 hover:bg-emerald-500 text-white px-3 py-2 rounded-lg"><Phone className="w-4 h-4" />Anrufen</a>}
-            </div>
-          </div>
-        ) : (() => {
-          // Ein-Tap-Zuteilen (Slice 7): die zwei besten Fahrer direkt als Chips.
-          // suggestDrivers filtert vorab eligible && !overlap && !hasIssue -> ein Chip
-          // bietet NIE einen harten Konflikt an, schlimmstenfalls "knapp" (enge Zeit),
-          // genau wie die Vorschlags-Buttons im vollen Modal. "mehr..." fuehrt fuer
-          // Konflikte/alle Fahrer/entfernen in das volle AssignModal.
-          const topTwo = suggestDrivers(setup, dyn, r).slice(0, 2);
-          return (
-            <div className="mt-2">
-              <span className="inline-block text-[11px] px-2 py-0.5 rounded bg-stone-800 text-stone-300">{STATUS_LABEL[r.status] || r.status}</span>
-              {topTwo.length > 0 ? (
-                <div className="flex items-stretch gap-1.5 mt-2">
-                  {topTwo.map((x) => (
-                    <button key={x.driver.id} onClick={() => assignOneTap(r, x.driver.id)}
-                      className="flex-1 min-w-0 flex items-center justify-center gap-1.5 text-xs bg-orange-600 hover:bg-orange-500 text-white px-3 py-2 rounded-lg">
-                      <span className="truncate">{x.driver.firstName} {x.driver.lastName[0]}.</span>
-                      <span className="shrink-0 text-[10px] opacity-80">{x.driver.vehicleType === "Van" ? "Van" : "Car"}</span>
-                      {!x.feasible && <span className="shrink-0 text-[9px] bg-white/25 px-1 rounded">knapp</span>}
-                    </button>
-                  ))}
-                  <button onClick={() => setAssignRide(r)} aria-label="Mehr Fahrer und Optionen"
-                    className="shrink-0 text-xs bg-stone-800 hover:bg-stone-700 text-stone-200 px-3 py-2 rounded-lg">mehr…</button>
-                </div>
-              ) : (
-                <button onClick={() => setAssignRide(r)} className="mt-2 w-full text-xs bg-orange-600 hover:bg-orange-500 text-white px-3 py-2 rounded-lg">Fahrer zuteilen</button>
-              )}
-            </div>
-          );
-        })()}
-      </div>
-    );
-  };
-
-  const FILTER_CHIPS = [
-    ["all", "Alle", "text-stone-300"],
-    ["open", "Nicht zugeteilt", "text-amber-400"],
-    ["active", "Aktiv", "text-blue-400"],
-    ["critical", "Kritisch", "text-red-400"],
-  ];
-
-  const DAY_START = 720, DAY_END = 1800; // 12:00 – 06:00 nächster Tag, deckt sortMin/dayNowMin ab
-  // Bekannter enger Randfall: sortMin() zählt Zeiten NUR bei < 06:00 als "Nacht"
-  // (+1440), exakt 06:00:00 fällt raus und würde hier fälschlich ganz oben statt
-  // unten landen. Bei Festival-Fahrzeiten (nie exakt 06:00) praktisch irrelevant,
-  // mit eigenständigem Test (test_mobile_timeline.mjs) abgesichert.
-  const posPct = (min) => Math.min(100, Math.max(0, ((min - DAY_START) / (DAY_END - DAY_START)) * 100));
-  const nowMin = dayNowMin(day);
-  const showNow = nowMin >= DAY_START && nowMin <= DAY_END;
-
-  return (
-    <div className="h-[100dvh] bg-stone-950 text-stone-100 flex flex-col overflow-hidden">
-      <header className="shrink-0 bg-stone-950/95 backdrop-blur border-b border-stone-800 px-4 py-2.5 flex items-center gap-2.5" style={{ paddingTop: "max(0.625rem, env(safe-area-inset-top))" }}>
-        <span className="ob-pulse inline-block w-2 h-2 rounded-full bg-orange-500 shrink-0" />
-        <span className="text-orange-400 text-[10px] font-mono tracking-[0.15em]">DISPO</span>
-        <span className="ml-auto text-stone-500 text-xs font-mono flex items-center gap-1"><Clock className="w-3.5 h-3.5" />{clock}</span>
-        {push.status !== "unconfigured" && (
-          <button onClick={push.enable} title={push.status === "active" ? `${PUSH_STATUS_LABEL[push.status]} · antippen zum erneuten Synchronisieren` : PUSH_STATUS_LABEL[push.status]} className="flex items-center justify-center w-10 h-10">
-            <span className={`w-2 h-2 rounded-full block ${push.status === "active" ? "bg-emerald-400" : push.status === "denied" || push.status === "error" ? "bg-red-400" : "bg-stone-600"}`} />
-          </button>
-        )}
-        <button onClick={onSwitchToDesktop} title="Zur vollen Desktop-Ansicht wechseln" className="text-stone-500 hover:text-stone-300 flex items-center justify-center w-10 h-10"><LayoutGrid className="w-4 h-4" /></button>
-        <button onClick={onLogout} className="text-stone-500 hover:text-stone-300 flex items-center justify-center w-10 h-10"><LogOut className="w-4 h-4" /></button>
-      </header>
-
-      {tab === "rides" && (
-        <>
-          <div className="shrink-0 px-4 pt-2.5">
-            <div className="flex items-center gap-2 bg-stone-900 border border-stone-800 rounded-lg px-2.5 py-2">
-              <Search className="w-3.5 h-3.5 text-stone-500 shrink-0" />
-              <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Artist, Fahrer suchen…"
-                className="bg-transparent text-sm text-stone-200 placeholder-stone-600 flex-1 outline-none min-w-0" />
-              {q && <button onClick={() => setQ("")} aria-label="Suche leeren" className="shrink-0 text-stone-500 hover:text-stone-300"><X className="w-4 h-4" /></button>}
-            </div>
-          </div>
-          <div className="shrink-0 flex gap-1.5 px-4 py-2.5 overflow-x-auto">
-            {days.map((d) => (
-              <button key={d.key} onClick={() => setDay(d.key)}
-                className={`shrink-0 text-xs px-3 py-2.5 rounded-lg ${day === d.key ? "bg-stone-100 text-stone-950 font-medium" : "bg-stone-900 text-stone-400"}`}>{d.label}</button>
-            ))}
-          </div>
-          <div className="shrink-0 flex gap-1.5 px-4 pb-2.5 overflow-x-auto">
-            {FILTER_CHIPS.map(([k, l, c]) => (
-              <button key={k} onClick={() => setFilter(k)}
-                className={`shrink-0 text-xs px-3 py-2.5 rounded-full ${filter === k ? "bg-stone-100 text-stone-950 font-medium" : `bg-stone-900 ${c}`}`}>
-                {l} · {kpi[k]}
-              </button>
-            ))}
-          </div>
-          <div className="flex-1 min-h-0 overflow-y-auto px-4 pb-20 space-y-2">
-            {visibleRides.length === 0 && (() => {
-              const es = rideListEmpty({ total: dayRides.length, query: q, filterLabel: filter === "all" ? null : ({ open: "Nicht zugeteilt", active: "Aktiv", critical: "Kritisch" }[filter]) });
-              return (
-                <div className="text-center text-stone-500 text-sm py-10">
-                  {es.text}
-                  {es.reset === "search" && <button onClick={() => setQ("")} className="ml-2 text-orange-400 underline">Suche zurücksetzen</button>}
-                  {es.reset === "filter" && <button onClick={() => setFilter("all")} className="ml-2 text-orange-400 underline">Alle anzeigen</button>}
-                </div>
-              );
-            })()}
-            {visibleRides.map((r) => <RideCard key={r.id} r={r} />)}
-          </div>
-        </>
-      )}
-
-      {tab === "timeline" && (
-        <div className="flex-1 min-h-0 overflow-y-auto px-4 pt-3 pb-20">
-          {visibleRides.length === 0 && <div className="text-center text-stone-500 text-sm py-10">Keine Fahrten an diesem Tag.</div>}
-          {visibleRides.length > 0 && (() => {
-            // Positionen sind proportional zur Uhrzeit, ABER: liegen zwei Fahrten
-            // zeitlich zu dicht beieinander, um beide lesbar Platz zu haben,
-            // wird die spätere so weit nach unten geschoben, bis der Mindest-
-            // abstand (ROW_H) wieder stimmt — verhindert Überlappung, der
-            // Container wächst dafür bei Bedarf über die Basishöhe hinaus.
-            const BASE_H = 560, ROW_H = 60;
-            let lastTop = -Infinity;
-            const placed = visibleRides.map((r) => {
-              const ideal = (posPct(sortMin(r.time)) / 100) * BASE_H;
-              const top = Math.max(ideal, lastTop + ROW_H);
-              lastTop = top;
-              return { r, top };
-            });
-            const totalH = Math.max(BASE_H, lastTop + ROW_H);
-            return (
-              <div className="relative pl-12" style={{ height: totalH }}>
-                <div className="absolute left-9 top-0 bottom-0 w-px bg-stone-800" />
-                {showNow && (
-                  <div className="absolute left-0 right-0 flex items-center gap-1.5 z-10" style={{ top: (posPct(nowMin) / 100) * totalH }}>
-                    <span className="text-[9px] text-orange-400 font-mono w-9 shrink-0 whitespace-nowrap">{clock}</span>
-                    <div className="flex-1 h-px bg-orange-500" />
-                  </div>
-                )}
-                {placed.map(({ r, top }) => {
-                  const drv = setup.drivers.find((d) => d.id === r.assignedDriverId);
-                  return (
-                    <div key={r.id} className="absolute left-0 right-0" style={{ top }}>
-                      <span className="absolute left-0 text-[10px] text-stone-500 font-mono -translate-y-1/2 w-9 whitespace-nowrap">{r.time}</span>
-                      <span className={`absolute left-8 w-2 h-2 rounded-full -translate-y-1/2 ${r.assignedDriverId ? "bg-blue-500" : "bg-amber-500"}`} />
-                      <button onClick={() => setAssignRide(r)} className="block w-full text-left ml-5 bg-stone-900 rounded-lg px-2.5 py-1.5 -translate-y-1/2">
-                        <div className="text-xs text-orange-300 font-medium truncate">{r.djName || "Fahrt"}</div>
-                        <div className="text-[10px] text-stone-500 truncate">{locName(r.fromId, r.fromCustom)} → {locName(r.toId, r.toCustom)}{drv ? ` · ${drv.firstName}` : ""}</div>
-                      </button>
-                    </div>
-                  );
-                })}
-              </div>
-            );
-          })()}
-        </div>
-      )}
-
-      {tab === "map" && <MobileMapPane setup={setup} dyn={dyn} day={day} />}
-
-      {tab === "returns" && (
-        <div className="flex-1 min-h-0 overflow-y-auto px-4 pt-3 pb-20 space-y-2">
-          {visibleReturns.length === 0 && <div className="text-center text-stone-500 text-sm py-10">Keine Rückfahrten an diesem Tag.</div>}
-          {visibleReturns.map((r) => <RideCard key={r.id} r={r} />)}
-        </div>
-      )}
-
-      {tab === "messages" && (
-        <div className="flex-1 min-h-0 overflow-y-auto px-4 pt-3 pb-20">
-          <MessagesInbox dyn={dyn} updateDyn={updateDyn} by={meBy} />
-        </div>
-      )}
-
-      <nav className="shrink-0 bg-stone-950/95 backdrop-blur border-t border-stone-800 flex" style={{ paddingBottom: "env(safe-area-inset-bottom)" }}>
-        {[["rides", "Fahrten", Route], ["timeline", "Timeline", Gauge], ["map", "Karte", MapIcon], ["returns", "Rückf.", Moon], ["messages", "Nachr.", MessageSquare]].map(([k, l, I]) => (
-          <button key={k} onClick={() => setTab(k)} className="flex-1 flex flex-col items-center gap-0.5 py-2 relative">
-            <div className="relative">
-              <I className={`w-[18px] h-[18px] ${tab === k ? "text-stone-100" : "text-stone-600"}`} />
-              {k === "messages" && msgOpenMobile > 0 && (
-                <span className="absolute -top-1.5 -right-2 min-w-[14px] h-[14px] px-0.5 inline-flex items-center justify-center rounded-full text-[8px] font-bold bg-orange-500 text-white">{msgOpenMobile}</span>
-              )}
-            </div>
-            <span className={`text-[9px] ${tab === k ? "text-stone-100" : "text-stone-600"}`}>{l}</span>
-          </button>
-        ))}
-      </nav>
-
-      {assignRide && (
-        <AssignModal setup={setup} dyn={dyn} ride={assignRide}
-          onClose={() => setAssignRide(null)}
-          onAssign={(driverId) => doAssign(assignRide.id, driverId)} />
-      )}
-      <ChatPanel setup={setup} dyn={dyn} day={day} updateDyn={updateDyn} by={meBy} liftOffset="calc(56px + env(safe-area-inset-bottom))" />
-    </div>
-  );
-}
-
-// Live-Karte fürs Handy: keine eigene Zeichenlogik, nutzt exakt dieselben
-// Daten-Funktionen und dieselbe (bereits responsive, viewBox-basierte)
-// SchematicMap-Komponente wie Desktop-Dashboard/BoardMiniMap.
-function MobileMapPane({ setup, dyn, day }) {
-  const isToday = dayNowMin(day) >= 0 && dayNowMin(day) < 90000;
-  const [, setTick] = useState(0);
-  useEffect(() => { if (!isToday) return; const t = setInterval(() => setTick((x) => x + 1), 15000); return () => clearInterval(t); }, [isToday]);
-  const [selected, setSelected] = useState(null);
-  const [mapView, setMapView] = useState("schema"); // 'schema' | 'google', siehe LiveGoogleMap
-  const nowMin = isToday ? dayNowMin(day) : 1080;
-  const nodes = useMemo(() => buildMapNodes(setup, dyn, day), [setup, dyn.rides, day]);
-  const positions = useMemo(() => computeMapPositions(setup, dyn, day, nowMin, isToday ? "live" : "sim", nodes), [setup, dyn, day, nodes, isToday, nowMin]);
-  const openRides = useMemo(() => computeOpenRides(setup, dyn, day, nodes), [dyn.rides, day, nodes]);
-  const sel = positions.find((p) => p.driver.id === selected);
-  return (
-    <div className="flex-1 min-h-0 overflow-y-auto px-4 pt-3 pb-20">
-      {!isToday && <div className="text-xs text-stone-500 mb-2">Zeigt den Fahrplan-Stand (kein anderer Tag als heute), keine Live-Positionen.</div>}
-      <div className="flex items-center gap-1 bg-stone-900 border border-stone-800 rounded-lg p-0.5 mb-2 w-fit">
-        <button onClick={() => setMapView("schema")}
-          className={`text-xs px-2.5 py-1 rounded ${mapView === "schema" ? "bg-stone-700 text-white" : "text-stone-400"}`}>Schema-Karte</button>
-        <button onClick={() => setMapView("google")}
-          className={`text-xs px-2.5 py-1 rounded ${mapView === "google" ? "bg-stone-700 text-white" : "text-stone-400"}`}>Google Maps</button>
-      </div>
-      <div className="bg-stone-900 border border-stone-800 rounded-xl p-2">
-        {mapView === "google" ? (
-          <LiveGoogleMap setup={setup} dyn={dyn} />
-        ) : (
-          <SchematicMap nodes={nodes} positions={positions} openRides={openRides}
-            selected={selected} hovered={null} onSelect={setSelected} onHover={() => {}}
-            activeOpen={null} onOpenClick={() => {}} />
-        )}
-      </div>
-      {sel && (
-        <div className="mt-2 bg-stone-900 border border-stone-800 rounded-xl p-2.5 text-xs text-stone-300">
-          {sel.driver.vehicleType === "Van" ? "Van" : "Car"} · {sel.driver.firstName} {sel.driver.lastName} · {STATUS_STYLE[sel.mode]?.label || sel.mode}
-        </div>
-      )}
-      <div className="mt-2">
-        <NoGpsSharingPanel setup={setup} dyn={dyn} day={day} />
-      </div>
     </div>
   );
 }
