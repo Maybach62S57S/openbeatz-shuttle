@@ -1052,14 +1052,19 @@ wenn der Chat zu lang wird.
 
 ---
 
-# STAND SESSION 23 (15.07.2026): BRANCH, NOCH NICHT AUF MAIN
+# STAND SESSION 23 (15.07.2026): AUF MAIN, PRODUCTION
 
-Branch `fix/session-23-dashboard-raus`, Code-Commits `7e4fc47` (Dashboard +
-uiMode) und `8aa1bfe` (globales Kpi). **Wartet auf Jordans OK**, danach
-FF-Merge (geprueft: main ist Vorfahre).
+`main` = `10401ca`, FF-Merge aus `fix/session-23-dashboard-raus` erledigt.
+Code-Commits: `7e4fc47` (Dashboard + uiMode) und `8aa1bfe` (globales Kpi).
 `src/ShuttleLeitstelle.jsx`: **9861 Zeilen** (vorher 10322, -461).
 esbuild gruen, Duplikat-Grep leer. Kein Schema-Re-Run offen.
-**Jordan hat Session 21, 22 und 23 noch NICHT am Geraet getestet.**
+
+**ACHTUNG, DER WICHTIGSTE SATZ DIESER UEBERGABE: Jordan hat Session 21, 22
+UND 23 noch NICHT am Geraet getestet.** Das sind vier Loeschungen
+uebereinander, die alle nur maschinell belegt sind. Seit Session 22 gibt es
+keinen Classic-Boden mehr unter dem Fallschirm, seit Session 23 ist Classic
+gar nicht mehr im Code. Faellt bei den Tests etwas auf, ist der Rueckweg
+Vercel -> Promote to Production, nicht Git.
 
 ## Geloescht
 
@@ -1253,9 +1258,9 @@ Maybach62S57S/openbeatz-shuttle. PAT setze ich hier ein: <PAT>
 Nach dem Klonen: git config (user.name/email), npm ci, Baseline-esbuild gruen:
 ./node_modules/.bin/esbuild src/ShuttleLeitstelle.jsx --bundle=false --format=esm --outfile=/tmp/x.js
 
-STAND: main = <Commit nach dem S23-Merge>, 9861 Zeilen. Session 23 (Dashboard,
-uiMode und das globale Kpi raus) ist gemerged, von mir aber noch NICHT am
-Geraet getestet. Session 21 und 22 ebenfalls nicht.
+STAND: main = 10401ca, Code-Stand 8aa1bfe, 9861 Zeilen. Session 23 (Dashboard,
+uiMode und das globale Kpi raus) ist gemerged und auf Production, von mir aber
+noch NICHT am Geraet getestet. Session 21 und 22 ebenfalls nicht.
 Rueckwege: git revert 8aa1bfe 7e4fc47, Tag
 stabil-classic-vorhanden-2026-07-15 = f7bb75d, Tag
 stabil-vor-design-2026-07-13 = 4d13e59. Vercel: altes Deployment per
