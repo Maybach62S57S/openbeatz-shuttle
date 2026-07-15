@@ -1,0 +1,386 @@
+# UEBERGABE Session 18 (15.07.2026)
+
+Ersetzt UEBERGABE-Session-17.md.
+
+## Stand
+
+- `main` (Production) = `f7bb75d`. Merge aus Session 18 erledigt, Fast-Forward.
+- `feature/mission-control-beta` = `f7bb75d`, identisch mit main.
+- `src/ShuttleLeitstelle.jsx`: **10638 Zeilen**. esbuild gruen, Duplikat-Grep leer.
+- Kein Schema-Re-Run offen.
+
+## RUECKWEGE (wichtig, drei Stufen)
+
+| Wohin | Tag / Branch | Commit |
+|---|---|---|
+| Stand mit vollstaendigem Classic + MC-Fallschirm | `stabil-classic-vorhanden-2026-07-15` = `backup/classic-vorhanden` | `f7bb75d` |
+| Stand vor der ganzen MC-Arbeit | `stabil-vor-design-2026-07-13` = `backup/paket-3-fertig` | `4d13e59` |
+
+Zurueck auf den Stand vor dem Classic-Ausbau:
+```
+git checkout main && git reset --hard f7bb75d && git push --force origin main
+```
+Zusaetzlich: **Vercel kann jedes fruehere Deployment per Klick wieder live
+schalten** (Deployments -> altes Deployment -> Promote to Production). Das ist
+der schnellste Rueckweg im Ernstfall, schneller als jeder Git-Befehl.
+
+---
+
+# JORDANS RICHTUNGSENTSCHEIDUNG vom 15.07.
+
+**Mission Control wird die einzige Leitstellen-Oberflaeche. Classic fliegt raus,
+noch vor dem Festival.** Jordan arbeitet kuenftig ausschliesslich mit MC, auch
+auf dem Handy (MC gefaellt ihm dort besser als die Mobil-Ansicht).
+
+Diese Entscheidung ist gefallen, nachdem ich zweimal fuer "nach dem Festival"
+argumentiert habe. **Nicht ungefragt wieder aufmachen.** Die Gegenargumente
+sind unten unter "Bekannte Risiken" dokumentiert, damit sie nicht verloren
+gehen, nicht damit sie neu verhandelt werden.
+
+## Befund: MC ist bereits funktionsgleich mit Classic (gemessen, nicht geschaetzt)
+
+Das ist die Grundlage der Entscheidung und erspart dem naechsten Chat die
+Analyse. **Nicht nochmal nachmessen, das steht.**
+
+| Tab | Classic | Mission Control | Art |
+|---|---|---|---|
+| board | 3829 eigener Block | 9841 eigener Block | eigen |
+| overview | `OverviewTab` 7008 | `MissionOverviewTab` 7161 | Fork |
+| timeline | `TimelinePage` 7356 | `MissionTimelinePage` 7750 | Fork |
+| returns | `ReturnsTab` 5922 | `MissionReturnsTab` 6181 | Fork |
+| emergency | `EmergencyTab` 6656 | `MissionEmergencyTab` 6789 | Fork |
+| messages | `MessagesInbox` 5563 | `MissionMessagesInbox` 5649 | Fork |
+| drivers | `DriversTab` 4891 | `MissionDriversTab` 4964 | Fork |
+| flights | `FlightTab` | `FlightTab` | **geteilt, identisch** |
+| map | `MapTab` | `MapTab` (+MC-Props) | **geteilt** |
+| settings | `SettingsTab` | `SettingsTab` | **geteilt, identisch** |
+
+Schreibende Aktionen pro Fork-Paar, gezaehlt (`updateDyn`-Aufrufe):
+returns 3:3, emergency 1:1, messages 2:2, overview 0:0, drivers 0:0.
+**Kein Fork hat eine Aktion mehr oder weniger.** Dazu dieselben Modals
+(`RideForm`, `AssignModal`, `WhatsAppModal`) und derselbe `ChatPanel` (10156).
+
+**Der einzige echte inhaltliche Unterschied: der Ueberblick-Tab.**
+Classic rendert dort `TimelineView`, Flughafen-Pickups und `Chip`s.
+MC rendert stattdessen KPI-Kacheln (`Kpi`/`MetricCard`), `McList` und
+"Was brennt" (`emergencyCases()`). Das war Jordans Entscheidung aus Session 17
+("doppelt gemoppelt"), die Inhalte liegen in den Fachtabs. **Wenn Jordan sagt
+"in MC fehlt was", ist es mit hoher Wahrscheinlichkeit das hier, und es ist
+Absicht.**
+
+## Codemessung (Grundlage fuer den Ausbau)
+
+| Block | Zeilen |
+|---|---|
+| Nur Mission Control | ~2360 |
+| Nur Classic | ~1900 |
+| Geteilt | ~2000 |
+| Datei gesamt | 10638 |
+
+Classic raus spart also **~1900 Zeilen (18 %)**. Die Datei bleibt bei ~8700.
+Laufzeit-Gewinn: **null** (die Zweige rendern konditional, React baut den
+anderen Baum nie). Bundle: ~805 kb, evtl. ~100 kb weniger.
+**Der echte Gewinn ist die Fork-Steuer:** heute muessen Fehler in den sechs
+Fork-Paaren zweimal repariert werden.
+
+---
+
+# DER PLAN: erst unerreichbar, dann testen, dann loeschen
+
+**Das Grundprinzip ist nicht verhandelbar und der Grund fuer die Reihenfolge:**
+Classic unerreichbar zu machen sind ~10 Zeilen und ein `git revert` bringt es
+zurueck. 1900 Zeilen zu loeschen ist das nicht. Deshalb erst unerreichbar
+machen, scharf testen, und **erst nach Jordans Freigabe** loeschen.
+
+**Wichtige Eigenschaft dieser Reihenfolge:** in Session 19 und 20 bleibt der
+Fallschirm intakt. `MissionControlBoundary` (1257) faengt einen MC-Absturz und
+wirft auf Classic. Der Code liegt noch da, das Netz traegt also waehrend der
+ganzen Testphase. Es verschwindet erst in Session 24.
+
+## Session 19: Classic unerreichbar machen (klein, voll reversibel)
+
+Nur das Routing im `App`-Root (1109 bis 1145). MC wird der einzige Dispo-Zweig:
+
+1. `if (useMobileView)` (1117) faellt fuer die Dispo-Rolle weg -> MC uebernimmt
+   auch auf dem Handy.
+2. `uiMode`-Weiche (1135) faellt weg, MC ist der einzige Zweig.
+3. Umschalter "Oberflaeche" im Dashboard-Kopf: erstmal nur ausblenden, nicht
+   loeschen.
+4. `MissionControlBoundary` + `handleMcFallback` **bleiben unveraendert**.
+   Der Fallschirm muss in der Testphase noch tragen.
+
+Kein Loeschen. Classic-Komponenten bleiben vollstaendig im Code, nur nicht mehr
+erreichbar. Fahrer/Stage/Gast: unveraendert, die laufen in eigenen Zweigen.
+
+Risiko: niedrig. Regression: `revert` des einen Commits.
+
+## Session 20: Jordan testet MC scharf (KEIN CODE)
+
+Testliste siehe unten. Mit echten Daten auf Production. **Erst wenn Jordan
+freigibt, geht es weiter.** Was hier gefunden wird, kommt als eigene Scheibe
+VOR die Loesch-Sessions.
+
+## Session 21: MobileDispatcherView raus
+
+`MobileDispatcherView` (4060, 297 Zeilen) + `MobileMapPane` (4357, 41 Zeilen).
+Dazu `viewOverride`/`useMobileView`/`setViewMode` und der "Zu Desktop"-Knopf.
+**Achtung:** `NoGpsSharingPanel` (4392) und `LiveGoogleMap` (4379) werden von
+`MobileMapPane` aufgerufen, haengen aber AUCH in `MapTab` (8943/8957). Sie
+bleiben. Nur die Aufrufstellen verschwinden.
+
+## Session 22: Dashboard + Umschalter raus
+
+`Dashboard` (3593, 467 Zeilen), `uiMode`-State, `setUiModeSafe`,
+`localStorage["obf:uiMode"]`.
+
+## Session 23: die sechs Classic-Forks raus (~1100 Zeilen)
+
+`OverviewTab` (7008), `TimelinePage` (7356), `ReturnsTab` (5922),
+`EmergencyTab` (6656), `MessagesInbox` (5563), `DriversTab` (4891).
+
+**Danach koennen die MC-Forks ihre `Mission`-Praefixe verlieren. NICHT machen,
+solange Jordan es nicht ausdruecklich will** (kosmetisches Refactoring, seine
+Regel).
+
+## Session 24: Fallschirm umbauen (Entscheidung noetig!)
+
+`MissionControlBoundary` faellt heute auf Classic zurueck. Ohne Classic hat sie
+keinen Boden mehr. **Jordan muss entscheiden:**
+
+- **a)** Boundary bleibt, zeigt aber eine Fehlerseite mit "Neu laden" statt
+  Classic (`MissionControlFallbackScreen` ist dafuer schon fast fertig, 1288).
+- **b)** Boundary raus, Absturz = weisser Bildschirm (wie Classic es heute
+  hat).
+
+Empfehlung: **a)**. Kostet fast nichts und ist besser als Classic es je war.
+
+## Session 25: toter Code raus
+
+Nach dem Ausbau tot und pruefbar per Grep:
+- `Kpi` **global** (4398) — nur Classic-Dashboard nutzt es (3773 bis 3776).
+  Das lokale `Kpi` in `MissionOverviewTab` (7180) bleibt.
+- `freeCount` in `OverviewTab` (faellt mit weg), `barColor` in
+  `MissionTimelinePage` (unbenutzte Kopie), `ErrorState`.
+
+## Session 26: Stabilitaetspaket (die geparkten Befunde, siehe unten)
+
+---
+
+# ⚠ GETEILT, NICHT MIT CLASSIC LOESCHEN
+
+**Das ist die Falle, die einen Loesch-Commit sprengt.** Vor jedem Loeschen jede
+Aufrufstelle per Grep gegenpruefen, die Zeilennummern stammen von `f7bb75d`:
+
+| Komponente | Aufrufstellen | Warum bleiben |
+|---|---|---|
+| `DriverRow` | 3923 (Classic), **9961 (MC)** | MC nutzt es |
+| `StatusPill` | **2527 (DriverApp!)**, 3892, 6018 | Fahrer-App nutzt es |
+| `StepProgress` | **2483 (DriverApp)** | Fahrer-App |
+| `BoardMiniMap` | 3932, 6161, 7077 (Classic) / **6451, 7233, 9970 (MC)** | MC nutzt es |
+| `TimelineView` | 6166, 7121 (Classic) / **6457 (MC), 8995 (MapTab)** | MC + geteilt |
+| `NoGpsSharingPanel` | 4392 (Mobil) / **8957 (MapTab)** | geteilt |
+| `LiveGoogleMap` | 4379 (Mobil) / **8943 (MapTab)** | geteilt |
+
+Ebenfalls geteilt und tabu: `RideForm`, `AssignModal`, `WhatsAppModal`,
+`ChatPanel`, `FlightTab`, `MapTab`, `SettingsTab`, `DriverApp`, `StageApp`,
+`GuestApp`, die komplette Datenschicht.
+
+---
+
+# GEPARKT: Stabilitaetsbefunde aus Session 18 (Jordan hat sie bewusst vertagt)
+
+**Alle fuenf liegen im GETEILTEN Code, keiner in Classic oder MC.** Sie waeren
+vom Classic-Ausbau nie beruehrt worden und bleiben danach 1:1 offen.
+
+**1. Statuswechsel-Race in der Fahrer-App (der kritischste Punkt).**
+`advance()` (2336) und `goBack()` (2352) berechnen den Zielstatus aus dem
+gerenderten Prop `ride.status`, wenden ihn aber im Mutator auf das FRISCHE `r`
+aus der DB an, ohne nochmal zu pruefen. Die Zuteilungs-Handler machen es
+richtig (`if (r.status !== "planned")` IM Mutator), diese zwei sind die
+Ausreisser. **Mit Node-Test reproduziert, 4 von 4 Faellen:**
+
+```
+A: Fahrer tippt "Fahrt annehmen" zweimal  -> ["accepted","accepted"]
+B: Leitstelle setzt zurueck, Fahrer tippt -> ["onboard","planned","done"]
+   -> planned springt DIREKT auf done, drei Stufen uebersprungen
+C: Fahrer tippt "zurueck" zweimal         -> doppeltes enroute_pickup
+D: zwei Tabs desselben Fahrers            -> doppeltes enroute_pickup
+```
+
+Fix (analysiert, nicht gebaut): zentrale `ALLOWED_NEXT`-Tabelle aus den heute
+real vorkommenden Uebergaengen, `setRideStatus` wird no-op bei gleichem Status
+und bei unmoeglichem Uebergang, `advance`/`goBack` rechnen mit `r.status` AUS
+DEM MUTATOR. Real vorkommende Uebergaenge (alle 17 Aufrufstellen geprueft):
+`STATUS_FLOW`-Schritte vorwaerts, `STATUS_PREV`-Schritte rueckwaerts,
+`* -> planned` (Zuteilungs-Reset, Chat, Import, neue Fahrt), `* -> cancelled`.
+Genau diese Menge, keine engere, sonst brechen bestehende Ablaeufe.
+Umfang ~30 Zeilen, beruehrt keinen MC-Renderzweig.
+
+**2. Offline: die App macht eine falsche Aussage.** `ConnIssueBanner` Zeile
+1315: "sobald die Verbindung zurueck ist, geht es automatisch weiter". Es gibt
+**keine Warteschlange** (grep `queue|outbox|pending write`: 0 Treffer). Die
+Aenderung ist weg. Dazu: 21 von 48 `updateDyn`-Aufrufen werten das Ergebnis
+nicht aus, darunter `advance`/`goBack`/`reportIssue` beim Fahrer -> offline
+passiert nichts und der Fahrer sieht keinen Fehler. `isOffline` (801) ist
+bekannt, wird aber in `updateDyn`/`updateSetup` nicht geprueft.
+
+**3. Polling ueberlappt.** `setInterval(async ...)` (896) wartet nicht auf den
+Callback. Ein Poll macht bis zu drei Netzwerkrunden; auf schlechtem LTE > 3 s
+laufen mehrere parallel. Folge: Out-of-Order, ein langsamer alter Poll
+ueberschreibt einen frischen (`setDyn` 917 vergleicht nur auf Gleichheit, nicht
+auf "aelter"), die Ansicht springt zurueck. `clearInterval` (935) stoppt nur
+kuenftige Ticks, ein laufender Poll schreibt danach noch. `lastLocSigRef` (913
+bis 915) wird von parallelen Polls verschraenkt geschrieben.
+Zweiter Poll mit demselben Muster: `GuestApp` (3048), plus eigener Bug in 3044:
+ein Netzwerkfehler wird zu `{valid:false}` -> der Gast sieht "Link ungueltig"
+statt "Verbindung gestoert".
+
+**4. `assertKnownDynKeys` (273) bricht nicht ab**, macht nur `console.error`.
+Die RPC verwirft das unbekannte Feld dann still. Auf einem Fahrer-Handy sieht
+niemand die Konsole. Jordan will: abbrechen (`throw`).
+Nebenbefund: der Guard haengt nur in `sbSetDyn`, nicht im `window.storage`-Pfad.
+Das ist **korrekt so** (dort geht nichts verloren), nur undokumentiert.
+
+**5. Race Conditions um die Revisionen.**
+`updateSetup` (1076): `(await sget(SETUP_KEY)) || setup` faellt auf das
+VERALTETE `setup` aus der Closure zurueck und rechnet mit dessen `rev`.
+`updateDyn` (1001): `|| emptyDyn()` -> im Artifact-Pfad liefert `sget` bei jedem
+Fehler `null` (392), dann laeuft der Mutator auf einem LEEREN dyn und schreibt
+es. Alle Fahrten weg. In Produktion nicht erreichbar (Supabase-Fehler werfen),
+aber die Konstruktion ist scharf.
+Retry-Schleife (1000/1075) ohne Backoff, 6 Versuche so schnell wie das Netz
+hergibt. `last = result.value` (1014) wird nie benutzt, der naechste Durchlauf
+macht wieder ein `sget` -> ein Roundtrip zu viel pro Kollision.
+
+---
+
+# TESTLISTE MISSION CONTROL (Session 20, Jordan, ca. 2 h)
+
+Auf Production, echte Daten, Leitstellen-Login. Auf Handy UND Laptop je einmal.
+**Vorbereitung:** Ansicht auf "Desktop", Oberflaeche auf "Mission Control"
+(beides `localStorage`, pro Geraet, ueberlebt Neustart).
+
+**Board**
+- [ ] KPI-Leiste zeigt plausible Zahlen
+- [ ] Fahrt anklicken -> Bearbeiten-Dialog oeffnet
+- [ ] Fahrt zuteilen -> Fahrer erscheint, Fahrer-Handy bekommt sie
+- [ ] Minikarte zeigt Fahrer an erwarteten Orten
+
+**Ueberblick**
+- [ ] "Was brennt" zeigt echte Probleme
+- [ ] Kacheln klickbar, springen in den richtigen Tab
+- [ ] Bewusst ANDERS als Classic (keine Timeline, keine Flug-Pickups) — ok?
+
+**Timeline**
+- [ ] Drag-and-Drop verschiebt eine Fahrt, Bestaetigung erscheint
+- [ ] "Abbrechen" tut nichts, "Verschieben" wendet an
+- [ ] "Rueckgaengig" nimmt es zurueck
+- [ ] Jetzt-Linie an der richtigen Stelle
+
+**Rueckfahrten**
+- [ ] Neue Rueckfahrt anlegen
+- [ ] Zuteilen, WhatsApp-Text kopieren
+- [ ] Ueberfaellige rot markiert
+
+**Notfall**
+- [ ] Gemeldetes Problem erscheint
+- [ ] "Problem erledigt" funktioniert und ist im Protokoll
+
+**Nachrichten**
+- [ ] Fahrer-Nachricht kommt an
+- [ ] Antworten funktioniert
+
+**Fluege / Karte / Einstellungen** (geteilter Code, sollte identisch sein)
+- [ ] Flugstatus aendern, manuell/auto umschalten
+- [ ] Karte zeigt Fahrer, Google-Umschalter geht
+- [ ] Einstellungen speichern, Gast-Link erzeugen und Vorschau
+
+**Fahrer / Stage / Gast (duerfen sich NICHT geaendert haben)**
+- [ ] Fahrer-Login, Fahrt annehmen bis abschliessen
+- [ ] Stage-Login, nur lesen + Problem melden
+- [ ] Gast-Link oeffnen
+
+**Robustheit**
+- [ ] Flugmodus an -> Banner erscheint. **Achtung, bekannter Fehler:** der
+      Banner verspricht, dass Aenderungen nachgeholt werden. Werden sie nicht
+      (Befund 2 oben).
+- [ ] Flugmodus aus -> "Wieder verbunden", Daten kommen nach
+- [ ] Zwei Geraete gleichzeitig, beide sehen dieselbe Aenderung in ~3 s
+
+---
+
+# BEKANNTE RISIKEN DER ENTSCHEIDUNG (dokumentiert, nicht neu verhandeln)
+
+1. **MC ist nie getestet worden.** Classic auch nicht. Beide sind ungetestet,
+   das war Jordans richtige Korrektur an meiner Argumentation. Aber MC ist an
+   sechs Stellen geforkter Code, und ein Fork ist der Ort, an dem Luecken sich
+   verstecken. Deshalb ist Session 20 (Testen) der wichtigste Schritt des
+   ganzen Plans, nicht das Loeschen.
+2. **Der Fallschirm verschwindet in Session 24.** Bis dahin traegt er.
+3. **Festival ist 23. bis 27. Juli.** Ab dem 21. sollte nichts mehr geloescht
+   werden. Wenn der Plan bis dahin nicht durch ist: bei Session 19 stehen
+   bleiben (Classic unerreichbar, aber im Code) und nach dem Festival
+   weitermachen. Das ist ein voellig sauberer Zustand.
+
+---
+
+## Verbindliche Regeln (Jordans 8-Sessions-Regeln, gelten weiter)
+
+- Keine Neuentwicklung. Keine Aenderung bestehender Workflows, Rollen, Stages.
+- Keine DB-Struktur-Aenderung, ausser zwingend noetig.
+- Keine kosmetischen Refactorings. Keine Performance-Optimierungen ausserhalb
+  des Themas. Keine Aenderungen ausserhalb des jeweiligen Pakets.
+- Immer zuerst bestehenden Code vollstaendig analysieren, dann aendern.
+- Jede Aenderung begruenden, moeglichst klein halten. Keine Breaking Changes.
+- Nach jeder Aenderung: Code pruefen, Build, **Regressionsrisiken nennen,
+  konkrete manuelle Testfaelle auflisten**.
+- Prioritaet: 1. Stabilitaet 2. Datenintegritaet 3. Sicherheit 4. Wartbarkeit
+  5. Performance.
+- Fehler ausserhalb der Session NICHT aendern, unter "Weitere gefundene Punkte
+  fuer spaetere Sessions" auflisten.
+- Fahrer/Stage/Gast sind tabu. Stage Manager read-only.
+- **esbuild ist kein Beweis.** Jede Referenz, jedes Icon (Import-Liste oben!)
+  und jede `var(--mc-*)`-CSS-Variable einzeln gegenpruefen.
+- Commit ueber `/tmp/msg.txt` (Umlaute).
+- **Chat-Laenge:** jedes Paket in einen frischen Chat. Jordans Chats stuerzen
+  ab, wenn sie zu lang werden.
+
+---
+
+## Ready-to-paste Opener: Session 19 (Classic unerreichbar machen)
+
+```
+Erst PROJEKT-ANWEISUNGEN.md lesen, dann Repo holen. Repo:
+Maybach62S57S/openbeatz-shuttle. PAT setze ich hier ein: <PAT>
+Nach dem Klonen: git config (user.name/email), npm ci, Baseline-esbuild gruen:
+./node_modules/.bin/esbuild src/ShuttleLeitstelle.jsx --bundle=false --format=esm --outfile=/tmp/x.js
+
+STAND: main = f7bb75d, 10638 Zeilen. Rueckwege: Tag
+stabil-classic-vorhanden-2026-07-15 = backup/classic-vorhanden = f7bb75d
+(Stand mit Classic), Tag stabil-vor-design-2026-07-13 = 4d13e59 (davor).
+
+Danach UEBERGABE-Session-18.md lesen, komplett. Anker per grep gegenpruefen,
+die Zeilennummern stammen von f7bb75d.
+
+ENTSCHEIDUNG STEHT: Mission Control wird die einzige Leitstellen-Oberflaeche,
+Classic fliegt raus. Nicht neu verhandeln, die Gegenargumente stehen in der
+Uebergabe.
+
+AUFTRAG SESSION 19: Classic unerreichbar machen, NICHT loeschen. Nur das
+Routing im App-Root (1109 bis 1145): useMobileView-Weiche (1117) faellt fuer
+die Dispo-Rolle weg, uiMode-Weiche (1135) faellt weg, MC ist der einzige
+Dispo-Zweig, auch auf dem Handy. Umschalter "Oberflaeche" nur ausblenden.
+MissionControlBoundary und handleMcFallback bleiben UNVERAENDERT, der
+Fallschirm muss in der Testphase noch tragen. Classic-Code bleibt vollstaendig
+liegen. Fahrer/Stage/Gast nicht anfassen.
+
+Branch: fix/session-19-mc-only von main. Nach meinem OK FF-Merge auf main.
+
+Zum Schluss: Diff-Beleg, Regressionsrisiken, konkrete manuelle Testfaelle.
+Danach teste ich MC scharf mit der Testliste aus der Uebergabe, bevor
+irgendwas geloescht wird.
+
+Feste Regeln wie in der Uebergabe. Sprache Deutsch, informell, keine
+Gedankenstriche, korrekte Umlaute. Warn mich rechtzeitig, wenn der Chat zu
+lang wird.
+```
