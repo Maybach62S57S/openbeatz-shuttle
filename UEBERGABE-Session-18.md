@@ -646,3 +646,219 @@ Feste Regeln wie in der Uebergabe. Sprache Deutsch, informell, keine
 Gedankenstriche, korrekte Umlaute. Warn mich rechtzeitig, wenn der Chat zu
 lang wird.
 ```
+
+---
+
+# STAND SESSION 21 (15.07.2026) — AUF MAIN, PRODUCTION
+
+`main` = `ff05974`, FF-Merge aus `fix/session-21-mobile-raus` erledigt.
+`src/ShuttleLeitstelle.jsx`: **10298 Zeilen** (vorher 10667, -369).
+Bundle 803.8 kb -> 783.0 kb. esbuild gruen, Duplikat-Grep leer.
+Kein Schema-Re-Run offen. **Jordan hat Session 21 noch NICHT am Geraet
+getestet**, die Testfaelle unten stehen offen.
+
+## Geloescht
+
+- `MobileDispatcherView` (vormals 4080, 293 Zeilen) samt `onSwitchToDesktop`
+  ("Zu Desktop"-Knopf), lokalem `RideCard`, `FILTER_CHIPS`, `assignOneTap`.
+- `MobileMapPane` (vormals 4377, 40 Zeilen).
+- `viewOverride`/`setViewOverride`, `isNarrow`/`setIsNarrow` + resize-Effekt,
+  `useMobileView`, `setViewMode`, localStorage `"obf:viewMode"`.
+- Der in Session 19 auskommentierte Notausstieg-Block (vormals 1184 bis 1198).
+- `Phone` aus dem lucide-Import.
+
+## Zwei Korrekturen an der Session-21-Vorgabe (gemessen, nicht geschaetzt)
+
+- **`LayoutGrid` ist NICHT tot geworden.** Die Vorgabe nannte es als Beispiel.
+  Es lebt an fuenf Stellen (2829, 3697, 6705, 6863, 9874), u. a. als MC-Navi-
+  Icon. Blindes Loeschen haette MC beim Rendern zerlegt.
+- **`Phone` war das einzige tote Icon** und stand in keiner Liste.
+  Methode: alle 43 Icons auf `94157e0` und auf dem neuen Stand automatisch
+  gegen die Datei gepruefT. Vorher 0 tot, nachher genau 1. Dieselbe Pruefung
+  fuer alle Top-Level-Bezeichner: **kein einziger neu tot**.
+
+## Belege
+
+esbuild gruen, Duplikat-Grep leer, Kompilat gegengeprueft (`MobileDispatcherView`,
+`MobileMapPane`, `viewOverride`, `useMobileView`, `setViewMode`, `isNarrow`,
+`obf:viewMode` je 0 Treffer; MC/MapTab/NoGpsSharingPanel/LiveGoogleMap/Dashboard/
+DriverApp/StageApp/GuestApp/`obf:uiMode` alle vorhanden). Pruefsummen von
+Dashboard, MissionControl, den sechs Forks, DriverApp/StageApp/GuestApp gegen
+`94157e0`: identisch. Routing-Test 3840 Kombinationen, 0 Abweichungen.
+
+`NoGpsSharingPanel` (jetzt Def. 8495, Aufruf `MapTab` 8608) und `LiveGoogleMap`
+(jetzt Def. 8360, Aufruf `MapTab` 8594) leben wie vorgesehen weiter.
+
+---
+
+# ⚠⚠ WARNUNG: DIE PLAN-REIHENFOLGE S22 -> S24 IST KAPUTT
+
+**Das ist der wichtigste Punkt dieser Uebergabe. Vor Session 22 lesen.**
+
+Der Fallschirm laeuft heute so:
+1. MC stuerzt beim Rendern ab -> `MissionControlBoundary` (1255)
+   `getDerivedStateFromError` -> `MissionControlFallbackScreen` (1286) fuer
+   EINEN Render-Tick.
+2. `componentDidCatch` -> `handleMcFallback` (771) -> `mcBlocked = true`.
+3. App rendert neu -> `if (!mcBlocked)` (1139) faellt durch ->
+   **`<Dashboard>` in Zeile 1172 faengt auf.**
+
+**`Dashboard` IST der Boden des Fallschirms.** Session 22 loescht laut Plan
+`Dashboard`, Session 24 baut erst danach den Fallschirm um. In der Reihenfolge
+zeigt Zeile 1172 nach S22 auf eine geloeschte Komponente.
+
+**Und das faellt in keiner unserer Pruefungen auf:** esbuild kompiliert durch
+undefinierte JSX-Referenzen durch (bekannte Projekt-Erfahrung, steht in den
+Projekt-Anweisungen). Build gruen, Duplikat-Grep leer, und der `ReferenceError`
+schlaegt erst zur Laufzeit zu — und zwar ausschliesslich in dem Moment, in dem
+MC schon abgestuerzt ist. Also im schlechtesten denkbaren Moment, waehrend des
+Festivals, ohne Netz darunter.
+
+**Konsequenz: S24 muss VOR S22.** Neue Reihenfolge:
+
+| Neu | Alt | Inhalt |
+|---|---|---|
+| **S22** | war S24 | Fallschirm umbauen: Boundary zeigt Fehlerseite statt Classic |
+| **S23** | war S22 | `Dashboard` + `uiMode`/`setUiModeSafe`/`obf:uiMode` raus |
+| **S24** | war S23 | die sechs Classic-Forks raus |
+| S25 | S25 | toter Code |
+
+Beim Fallschirm-Umbau (Jordans Empfehlung war Variante a) zusaetzlich beachten:
+`MissionControlFallbackScreen` (1286) sagt heute woertlich "Zur klassischen
+Ansicht zurückgewechselt" und "Classic wird geladen…". Ohne Classic ist das
+eine Falschaussage und muss mit umgeschrieben werden (-> "Neu laden").
+
+Alternativ: `Dashboard` und Fallschirm in EINER Session, dann aber bewusst als
+ein Paket, nicht nebenbei.
+
+## Anker fuer den Fallschirm-Umbau (Stand `ff05974`)
+
+- `MissionControlBoundary` 1255 bis 1281, `MissionControlFallbackScreen` 1286
+- `handleMcFallback` 771, `mcBlocked` 769, `mcFailReason` 770
+- `uiMode` 755, `setUiModeSafe` 759 (kein Aufrufer mehr), `obf:uiMode` 756/762/775
+- Gate `if (!mcBlocked)` 1139, `key={uiMode}` 1143, Fallschirm-Zweig 1172
+
+## Anker fuer "Dashboard raus" (Stand `ff05974`)
+
+- `Dashboard` 3591 bis 4047 (**457 Zeilen**, nicht 467)
+- Einziger Aufrufer: 1172 (der Fallschirm, siehe Warnung oben)
+- **`Dashboard` ist der einzige Aufrufer aller sechs Classic-Forks:**
+  `OverviewTab` 3938, `TimelinePage` 3940, `ReturnsTab` 3942,
+  `EmergencyTab` 3945, `MessagesInbox` 3947, `DriversTab` 3950.
+  Nach dem Dashboard-Ausbau sind alle sechs verwaist, aber harmlos.
+- Umschalter "Oberflaeche" im Dashboard-Kopf 3734 bis 3752, "Zu Classic" im
+  MC-Kopf 9376
+- `Kpi` global wird von Dashboard (3771 bis 3774) und 6874 bis 6877 genutzt.
+  Vor dem Loeschen pruefen, ob 6874 bis 6877 das globale `Kpi` oder das lokale
+  in `MissionOverviewTab` meinen. Nicht raten.
+
+---
+
+# REVIDIERT: die Nicht-Anfassen-Liste (Jordan, 15.07.)
+
+"Classic bleibt byte-fuer-byte unveraendert" und "wegen Classic-Regressions-
+risiko lieber nichts anfassen" sind **keine Argumente mehr**. Das war der Grund
+fuer Approach A (doppelte Controller-Glue). Classic wird geloescht, nicht
+konserviert.
+
+**Weiterhin tabu, hatte nie mit Classic zu tun:** `DriverApp`/`StageApp`/
+`GuestApp` (Stage read-only), die Datenschicht, das `dyn_data`/RPC-Thema.
+
+**Weiterhin tabu bis zum Fallschirm-Umbau:** `MissionControlBoundary`,
+`handleMcFallback`, `mcBlocked`, `mcFailReason` — und damit faktisch auch
+`Dashboard`, weil der Fallschirm dort aufkommt (siehe Warnung).
+
+**Gilt weiter:** keine Aenderungen ausserhalb des jeweiligen Pakets. Classic-
+Teile nur in ihrer eigenen Session loeschen, nicht nebenbei mitnehmen.
+
+**Stichtag: ab 21.07. nichts mehr loeschen** (Festival 23. bis 27.07.). Wenn der
+Plan bis dahin nicht durch ist: stehen bleiben, nach dem Festival weitermachen.
+Der jetzige Stand (Session 21 auf main) ist ein sauberer Halt.
+
+---
+
+# OFFENE TESTFAELLE SESSION 21 (Jordan, auf Production)
+
+1. [ ] Laptop, Dispo-Login: MC oeffnet. Kein Handy-Symbol, kein "Zu Desktop".
+2. [ ] Konsole `localStorage.setItem("obf:viewMode","mobile")` + F5 -> trotzdem
+       MC. Danach `localStorage.removeItem("obf:viewMode")`.
+3. [ ] iPhone, Dispo-Login: MC mit unterer Leiste, alle fuenf Punkte + "Mehr".
+4. [ ] **Karte-Tab: Schema/Google umschalten.** Der Test fuer
+       `NoGpsSharingPanel` + `LiveGoogleMap`, deren Aufrufer geloescht wurde.
+5. [ ] Fahrt zuteilen (`AssignModal`), Chat-Knopf oeffnet.
+6. [ ] Fahrer-Login: annehmen bis abschliessen. **Anrufen-Knopf muss da sein**
+       (`tel:`-Link, anderes Icon als das entfernte `Phone`).
+7. [ ] Stage-Login: nur lesen + Problem melden.
+8. [ ] Gast-Link oeffnen.
+9. [ ] Zwei Geraete, Aenderung in ~3 s auf beiden.
+
+Rueckweg: `git revert ff05974 0859041`, Tag `stabil-classic-vorhanden-2026-07-15`
+= `f7bb75d`, oder Vercel -> altes Deployment -> Promote to Production.
+
+---
+
+# Weitere gefundene Punkte fuer spaetere Sessions (aus Session 21)
+
+- `IconButton` (10201) und `tsToDayMin` (1737) haben **keinen Aufrufer, schon
+  auf `94157e0`**. Nicht von Session 21 verursacht. Gehoeren zu `ErrorState`
+  (10235) in die Session-25-Liste, die kannte nur `ErrorState`.
+- `onSwitchToMobile` steckt weiter in den Signaturen von `Dashboard` (3591) und
+  `MissionControl` (9202), an beiden Aufrufstellen (1147, 1175) fest `null`.
+  Die Knoepfe (3732, 9366) sind unerreichbar. Faellt fuer Dashboard mit dem
+  Dashboard-Ausbau, fuer MC braucht es eine eigene kleine Scheibe.
+- Haengende Kommentar-Verweise auf `obf:viewMode`: 751 (im `uiMode`-Block,
+  faellt mit dem uiMode-Ausbau weg) und 2621 (Stage-Filter, tabu). Dazu 9193
+  "nach der useMobileView-Pruefung" (stand schon in der Session-19-Liste).
+- Offen aus Session 19, unveraendert: Chat-FAB ueberlappt die MC-Handy-Leiste;
+  "Was brennt" widerspricht dem Kopf-Banner (nicht analysiert, Verdacht
+  Tagesfilter); `favicon.ico` 404.
+- Die fuenf geparkten Stabilitaetsbefunde aus Session 18 sind alle unveraendert
+  offen. Sie liegen im geteilten Code und werden vom Classic-Ausbau nie
+  beruehrt.
+
+---
+
+## Ready-to-paste Opener: naechste Session (Fallschirm umbauen)
+
+```
+Erst PROJEKT-ANWEISUNGEN.md lesen, dann Repo holen. Repo:
+Maybach62S57S/openbeatz-shuttle. PAT setze ich hier ein: <PAT>
+Nach dem Klonen: git config (user.name/email), npm ci, Baseline-esbuild gruen:
+./node_modules/.bin/esbuild src/ShuttleLeitstelle.jsx --bundle=false --format=esm --outfile=/tmp/x.js
+
+STAND: main = ff05974, 10298 Zeilen. Session 21 ist gemerged und auf
+Production. Rueckwege: git revert ff05974 0859041, Tag
+stabil-classic-vorhanden-2026-07-15 = f7bb75d, Tag
+stabil-vor-design-2026-07-13 = 4d13e59. Vercel: altes Deployment per
+Promote to Production zurueckholen.
+
+Danach UEBERGABE-Session-18.md lesen, KOMPLETT, vor allem den Abschnitt
+"STAND SESSION 21" und die Warnung "DIE PLAN-REIHENFOLGE S22 -> S24 IST
+KAPUTT". Anker per grep gegenpruefen, die sind schon auf ff05974.
+
+ENTSCHEIDUNG STEHT: Mission Control ist die einzige Leitstellen-Oberflaeche,
+Classic wird geloescht. Nicht neu verhandeln.
+
+AUFTRAG: Fallschirm umbauen, VOR dem Dashboard-Ausbau. Grund steht in der
+Warnung: Dashboard ist heute der Boden des Fallschirms (Zeile 1172), und
+esbuild wuerde einen kaputten Fallschirm nicht melden.
+- MissionControlBoundary (1255) faellt kuenftig NICHT mehr auf Classic,
+  sondern zeigt eine Fehlerseite mit "Neu laden" (Variante a).
+- MissionControlFallbackScreen (1286) umschreiben, der Text sagt heute
+  "Zur klassischen Ansicht zurückgewechselt" / "Classic wird geladen…".
+- handleMcFallback/mcBlocked/mcFailReason entsprechend anpassen.
+- Dashboard, die sechs Classic-Forks und uiMode/setUiModeSafe in DIESER
+  Session NICHT loeschen, das ist die naechste.
+- DriverApp/StageApp/GuestApp und die Datenschicht nicht anfassen.
+
+Branch: fix/session-22-fallschirm von main. Nach meinem OK FF-Merge auf main.
+
+Zum Schluss: Diff-Beleg, Regressionsrisiken, konkrete manuelle Testfaelle.
+Wichtig: einen absichtlichen MC-Absturz testbar machen (z. B. kurzzeitig ein
+throw im MC-Baum) und belegen, dass die Fehlerseite kommt und Reload hilft.
+
+Feste Regeln wie in der Uebergabe. esbuild ist kein Beweis, jede Referenz und
+jedes Icon einzeln gegenpruefen. Commit ueber /tmp/msg.txt. Sprache Deutsch,
+informell, keine Gedankenstriche, korrekte Umlaute. Warn mich rechtzeitig,
+wenn der Chat zu lang wird.
+```
