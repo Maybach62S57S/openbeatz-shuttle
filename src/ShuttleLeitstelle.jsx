@@ -3621,16 +3621,6 @@ function ChatPanel({ setup, dyn, day, updateDyn, by, liftOffset }) {
 // Rueckweg: git revert dieses Commits.
 // ==========================================================================
 
-function Kpi({ label, value, tone = "stone" }) {
-  const c = { stone: "text-stone-200", orange: "text-orange-400", blue: "text-blue-400", emerald: "text-emerald-400" }[tone];
-  return (
-    <div className="text-center px-3">
-      <div className={`text-xl font-semibold font-mono ${c}`}>{value}</div>
-      <div className="text-[10px] uppercase tracking-wide text-stone-500">{label}</div>
-    </div>
-  );
-}
-
 function DriverRow({ setup, driver, stats }) {
   const dot = stats.active ? "bg-blue-400" : "bg-emerald-400";
   const loc = setup.locations.find((l) => l.id === stats.locNow);
