@@ -414,19 +414,62 @@ Import-Liste unveraendert, Routing-Test 37/37.
 Datei: 10638 -> **10667 Zeilen** (Zuwachs = Kommentar + auskommentiertes
 Original).
 
-## RAUCHTEST SESSION 19 (vor dem Merge, ca. 10 Min, auf dem Branch-Preview)
+## RAUCHTEST SESSION 19: DURCHGEFUEHRT 15.07.2026, BESTANDEN
 
-Nicht die grosse Testliste, nur: hat das Routing-Umlegen funktioniert.
+Jordan, auf dem Vercel-Preview des Branches, echte Daten, Safari.
 
-- [ ] Laptop, Dispo-Login -> MC oeffnet sofort. Kein "Oberflaeche"-Umschalter,
-      kein "Zu Classic", kein Handy-Icon im Kopf.
+| Test | Ergebnis |
+|---|---|
+| T1 Laptop: MC oeffnet direkt, kein Umschalter/Zu-Classic/Handy-Icon | **gruen** |
+| T1 Handy: dieselben drei Knoepfe weg | **gruen** |
+| T4 iPhone: MC nutzbar | **brauchbar**, siehe unten |
+| T5 Fahrer-App unveraendert | **gruen** (am Geraet belegt) |
+| T6 Stage-App unveraendert, read-only | **gruen** (am Geraet belegt) |
+| T6 Gast-Link | uebersprungen, siehe Begruendung |
+| Browser-Konsole | **null Meldungen aus unserem Bundle** |
+
+**Gast-Link bewusst uebersprungen:** der Gast-Zweig steht in Zeile 1102 als
+allererste Weiche im App-Root, vor dem Login und weit vor allem, was Session 19
+angefasst hat. Strukturell nicht erreichbar von dieser Aenderung.
+
+**Konsole:** die sichtbaren Fehler stammen alle NICHT aus der App.
+`DialogContent requires a DialogTitle` (radix-ui, `instrument.*.js`) ist die
+**Vercel-Preview-Leiste** - die erklaert auch den runden Knopf am rechten
+Bildschirmrand, den man auf den Preview-Screenshots sieht. Auf Production ist
+beides weg. `h1-main.js`/`h1-searchEngine.js` (TimeoutError, `Cannot call a
+class as a function`) ist eine Safari-Erweiterung. `favicon.ico` 404 gehoert
+zum offenen PWA-Punkt. Radix-ui ist nirgends in unseren Abhaengigkeiten
+(`@supabase/supabase-js, lucide-react, react, react-dom, web-push, xlsx`).
+**Aus dem eigenen Bundle kam ueber mehrere Minuten mit laufendem Polling keine
+einzige Meldung.**
+
+### KORREKTUR: MC ist responsiv, das stand falsch in dieser Uebergabe
+
+Die Uebergabe sagt "Shell dispatcher-only", und Session 19 hat daraus zunaechst
+faelschlich "Desktop-only" gemacht. **Falsch.** MC hat eine eigene
+Handy-Navigation, in Slice 5.3 gebaut:
+
+- `md:hidden fixed bottom-0 left-0 right-0 z-30` (10071), untere Leiste
+- `moreOpen` (9638) + `mobileMore` (9677) + `moreActive` (9682): "Mehr"-Blatt
+  fuer die restlichen rollen-erlaubten Punkte
+- dazu neun weitere Responsive-Regeln in der Shell (`md:hidden`, `hidden md:`,
+  `hidden sm:`, `hidden lg:`)
+
+Am iPhone bestaetigt: Seitenleiste klappt sauber in die untere Leiste
+(Live / Fahrten / Rueckfahrten / Fahrer / Mehr), Kopfzeile vollstaendig,
+kein seitliches Scrollen, alle fuenf Tage erreichbar, KPI-Kacheln brechen um,
+Problem-Meldung inklusive der drei Aktions-Knoepfe voll lesbar.
+**Das Risiko "MC auf dem Handy" aus dem Session-19-Plan ist damit erledigt.**
+
+## RAUCHTEST-VORLAGE (falls Session 19 je wiederholt werden muss)
+
+- [ ] Laptop, Dispo-Login -> MC sofort. Kein "Oberflaeche", kein "Zu Classic",
+      kein Handy-Symbol. "Rueckgaengig"/"Push"/Logout muessen bleiben.
 - [ ] Konsole `localStorage.setItem("obf:uiMode","classic")` + F5 -> trotzdem MC.
 - [ ] Konsole `localStorage.setItem("obf:viewMode","mobile")` + F5 -> trotzdem
-      MC, nicht die alte Mobil-Ansicht.
-- [ ] iPhone, Dispo-Login -> MC oeffnet. **Der eigentliche Risikopunkt:** MC war
-      nie fuer schmale Bildschirme gebaut.
-- [ ] Fahrer-Login -> unveraendert. Stage-Login -> unveraendert. Gast-Link ->
-      unveraendert.
+      MC. Danach `localStorage.removeItem("obf:viewMode")`.
+- [ ] iPhone, Dispo-Login -> MC, untere Leiste da.
+- [ ] Fahrer-Login, Stage-Login -> unveraendert.
 
 ## Rueckweg-Zeile
 
@@ -451,6 +494,25 @@ Nicht die grosse Testliste, nur: hat das Routing-Umlegen funktioniert.
   Classic-**Desktop**-Dashboard, nicht mehr in der Mobil-Ansicht. Stuerzt MC
   unterwegs ab, liegt eine Desktop-Oberflaeche auf 390 px. Daten sicher, Reload
   hilft. Faellt mit Session 24 (Fallschirm umbauen) ohnehin weg.
+- **Chat-Knopf ueberlappt auf dem Handy** (Rauchtest 15.07., am iPhone gesehen).
+  Der Chat-FAB ist `fixed right-5 z-50 w-12 h-12 rounded-full bg-orange-600`,
+  die MC-Handy-Leiste ist `md:hidden fixed bottom-0 ... z-30`. Der Knopf liegt
+  also darueber und landet dabei auf dem Zeit-Schieber der Live-Karte, dessen
+  rechtes Ende dadurch nicht mehr greifbar ist. Ihm fehlt auf schmalen
+  Bildschirmen ein Abstand nach unten, der die Leiste freihaelt.
+  **Keine Regression von Session 19**: der Code ist unveraendert, MC auf dem
+  Handy war vorher nur praktisch nie zu sehen, weil `useMobileView` vorher
+  abgebogen ist. Session 19 macht es sichtbar, verursacht es nicht.
+- **"Was brennt" widerspricht dem Banner** (Rauchtest 15.07., am Laptop
+  gesehen). Oben im MC-Kopf steht "1 offene Problem-Meldung, 1x KRITISCH"
+  (Finn S. / Will Sparks / Notfall), und die Kachel "Was brennt" darunter sagt
+  gleichzeitig "alles ruhig". Verdacht: das eine filtert nach dem gewaehlten Tag
+  (Di 21.07., 0 Fahrten), das andere nicht. Kann Absicht sein, kann ein Fehler
+  sein. **Nicht analysiert**, liegt ausserhalb von Session 19. Gehoert in die
+  Session-20-Testliste unter "Was brennt zeigt echte Probleme" und, falls es ein
+  Fehler ist, in eine eigene Scheibe VOR die Loesch-Sessions.
+- `favicon.ico` liefert 404. Kosmetisch, gehoert zum offenen PWA-Punkt
+  (`manifest.webmanifest`, siehe BACKEND-README).
 
 ---
 
