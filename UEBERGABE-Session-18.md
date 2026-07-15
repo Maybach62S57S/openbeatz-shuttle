@@ -1931,7 +1931,7 @@ ersetzt wird. Damit gibt es nur zwei sinnvolle Fenster:
 
 ---
 
-## Ready-to-paste Opener: Session 27a (Modals auf MC-Design)
+## Ready-to-paste Opener: Session 27a (Modals auf MC-Design) — FINAL, Stand 16.07.
 
 ```
 Erst PROJEKT-ANWEISUNGEN.md lesen, dann Repo holen. Repo:
@@ -1939,44 +1939,73 @@ Maybach62S57S/openbeatz-shuttle. PAT setze ich hier ein: <PAT>
 Nach dem Klonen: git config (user.name/email), npm ci, Baseline-esbuild gruen:
 ./node_modules/.bin/esbuild src/ShuttleLeitstelle.jsx --bundle=false --format=esm --outfile=/tmp/x.js
 
-STAND: main = bca80ed, Code-Stand a38d118, 8883 Zeilen. Classic ist komplett
-raus (Sessions 19 bis 24). Die Fahrer-App-Fixes (from-Waechter,
-Doppeltipp-Sperre, Offline-Ehrlichkeit) sind auf Production, aber noch
-ungetestet. Ich teste Sa/So mit mehreren Fahrern.
-Rueckweg: Vercel -> altes Deployment -> Promote to Production. Git:
-git revert <commit>. Tag stabil-vor-design-2026-07-13 = 4d13e59.
+STAND: main = 98f3d27, Code-Stand a38d118, 8883 Zeilen. Classic ist komplett
+raus (Sessions 19 bis 24), Mission Control ist die einzige Leitstellen-
+Oberflaeche. Die Fahrer-App-Fixes (from-Waechter, Doppeltipp-Sperre,
+Offline-Ehrlichkeit) sind auf Production, aber noch ungetestet. Ich teste
+Sa/So 18./19.07. mit mehreren Fahrern.
 
-Danach UEBERGABE-Session-18.md lesen, KOMPLETT, vor allem "SESSION 27"
-ganz unten. Die Datei waechst nach UNTEN an, alles weiter oben ist aelter.
-Die Anker unten sind auf a38d118. Per grep gegenpruefen.
+RUECKWEG fuer genau diesen Umbau: Tag stabil-vor-mc-design-2026-07-16 =
+Branch backup/vor-mc-design = 676b02b. Wenn mir das Design nicht gefaellt,
+gehe ich da zurueck. Sonst: Vercel -> altes Deployment -> Promote to
+Production. Aeltere Tags: stabil-classic-vorhanden-2026-07-15 = f7bb75d,
+stabil-vor-design-2026-07-13 = 4d13e59.
+
+Danach UEBERGABE-Session-18.md lesen, KOMPLETT, vor allem die zwei Abschnitte
+ganz unten: "SESSION 27: MC-Design fuer die geteilten Komponenten" und
+"SESSION 27a: DIE FALLE, DIE DEN UMBAU SPRENGT". Die Datei waechst nach UNTEN
+an, alles weiter oben ist aelter. Die Anker unten sind auf a38d118, per grep
+gegenpruefen.
 
 AUFTRAG 27a: RideForm (3832), AssignModal (3718) und WhatsAppModal (4348) auf
 MC-Design ziehen. Zusammen 426 Zeilen, alle drei heute komplett Classic
-(0 var(--mc-*), gemessen). Sie werden nur von MissionControl gerendert und
-haengen damit im .mc-scope. 0 Treffer in DriverApp/StageApp/GuestApp, belegt.
+(0 var(--mc-*), gemessen). Transitiv belegt: nur von MissionControl
+erreichbar, nicht von DriverApp/StageApp/GuestApp.
+
+ENTSCHEIDUNG STEHT, Variante A: ein eigenes McModal bauen (~15 Zeilen, MC-
+Design). Modal (7760) bleibt BYTE-IDENTISCH und wird NICHT angefasst, es
+haengt ueber IssueModal/StageIssueModal/GuestIssueModal in allen drei
+Rollen-Apps. Das ist derselbe Ansatz A wie bei den MC-Forks: lieber
+duplizieren als eine geteilte Komponente umbauen. Nicht neu verhandeln.
+
 - NUR className/Style. KEINE Props, KEINE Handler, KEINE Feldlogik.
   RideForm ist ein Formular mit Schreibweg, das ist die Grenze.
-- Designsystem ist MissionStyles. Enterprise dark, ruhig, nachtschicht-
-  tauglich. Kein Gaming, kein Neon, keine uebertriebenen Animationen.
+- Designsystem ist MissionStyles, alles unter .mc-scope gescopt. Vorhandene
+  Klassen wiederverwenden statt neu bauen: .mc-panel, .mc-input,
+  .mc-btn-primary, .mc-btn-assign, .mc-badge, .mc-eyebrow, .mc-iconbtn,
+  .mc-modal-fade. Aesthetik: enterprise dark, ruhig, nachtschichttauglich.
+  Kein Gaming, kein Cyberpunk, kein Neon, keine uebertriebenen Animationen.
 - Die anderen neun geteilten Komponenten NICHT anfassen, das sind 27b/c/d.
-- Weiter tabu: DriverApp/StageApp/GuestApp, die Datenschicht, das
-  dyn_data/RPC-Thema, der Fallschirm.
+- Weiter tabu: DriverApp/StageApp/GuestApp (Stage read-only), Modal, die
+  Datenschicht, das dyn_data/RPC-Thema, der Fallschirm.
 
 Branch: fix/session-27a-modals von main. Nach meinem OK FF-Merge auf main.
 
 Zum Schluss: Diff-Beleg, Regressionsrisiken, konkrete manuelle Testfaelle.
 esbuild ist kein Beweis, das ist in Session 23 und 24 je mit einer Gegenprobe
-belegt worden. Pruefsummen muessen GENAU die drei Modals als geaendert zeigen,
-alles andere byte-identisch. Laufzeit-Test: App-Root muss 25053 Zeichen
-rendern. Jede var(--mc-*) einzeln gegen MissionStyles pruefen, eine Variable
-die es nicht gibt macht die ganze CSS-Regel ungueltig und esbuild meldet das
-nie. Achtung: git diff --stat kann bei aehnlichen Bloecken scheinbare
-Einfuegungen zeigen, --patience nutzen.
+belegt worden (kaputte Referenz -> esbuild gruen, Duplikat-Grep leer).
+Belege, die ich sehen will:
+- Pruefsummen ueber @babel/parser (schon transitive Abhaengigkeit ueber
+  @vitejs/plugin-react, keine neue Library): genau RideForm, AssignModal,
+  WhatsAppModal geaendert, McModal neu, ALLES andere byte-identisch,
+  insbesondere Modal, DriverApp, StageApp, GuestApp.
+- Laufzeit-Test mit echtem React (react-dom/server, --jsx=automatic):
+  App-Root muss 25053 Zeichen rendern, die Zahl ist ueber alle Sessions
+  konstant.
+- Jede var(--mc-*) einzeln gegen MissionStyles pruefen. Eine Variable, die es
+  nicht gibt, macht die ganze CSS-Regel ungueltig und esbuild meldet das NIE.
+  Achtung: --mc-st-new-soft steht auf einer GETEILTEN Zeile (8527), ein
+  zeilenweiser Grep findet sie nicht.
+- Erreichbarkeit IMMER transitiv messen (Rendergraph), nie ueber direkte
+  Eltern. Genau daran ist die Modal-Falle fast durchgerutscht.
+- git diff --stat kann bei aehnlichen Bloecken scheinbare Einfuegungen zeigen,
+  --patience nutzen.
 Commit ueber /tmp/msg.txt. Sprache Deutsch, informell, keine Gedankenstriche,
 korrekte Umlaute. Warn mich rechtzeitig, wenn der Chat zu lang wird.
 
-ZEITFENSTER: muss VOR Sa 18.07. fertig sein, sonst deckt mein Fahrer-Test es
-nicht ab und es ginge ungetestet ins Festival (23. bis 27.07.).
+ZEITFENSTER: muss vor Sa 18.07. fertig und gemergt sein, sonst deckt mein
+Fahrer-Test es nicht ab und es ginge ungetestet ins Festival (23. bis 27.07.).
+Ab 21.07. wird nichts mehr geloescht.
 ```
 
 ---
