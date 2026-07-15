@@ -2347,12 +2347,23 @@ function DriverApp({ setup, dyn, session, updateDyn, onLogout }) {
     }]));
   }, [dyn.rides, driver.id]);
 
+  // Schutz gegen das Status-Race (Session 24c). flow wird aus dem GERENDERTEN
+  // Prop berechnet, angewendet wird aber auf das FRISCHE r aus der DB. Ohne den
+  // from-Vergleich IM Mutator wandert ein veralteter Zielstatus blind in die
+  // Daten: Doppeltipp schreibt denselben Status zweimal, und wenn die Leitstelle
+  // zwischendurch zurueckgesetzt hat, springt planned direkt auf done (drei
+  // Stufen uebersprungen). Gleiches Muster wie die Zuteilungs-Handler (3463,
+  // 6028, 6072, 8264), die den Status ebenfalls IM Mutator pruefen.
+  // Greift der Schutz, passiert bewusst nichts: der naechste Poll (3s) zeichnet
+  // den echten Stand, der Knopf beschriftet sich selbst neu.
   const advance = (ride) => {
-    const flow = STATUS_FLOW[ride.status];
+    const from = ride.status;
+    const flow = STATUS_FLOW[from];
     if (!flow || !flow.next) return;
     updateDyn((d) => {
       const r = d.rides.find((x) => x.id === ride.id);
-      if (r) setRideStatus(r, flow.next, `driver:${driver.id}`);
+      if (!r || r.status !== from) return d;
+      setRideStatus(r, flow.next, `driver:${driver.id}`);
       d.driverState[driver.id] = d.driverState[driver.id] || {};
       if (flow.next === "done") d.driverState[driver.id].locationId = ride.toId;
       return d;
@@ -2364,11 +2375,13 @@ function DriverApp({ setup, dyn, session, updateDyn, onLogout }) {
   // setRideStatus()-Funktion wie beim Vorwärtsgehen, landet also genauso im
   // Protokoll (sichtbar für die Leitstelle, nicht heimlich).
   const goBack = (ride) => {
-    const prev = STATUS_PREV[ride.status];
+    const from = ride.status;
+    const prev = STATUS_PREV[from];
     if (!prev) return;
     updateDyn((d) => {
       const r = d.rides.find((x) => x.id === ride.id);
-      if (r) setRideStatus(r, prev, `driver:${driver.id}`);
+      if (!r || r.status !== from) return d; // gleicher Schutz wie in advance()
+      setRideStatus(r, prev, `driver:${driver.id}`);
       return d;
     });
   };
