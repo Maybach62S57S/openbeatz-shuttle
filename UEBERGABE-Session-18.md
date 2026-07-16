@@ -2274,6 +2274,15 @@ AUFTRAG 27d: TimelineView (6440), BoardMiniMap (6888), NoGpsSharingPanel
 IN den MC-Seiten, also die auffaelligsten Classic-Inseln, und winzig.
 Erreichbarkeit vor dem Bauen NEU messen, nicht meiner Tabelle glauben.
 
+ACHTUNG bei TimelineView, das ist die erste Komponente im ganzen Design-Umbau,
+bei der ein Fehler mehr macht als haesslich aussehen: sie hat Drag-and-Drop mit
+Bestaetigungs-Popover, Ruecknahme-Hinweis und Jetzt-Linie. Inline-style haengt
+dort an left/width/opacity und traegt BERECHNETE POSITIONSLOGIK, kein Design.
+Vor jedem style-Eingriff pruefen, ob der Wert berechnet ist. .mc-tl-block hat
+ausserdem eine Animation, die auf die Drag-Opacity (0.25) Ruecksicht nimmt,
+siehe Kommentar bei mc-entry-in. Wenn du dir bei einer Stelle nicht sicher
+bist: liegen lassen und mir sagen, nicht raten.
+
 REGELN, aus 27a teuer gelernt:
 - Erreichbarkeit IMMER transitiv messen (rg.mjs liegt im Repo), und
   KONSTANTEN mitsammeln. In 27a ist inp durchgerutscht, weil das Skript nur
@@ -2317,7 +2326,7 @@ REGELN, aus 27a teuer gelernt:
   Stage bleibt read-only. Fahrer/Stage/Gast auf MC-Design ist NICHT Thema,
   eigenes Projekt nach dem Festival.
 
-BELEGE, die ich sehen will. Die vier Skripte liegen im Repo, benutz die:
+BELEGE, die ich sehen will. Die fuenf Skripte liegen im Repo, benutz die:
 - pruefe.mjs (Pruefsummen ueber @babel/parser + var-Check): genau die
   umgebauten Bausteine geaendert, ALLES andere byte-identisch, insbesondere
   DriverApp, StageApp, GuestApp, IssueModal, StageIssueModal, GuestIssueModal,
