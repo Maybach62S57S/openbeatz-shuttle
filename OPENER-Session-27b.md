@@ -26,11 +26,20 @@ Wenn irgendein Branch "ahead" von main ist, sag es mir BEVOR du weitermachst.
 
 ## STAND, wie er sein SOLLTE (nachmessen!)
 
-main = ea64966, 9031 Zeilen. 27e (FlightTab + LiveGoogleMap) ist per FF-Merge
-drin, gemessen am 16.07. direkt nach dem Merge: kein Branch war ahead von main,
-esbuild gruen, rendertest.mjs auf allen fuenf Sollwerten.
+27e (FlightTab + LiveGoogleMap) ist per FF-Merge auf main drin. Gemessen am
+16.07. direkt nach dem Merge: kein Branch war ahead von main, esbuild gruen,
+rendertest.mjs auf allen fuenf Sollwerten.
 
-Wenn du etwas anderes misst, sag es mir BEVOR du baust.
+Der verlaessliche Messwert ist die ZEILENZAHL, nicht der Hash:
+
+    src/ShuttleLeitstelle.jsx = 9031 Zeilen
+    letzter Code-Commit       = cb2b33c "Design: FlightTab und LiveGoogleMap auf MC (27e)"
+    main-Spitze               = ein oder mehrere Doku-Commits darueber
+
+Auf einen main-Hash festnageln bringt hier nichts: jeder Doku-Commit verschiebt
+ihn, und genau daran ist der letzte Opener schon einmal falsch gewesen. Wenn du
+9031 Zeilen misst und cb2b33c in der Historie steht, ist der Stand richtig.
+Wenn nicht, sag es mir BEVOR du baust.
 
 Classic ist seit Session 19 bis 24 komplett raus. Mission Control ist die
 einzige Leitstellen-Oberflaeche.
