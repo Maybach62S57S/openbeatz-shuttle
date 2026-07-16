@@ -3132,3 +3132,177 @@ Blasen-Ton. **Jordans Entscheidung, nicht meine.**
 | `SettingsTab` | 301 | Kind `inp` ist TABU -> `mcInp` tauschen, `Field mc`. Dazu sieben eigene Unterabschnitte (`AccessPinsSection`, `AuditLogSection`, `DispatcherUsers`, `DriverPhones`, `GuestLinksSection`, `PushSettingsSection`, `ReportSection`), die vorher EINZELN gemessen werden muessen. **Ist groesser als 301 Zeilen.** Eigener Chat. |
 | `FlightTab` | 162 | `flightStyle` + `FLIGHT_STATUS` sind TABU (Fahrer-Pfad). Gleiche Lage wie `Modal`/`inp` in 27a: optionaler `mc`-Schalter bzw. zweite Konstante, KEIN Fork. Eigener Chat. |
 | `LiveGoogleMap` | 127 | nur an MapTab, Kinder alles Logik. Klein, aber rendert nur hinter dem "Google Maps"-Umschalter UND mit geladener Google-API. Braucht das `smoke27b`-Muster plus ein Menschenauge. |
+
+---
+
+# Session 27e (16.07.2026): FlightTab + LiveGoogleMap auf MC
+
+Branch `fix/session-27e-flug`, Commit `cb2b33c`, Basis `main` = `95908d6`.
+Datei 8978 -> 9031 Zeilen, Diff 92 Einfuegungen / 39 Loeschungen.
+
+## Schritt 0, gemessen statt geglaubt
+
+Kein Branch war "ahead" von `main`. Der FF-Merge von `fix/session-27b-chatpanel`
+war gemacht, `main` = `95908d6` (ein Doku-Commit ueber `1f4b24d`), 8978 Zeilen,
+Baseline-esbuild gruen, `rendertest.mjs` exakt auf allen fuenf Sollwerten.
+Die Gabelung aus dem Vormittag ist zusammengefuehrt und geblieben.
+
+## Was gebaut wurde
+
+**FlightTab** (Kopf, Leerzustand, Fahrtzeilen) und **LiveGoogleMap** (alle vier
+Zustaende, Marker-Farben) auf die MC-Tokens. Nur className/Style, keine Handler,
+keine Feldlogik, keine Props.
+
+Drei Bausteine geaendert: `ALERT_ROW`, `FlightTab`, `LiveGoogleMap`.
+Drei neu: `MC_FLIGHT_TONE`, `mcFlightStyle`, `GMAP_COLORS`.
+284 von 287 Bausteinen byte-identisch.
+
+## Die zwei Tabu-Kinder: dritter Weg, sauberer als die anderen zwei
+
+`flightStyle` und `FLIGHT_STATUS` sind vom Fahrer-Pfad erreichbar
+(`DriverApp > flightStyle`, `StageApp > stageTrafficLight > flightAlert >
+flightStyle`) und damit tabu. Gewaehlt wurde **die zweite Konstante daneben**,
+fuer BEIDE:
+
+    const MC_FLIGHT_TONE = { "": "idle", geplant: "new", verspätet: "assigned",
+                             gelandet: "done", annulliert: "problem" };
+    const mcFlightStyle = (k) => ({ color: `var(--mc-st-${...})`,
+                                    background: `var(--mc-st-${...}-soft)` });
+
+Muster wie `mcInp` neben `inp`. Ein `mc`-Schalter in `flightStyle` waere auch
+gegangen, aber die zweite Konstante ist billiger zu beweisen: `flightStyle` und
+`FLIGHT_STATUS` sind **byte-identisch**, damit ist der Fahrer-Pfad nicht per
+Render-Vergleich, sondern per Pruefsumme unberuehrt. `FLIGHT_STATUS` liefert
+weiter Labels und Reihenfolge (Text, kein Style), nur die Farben kommen aus der
+neuen Tabelle. Kein Fork.
+
+## Eine Farbbedeutung hat sich geaendert, bewusst
+
+**"verspaetet" ist jetzt Amber (Warnung) statt Rot.** Grund: `flightAlert()`
+fuehrt "verspaetet" seit jeher als level `warn`, und `ALERT_ROW` zieht dafuer
+den amberfarbenen Rand. Classic zeigte im selben Zeilenblock links einen amber
+Rand und daneben ein rotes Feld, also zwei Aussagen zum selben Zustand. Rot
+bleibt jetzt dem echten Problem: annulliert und "gelandet, kein Fahrer".
+
+`ALERT_ROW` (nur von FlightTab genutzt, gemessen) ist von className-Strings auf
+Style-Objekte umgestellt, Rand 3px statt 2px, damit er zum Rand der Fall-Karten
+in `MissionEmergencyTab` passt.
+
+## GMAP_COLORS: warum Hex und nicht var()
+
+Google zeichnet seine Marker auf ein Canvas und versteht keine CSS-Variablen.
+`GMAP_COLORS` haelt deshalb vier echte Hex-Werte, die 1:1 die Tokens sind:
+Van = `--mc-st-assigned`, Car = `--mc-st-new` (dieselbe Zuordnung wie in
+`AssignModal` und `DriverDetailsPanel`), Ort = `--mc-st-idle`, Kontur =
+`--mc-bg`. **Diese Kopplung ist per Hand gebaut und wuerde stumm auseinander-
+laufen**, wenn jemand ein Token aendert. Deshalb prueft `smoke27e.mjs` die vier
+Werte LIVE gegen `MissionStyles`, statt sie zu wiederholen.
+
+## Belege
+
+- esbuild gruen, keine doppelten Funktionsnamen.
+- `pruefe.mjs`: GEAENDERT nur `ALERT_ROW`, `FlightTab`, `LiveGoogleMap`.
+  `DriverApp`, `StageApp`, `GuestApp`, `IssueModal`, `StageIssueModal`,
+  `GuestIssueModal`, `MissionStyles`, `Field`, `inp`, `SettingsTab`, `LocSelect`
+  unveraendert. Zusaetzlich per AST gegengeprueft und byte-identisch:
+  `flightStyle`, `FLIGHT_STATUS`, `flightAlert`, `flightDelayed`,
+  `needsDispatcherFlightAlert`, `getFlightStatus`, `MapTab`, `SchematicMap`,
+  `MapLegend`, `DriverDetailsPanel`, `driverInfoWindowHtml`, `MissionControl`,
+  `RideForm`, `waDriverText`, `stageTrafficLight`.
+- `pruefe.mjs` var-Check: keine undefinierte `var(--mc-*)`.
+- `rendertest.mjs`: alle fuenf Sollwerte unveraendert (App-Root 25053,
+  IssueModal 2452, StageIssueModal 2413, GuestIssueModal 2895, Field 101).
+- `kontrast.mjs`: 19 Kombis, 0 Fehler (MissionStyles nicht angefasst).
+- `smoke.mjs`, `smoke27b.mjs`, `smoke27c.mjs`, `smoke27d.mjs`: alle gruen.
+- **`smoke27e.mjs` (neu)**: 13 FlightTab-Zustaende + 4 LiveGoogleMap-Zustaende,
+  alle rendern echt, Classic-Reste 0. Kopiert das `smoke27b`-Muster
+  (Wegwerf-Kopie, `busy`/`note`/`status`/`errorMsg` aus `globalThis` geseedet).
+  Dazu die GMAP_COLORS-Kopplungspruefung.
+- Neue Kontrast-Kombis einzeln gerechnet: option-Text auf panel-raised 14.42,
+  Marker-Initialen auf Van 9.59, auf Car 6.17 (Classic: 8.73 / 9.22, beide
+  weiterhin weit ueber der 3.0 fuer fetten Text). Orts-Marker gegen Kontur 5.38.
+  Alle Status-auf-Panel- und Badge-auf-soft-Kombis kennt `kontrast.mjs` schon.
+
+## Was ein MENSCH ansehen muss (der Render-Test kann das nicht)
+
+1. **Die Google-Karte ueberhaupt.** Karte > oben rechts auf "Google Maps"
+   umschalten. Der Render-Test sieht davon nur den leeren Container: alle
+   Marker entstehen im `useEffect` auf Googles Canvas, im SSR-HTML steht davon
+   kein Pixel. Anzusehen: Van-Punkte amber, Car-Punkte blau, Orte grau, die
+   Initialen auf den Punkten lesbar, Rand der Karte passt zum Panel dahinter.
+2. **Der Ladezustand der Karte.** Der Container hat jetzt eine eigene
+   dunkle Flaeche + Rahmen. Vorher war da bis zum Google-Rendern ein leeres
+   Rechteck im Browser-Weiss. Beim Umschalten kurz hinsehen, ob es dunkel
+   bleibt.
+3. **Der `type="time"`-Picker in FlightTab.** Siehe offener Punkt unten.
+4. **Das Status-Feld in der Flugzeile.** Die aufgeklappte Liste rendert das
+   Betriebssystem, nicht wir. Am Handy und am Desktop einmal aufklappen.
+5. **"verspaetet" ist jetzt amber statt rot.** Bewusst, siehe oben. Wenn es
+   nicht gefaellt: `MC_FLIGHT_TONE.verspätet` auf `"problem"`, eine Zeile.
+
+## Regressionsrisiken 27e
+
+1. **Nur Optik.** `applyResult`, `updateOne`, `updateAll`, `quickSet`,
+   `animateMarkerTo` und die beiden `useEffect` sind unveraendert. Push-Ausloeser
+   und Log-Eintraege unberuehrt.
+2. **Fahrer/Stage beweisbar unberuehrt**: die einzigen zwei geteilten Bausteine
+   (`flightStyle`, `FLIGHT_STATUS`) sind byte-identisch.
+3. **Keine geteilte Klasse angefasst**, `MissionStyles` unveraendert.
+   `.mc-btn-primary` und `.mc-iconbtn` werden nur BENUTZT, nicht geaendert.
+4. `ALERT_ROW` liefert jetzt Objekte statt Strings. Wer es sonst noch nutzen
+   wuerde, bekaeme `className={[object Object]}`. Gemessen: nur FlightTab.
+5. Der `RefreshCw`-Knopf in der Zeile ist bewusst KEIN `IconButton`: die
+   Komponente reicht keine Klasse ans Icon durch, das Rad soll beim Abfragen
+   aber weiter drehen. Gleiche Klasse `.mc-iconbtn`, gleiche Optik.
+6. Kein Schema-Re-Run.
+
+## Manuelle Testfaelle 27e
+
+**Leitstelle > Flug**
+1. Tag ohne Flughafen-Fahrten waehlen -> Leerzustand mit Flugzeug-Symbol.
+2. Fahrt mit Flugnummer, Status leer -> graues Feld "unbekannt".
+3. Status auf "geplant" -> blau. Auf "verspaetet" -> amber + amber Rand links +
+   Live-Zeit amber und fett. Auf "gelandet" (ohne Fahrer unterwegs) -> gruenes
+   Feld, aber roter Rand links und rote Zeile "gelandet, aber kein Fahrer
+   unterwegs". Auf "annulliert" -> rotes Feld + roter Rand.
+4. Nach jeder Statusaenderung: Badge "manuell" erscheint, daneben der
+   "auto"-Knopf. "auto" klicken -> Badge weg.
+5. "Alle Flüge aktualisieren" -> Rad dreht, danach Meldung "Automatik nicht
+   verfuegbar" (ohne Provider) oder "n aktualisiert". Zweiter Klick innerhalb
+   der Abklingzeit -> "Alle Fluege noch frisch".
+6. Einzelnes Rad in einer Zeile klicken -> dreht, danach Meldung rechts.
+7. Terminal tippen und Uhrzeit setzen -> Wert bleibt stehen, Zeile wird
+   "manuell".
+8. Pfeil rechts -> Fahrt-Dialog oeffnet sich mit der richtigen Fahrt.
+
+**Leitstelle > Karte**
+9. Auf "Google Maps" umschalten (ohne Key) -> Hinweis mit Karten-Symbol,
+   Text ueber `VITE_GOOGLE_MAPS_API_KEY`, Schema-Karte weiter erreichbar.
+10. Mit Key: Karte laedt, Fahrer mit frischer GPS-Freigabe als amber (Van) /
+    blaue (Car) Punkte mit Initialen, Orte als graue Punkte. Auf einen Punkt
+    tippen -> weisses Info-Fenster mit Name, Fahrzeug, Alter der Position.
+11. Zurueck auf "Schema-Karte" -> unveraendert.
+
+**Fahrer / Stage (Gegenprobe, darf sich NICHTS geaendert haben)**
+12. Fahrer-App: Fahrt mit Flug oeffnen -> Flug-Block sieht aus wie vorher
+    (verspaetet dort weiterhin rot, das ist Classic-Farbe im Fahrer-Design und
+    NICHT Thema dieser Session).
+13. Stage-App: Ampel bei einer Fahrt mit verspaetetem Flug -> unveraendert.
+
+## Weitere gefundene Punkte fuer spaetere Sessions
+
+1. **`color-scheme: dark` fehlt komplett** (nirgends in `src/` oder
+   `index.html`). Folge: der Kalender-/Uhr-Knopf in `type="time"`-Feldern und
+   die vom Betriebssystem gezeichneten Auswahllisten kommen im Hellmodus-Look
+   auf dunklem Grund. Betrifft FlightTab (zwei Felder pro Zeile) und RideForm.
+   **Kein Regress**, Classic hatte exakt dasselbe. Die richtige Stelle waere
+   EINE Zeile in `.mc-scope`, aber sie traefe alles darunter (Shell, Timeline,
+   Settings, Scrollbars) und ist deshalb hier bewusst nicht angefasst.
+   Kandidat fuer nach dem Festival oder eine eigene kleine Session.
+2. **Der bekannte 3.56er-Kontrast ist jetzt auch in FlightTab**: der Knopf
+   "Alle Flüge aktualisieren" traegt `.mc-btn-primary` (weiss auf
+   `--mc-brand`). Kein Regress, dieselbe Kombination wie beim Speichern-Knopf
+   und der User-Blase im Chat. Nicht eigenmaechtig geaendert, wie besprochen.
+3. `MissionControl` referenziert `flightStyle` direkt (gemessen). Ausserhalb
+   dieses Auftrags, nicht angefasst. Vor der naechsten Flug-Session kurz
+   ansehen, ob dort noch eine Classic-Farbe am Flugstatus haengt.
