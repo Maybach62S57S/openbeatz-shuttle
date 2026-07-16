@@ -2236,3 +2236,113 @@ Schalter ist da, `mc` muss nur gesetzt und `inp` durch `mcInp` ersetzt werden.
 9. [ ] **Fahrer-App: Problem melden.** Der Dialog muss aussehen wie immer.
        Genauso Stage-Login und Gast-Link. Das ist der Beweis fuer den Schalter.
 10. [ ] Login-Screen unveraendert.
+
+---
+
+## Ready-to-paste Opener: Session 27d (Stand 16.07., nach 27a)
+
+```
+Erst PROJEKT-ANWEISUNGEN.md lesen, dann Repo holen. Repo:
+Maybach62S57S/openbeatz-shuttle. PAT setze ich hier ein: <HIER DEIN PAT>
+Nach dem Klonen: git config (user.name/email), npm ci, Baseline-esbuild gruen:
+./node_modules/.bin/esbuild src/ShuttleLeitstelle.jsx --bundle=false --format=esm --outfile=/tmp/x.js
+
+STAND: 27a ist fertig und gemergt, main = <HIER main NACH dem FF-Merge>,
+8924 Zeilen. Falls ich doch NICHT gemergt habe, sag es mir, dann arbeiten wir
+auf fix/session-27a-modals (= ebcd74b) weiter und du nimmst DEN als Basis.
+Classic ist seit Session 19 bis 24 komplett raus, Mission Control ist die
+einzige Leitstellen-Oberflaeche.
+
+In 27a auf MC-Design gebracht: RideForm, AssignModal, WhatsAppModal,
+RideHistory. Dazu Modal und Field mit optionaler mc-Prop, neue Konstante mcInp.
+
+RUECKWEG: Tag stabil-vor-mc-design-2026-07-16 = Branch backup/vor-mc-design
+= 676b02b (das ist der Stand VOR allem Design). Sonst: Vercel -> altes
+Deployment -> Promote to Production. Aeltere Tags:
+stabil-classic-vorhanden-2026-07-15 = f7bb75d,
+stabil-vor-design-2026-07-13 = 4d13e59.
+
+Danach UEBERGABE-Session-18.md lesen, KOMPLETT, vor allem die drei Abschnitte
+ganz unten: "SESSION 27a: DIE FALLE, DIE DEN UMBAU SPRENGT", "SESSION 27a:
+ERLEDIGT" und dieser Opener. Die Datei waechst nach UNTEN an, alles weiter
+oben ist aelter. Anker sind auf ebcd74b, per grep gegenpruefen.
+
+AUFTRAG 27d: TimelineView (6440), BoardMiniMap (6888), NoGpsSharingPanel
+(7106), DriverRow (3702) auf MC-Design. Zusammen ca. 176 Zeilen. Sitzen direkt
+IN den MC-Seiten, also die auffaelligsten Classic-Inseln, und winzig.
+Erreichbarkeit vor dem Bauen NEU messen, nicht meiner Tabelle glauben.
+
+REGELN, aus 27a teuer gelernt:
+- Erreichbarkeit IMMER transitiv messen (rg.mjs liegt im Repo), und
+  KONSTANTEN mitsammeln. In 27a ist inp durchgerutscht, weil das Skript nur
+  Funktionen gesammelt hat und inp ein String-const ist. Es haengt in
+  Wahrheit im Fahrer-, Stage-, Gast- UND Login-Pfad.
+- Alles, was auch von DriverApp/StageApp/GuestApp erreichbar ist, ist TABU.
+  Wenn du es trotzdem brauchst: optionale mc-Prop wie bei Modal/Field, plus
+  Render-Test vorher/nachher, ZEICHENIDENTISCH. Ohne den Beleg nicht auf main.
+  KEIN zweiter Fork daneben, wir haben sechs Sessions lang Forks rausgeworfen.
+- NUR className/Style. KEINE Handler, KEINE Feldlogik, KEINE Props ausser
+  einem reinen Design-Schalter.
+- KEIN neues CSS in MissionStyles. Vorhandene Klassen wiederverwenden:
+  .mc-panel, .mc-input, .mc-btn-primary, .mc-btn-assign, .mc-badge,
+  .mc-eyebrow, .mc-iconbtn, .mc-modal-fade, .mc-ride-card, .mc-metric.
+- Kein inline background auf etwas mit .mc-ride-card: inline schlaegt Klasse
+  und legt den :hover tot. In 27a ueber borderColor geloest.
+- Enterprise dark, ruhig, nachtschichttauglich. Kein Gaming, kein Cyberpunk,
+  kein Neon, keine uebertriebenen Animationen.
+- Die restlichen Komponenten NICHT anfassen, das sind 27b/27c.
+- Weiter tabu: die Datenschicht, das dyn_data/RPC-Thema, der Fallschirm,
+  Stage bleibt read-only. Fahrer/Stage/Gast auf MC-Design ist NICHT Thema,
+  eigenes Projekt nach dem Festival.
+
+BELEGE, die ich sehen will. Die vier Skripte liegen im Repo, benutz die:
+- pruefe.mjs (Pruefsummen ueber @babel/parser + var-Check): genau die
+  umgebauten Bausteine geaendert, ALLES andere byte-identisch, insbesondere
+  DriverApp, StageApp, GuestApp, IssueModal, StageIssueModal, GuestIssueModal,
+  MissionStyles, inp, Field, SettingsTab.
+- rendertest.mjs (react-dom/server, --jsx=automatic), Sollwerte konstant:
+  App-Root 25053, IssueModal 2452, StageIssueModal 2413, GuestIssueModal 2895,
+  Field ohne mc 101.
+- smoke.mjs: jeder umgebaute Pfad muss echt rendern und Classic-Farbreste 0
+  zeigen. esbuild kompiliert durch undefinierte JSX-Referenzen DURCH.
+- rg.mjs: transitiver Rendergraph inkl. Konstanten.
+- Jede var(--mc-*) einzeln gegen MissionStyles. Eine Variable, die es nicht
+  gibt, macht die ganze CSS-Regel ungueltig und esbuild meldet das NIE.
+  Achtung: --mc-st-new-soft steht auf einer GETEILTEN Zeile, ein zeilenweiser
+  Grep findet sie nicht.
+- ACHTUNG, Toggle-Falle aus 27a: ein Render-Test sieht nur den Zustand, in dem
+  die Komponente STARTET. Alles hinter einem Toggle, Tab oder Akkordeon
+  rendert im Test gar nicht und ist damit NICHT belegt. Dann zusaetzlich per
+  Quelltext pruefen und mir sagen, was ein Mensch anschauen muss.
+  TimelineView und die Karten haben genau solche Zustaende.
+- esbuild ist kein Beweis, das ist in Session 23, 24 und 27a je mit einer
+  Gegenprobe belegt (kaputte Referenz/Variable -> esbuild gruen).
+- git diff --stat kann bei aehnlichen Bloecken scheinbare Einfuegungen zeigen,
+  --patience nutzen.
+
+Branch: fix/session-27d-inseln von main. Nach meinem OK FF-Merge auf main.
+Commit ueber /tmp/msg.txt. Sprache Deutsch, informell, keine Gedankenstriche,
+korrekte Umlaute. Warn mich rechtzeitig, wenn der Chat zu lang wird.
+
+Zum Schluss: Diff-Beleg, Regressionsrisiken, konkrete manuelle Testfaelle,
+Uebergabe fortschreiben, Opener fuer die naechste Session.
+
+ZEITFENSTER: bis Freitagabend 17.07. darf gebaut werden, auch am Fahrer-Pfad.
+Ab Samstag 18.07. ist Ruhe, dann teste ich mit mehreren Fahrern. Was am
+Festival laufen soll, muss VOR dem Test drin sein. Ab 21.07. wird nichts mehr
+geloescht. Festival 23. bis 27.07.
+```
+
+### Noch offen nach 27a
+
+- **27b: `SettingsTab` (7263), 301 Zeilen.** Groesster Brocken. **Haengt am
+  selben `Field`/`inp` wie RideForm** - der Schalter ist seit 27a da, `mc`
+  muss nur gesetzt und `inp` durch `mcInp` ersetzt werden. Wird einmal
+  eingerichtet und nie wieder angefasst, lohnt vor dem Festival kaum.
+- **27c: `FlightTab` (5375), `MapTab` (7134), `LiveGoogleMap` (6971).**
+  `MapTab` bekommt von MC zusaetzlich `SchematicComponent={MissionSchematicMap}`
+  und `glideMarkers`, die Karte darin ist also schon MC, nur der Rahmen ist
+  Classic.
+- `ChatPanel` (3579) nach Bedarf.
+- **Inhalt, nicht Design:** `RideHistory` zeigt `e.by` roh (`"dispo:1"`) statt
+  ueber `byLabel(setup, e.by)`. Braucht `setup` als Prop. Nach dem Festival.
