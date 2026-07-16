@@ -2596,3 +2596,121 @@ Ruhe, dann teste ich mit mehreren Fahrern. Was am Festival laufen soll, muss
 VOR dem Test drin sein. Ab 21.07. wird nichts mehr geloescht.
 Festival 23. bis 27.07.
 ```
+
+---
+
+# SESSION 27c: TEILWEISE ERLEDIGT (16.07.), Branch `fix/session-27c-karte` = `b009329`
+
+Basis: `fix/session-27d-inseln` (= `db64c9a`). **Kette: main -> 27a (`ae82417`)
+-> 27d (`db64c9a`) -> 27c (`b009329`). Nichts davon ist auf main.**
+8934 -> 8938 Zeilen.
+
+## Erledigt: die Karten-Seite ist komplett MC
+
+| Scheibe | Commit | Inhalt |
+|---|---|---|
+| 1 | `0931dee` | `MapTab`-Rahmen |
+| 2 | `b009329` | `MapFilters`, `MapLegend`, `DriverDetailsPanel` |
+
+Scheibe 2 war **nicht** im urspruenglichen 27c-Auftrag. Jordan hat sie am 16.07.
+freigegeben (Variante A), nachdem der Smoke-Test nach Scheibe 1 noch **27
+Classic-Reste** im gerenderten MapTab zeigte, obwohl `MapTab` selbst 0 hatte.
+Ohne sie waere ein MC-Rahmen mit drei Classic-Flecken drin entstanden, also
+derselbe Bruch wie vorher, nur eine Ebene tiefer.
+
+**Der Merke daraus:** Baustein-Ebene ("MapTab hat 0 Classic-Farbklassen") und
+Renderpfad-Ebene ("MapTab rendert 27 Classic-Farbklassen") sind zwei
+verschiedene Zahlen. **Nur die zweite zaehlt fuer das, was Jordan sieht.**
+Immer den ganzen Renderpfad smoken, nicht nur die Komponente greppen.
+
+## Umsetzung, Muster wie 27a/27d
+
+- Layout/Groesse bleibt Tailwind, nur Farbe/Flaeche wird MC-Token.
+- **1:1 uebersetzt, nichts neu erfunden:** Live bleibt gruen, Simulation
+  orange, aktiver Filter orange, Anruf-Knopf gruen. Schema/Google bleibt
+  neutral (`--mc-text`/`--mc-bg`, das MC-Segmentmuster aus MissionTimelinePage).
+- Aktiver Eintrag in "Offene Fahrten": `borderColor` statt inline `background`,
+  sonst waere der `:hover` der `.mc-ride-card` tot.
+- **NEU GELERNT, Gegenstueck zur 27a-Falle:** Der Anruf-Knopf traegt
+  `.mc-btn-primary` MIT inline `background`. Das ist erlaubt, weil der `:hover`
+  dieser Klasse ueber `opacity` laeuft, nicht ueber `background`. **Die Regel
+  lautet nicht "nie inline background", sondern "nie inline background auf einer
+  Klasse, deren :hover den background aendert".** Bei `.mc-ride-card` ist es
+  background (tabu), bei `.mc-btn-primary` opacity (geht).
+
+## Unangetastet geblieben
+
+- `STATUS_STYLE` (an sieben Stellen geteilt): Legende liest weiter `v.fill`.
+- **`MapIcon` ist TABU** (`GuestRideCard`): nur die `className` an der
+  Aufrufstelle geaendert, die Komponente nicht.
+- `SchematicMap`, `MissionSchematicMap`, `MapNode`, `MapTooltip`,
+  `DriverMarker`, `OpenRideMarker`, `RoutePath`: **haben alle 0
+  Classic-Farbklassen**, die Karte selbst war nie das Problem. Nicht anfassen.
+
+## Belege
+
+- `pruefe.mjs` gegen den Stand vor 27c: **GEAENDERT 4** (`MapTab`, `MapFilters`,
+  `MapLegend`, `DriverDetailsPanel`), 0 neu, 0 entfernt, **283 von 287
+  byte-identisch**. `DriverApp`/`StageApp`/`GuestApp`/`MissionStyles`
+  unveraendert. Keine undefinierte `var(--mc-*)`.
+- `rendertest.mjs`: App-Root **25053**, IssueModal 2452, StageIssueModal 2413,
+  GuestIssueModal 2895, Field ohne mc 101. Alle konstant.
+- `smoke27c.mjs` (**neu, liegt im Repo**): sieben Pfade, **Classic-Reste 0**
+  (vorher 27). `DriverDetailsPanel` sitzt hinter einer Auswahl und rendert im
+  MapTab-Test nie -> dort direkt gerendert, mit und ohne Telefonnummer.
+
+## ⚠ NOCH OFFEN IN 27c: `FlightTab` (5375) und `LiveGoogleMap` (6971)
+
+**`FlightTab` ist der heikelste Teil von 27c, nicht der einfachste.** Transitiv
+gemessen ist `FlightTab` selbst sauber (nur von MissionControl), **aber zwei
+seiner Kinder sind TABU:**
+
+| Kind | Art | Problem |
+|---|---|---|
+| `flightStyle` | Style-Funktion | auch im Fahrer-Pfad erreichbar |
+| `FLIGHT_STATUS` | Konstante | auch im Fahrer-Pfad erreichbar |
+
+Damit ist das **dieselbe Lage wie `Modal`/`Field`/`inp` in 27a**, und es gibt
+genau die drei bekannten Wege: optionaler `mc`-Schalter (bei einer Funktion
+moeglich, Beweislast: Render-Test des Fahrer-Pfads zeichenidentisch), eine
+zweite Konstante daneben wie `mcInp` (bei `FLIGHT_STATUS`), oder gar nicht
+anfassen. **Kein zweiter Fork.** Das braucht einen eigenen, frischen Chat.
+
+`LiveGoogleMap` (127 Zeilen, 3 Classic-Farbklassen) ist dagegen klein und haengt
+nur an MapTab. **Achtung Toggle-Falle:** rendert nur, wenn oben auf
+"Google Maps" umgeschaltet wird, und braucht dann noch die geladene Google-API.
+Ein Render-Test sieht davon fast nichts, das muss ein Mensch am Geraet ansehen.
+
+## Regressionsrisiken 27c
+
+1. **Nur Optik.** Keine Handler, keine Props, keine Signatur, keine Feldlogik.
+2. `.mc-*` greift nur unter `.mc-scope`. Alle vier haengen unter
+   `MissionControl` (Wurzel 7841), belegt ueber den Rendergraph.
+3. `.mc-panel` bringt die Mount-Animation mit: die rechte Spalte fadet beim
+   Tab-Wechsel kurz ein. Bei `prefers-reduced-motion` aus.
+4. Die Zeilen in "Offene Fahrten"/"Unterwegs" haben jetzt den 1px-Hover-Lift
+   der `.mc-ride-card`. Dichte Listen, das ist sichtbar. Falls es stoert:
+   `mc-ride-card` raus, nichts sonst.
+
+## Testfaelle 27c (Leitstelle, Desktop, MC, Karten-Seite)
+
+1. [ ] Kopfzeile: "Live" aktiv = gruen, "Simulation" aktiv = orange.
+       Zeitregler orange, im Live-Modus ausgegraut.
+2. [ ] Schema-Karte/Google-Maps-Umschalter: aktiv = heller Block.
+3. [ ] Filterknoepfe ueber der Karte: aktiver Filter orange, Zaehler stimmen.
+4. [ ] Legende unter der Karte: Punkte in Statusfarben, "geschaetzt" gestrichelt,
+       "offene Fahrt" als Raute.
+5. [ ] **Fahrer auf der Karte anklicken** -> Detail-Panel rechts, oranger Rahmen,
+       Van/Car-Chip wie in der Fahrerliste, "Anrufen" gruen, X schliesst.
+       Bei Problem/Verspaetung: rote Chips.
+6. [ ] "Offene Fahrten": Eintrag antippen -> heller Rahmen, nochmal antippen
+       loest wieder. Hover hebt die Zeile leicht an.
+7. [ ] "Unterwegs": Eintrag antippen waehlt den Fahrer auf der Karte aus.
+8. [ ] **Flug-Seite: noch Classic, das ist Absicht** (siehe oben).
+9. [ ] **Fahrer-App, Stage, Gast-Link: unveraendert.**
+
+## Rueckweg
+
+`git reset --hard db64c9a` (Stand nach 27d) oder `ae82417` (nach 27a) oder Tag
+`stabil-vor-mc-design-2026-07-16` = `676b02b` (vor allem Design). Sonst:
+Vercel -> altes Deployment -> Promote to Production.
