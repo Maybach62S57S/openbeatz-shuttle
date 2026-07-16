@@ -2135,3 +2135,92 @@ Tag **`stabil-vor-mc-design-2026-07-16`** = Branch `backup/vor-mc-design`
 = `676b02b` (Classic raus, Fahrer-App-Fixes drin, 8883 Zeilen).
 Gefaellt Jordan das neue Design nicht: `git reset --hard` auf den Tag, oder
 Vercel -> altes Deployment -> Promote to Production.
+
+---
+
+# SESSION 27a: ERLEDIGT (16.07.), Branch `fix/session-27a-modals`
+
+`RideForm`, `AssignModal`, `WhatsAppModal` sind auf MC-Design. Variante B wie
+von Jordan entschieden: `Modal` hat jetzt eine optionale Prop `mc`.
+
+## ⚠ DIE FALLE HAT EINE ZWEITE EBENE, die in der 27a-Analyse fehlte
+
+`Modal` war nicht der einzige geteilte Baustein. `RideForm` haengt ausserdem an:
+
+| Baustein | von MissionControl | von Fahrer/Stage/Gast | Behandlung |
+|---|---|---|---|
+| **`inp`** (1455) | ja | **JA -> TABU** | nicht angefasst, `mcInp` daneben |
+| **`Field`** (1456) | ja | **JA -> TABU** | `mc`-Schalter wie bei Modal |
+| `LocSelect` | ja | nein | fest auf MC |
+| `RideHistory` | ja | nein | **NICHT angefasst, siehe unten** |
+
+Weg: `DriverApp -> IssueModal -> Field/inp`, dazu **der Login-Screen**
+(1421/1422/1441) in allen vier Rollen und `SettingsTab` (= 27b).
+
+**`inp` ist im ersten Rendergraph durchgerutscht**, weil das Skript nur
+Top-Level-*Funktionen* als Bausteine gesammelt hat. `inp` ist ein
+String-`const`. Wer den Graph baut: **Konstanten mitsammeln**, sonst meldet er
+faelschlich "nicht erreichbar". `rg.mjs` macht das jetzt richtig.
+
+## Umsetzung
+
+- **`inp` bleibt byte-identisch.** Neue Konstante `mcInp` direkt daneben, die
+  die bereits vorhandene Klasse `.mc-input` nutzt. Das Design liegt damit in
+  `MissionStyles`, in `mcInp` stehen nur Breite/Abstand/Schriftgroesse.
+  Bei einem String geht keine Prop, deshalb hier kein Schalter.
+- **`Field` bekommt `mc`**, gleiche Bauart wie `Modal`. Ohne `mc`
+  zeichenidentisch. Login, `IssueModal`, `StageIssueModal`, `GuestIssueModal`
+  und `SettingsTab` setzen ihn nicht.
+- **Kein neues CSS in `MissionStyles`.** Die Zeilen in `AssignModal` nutzen
+  `.mc-ride-card` und differenzieren nur ueber `borderColor` inline, damit der
+  `:hover` der Klasse lebt. **Ein inline `background` haette den Hover
+  totgelegt (inline schlaegt Klasse).** Gilt fuer 27b/c/d genauso.
+
+## Belege (alle reproduzierbar, Skripte liegen im Repo)
+
+- `pruefe.mjs` (Pruefsummen + var-Check): genau **6 geaendert** (`Modal`,
+  `Field`, `LocSelect`, `RideForm`, `AssignModal`, `WhatsAppModal`),
+  **1 neu** (`mcInp`), 0 entfernt. `DriverApp`, `StageApp`, `GuestApp`,
+  `IssueModal`, `StageIssueModal`, `GuestIssueModal`, `MissionStyles`, `inp`,
+  `SettingsTab` unveraendert.
+- `rendertest.mjs` vorher/nachher, alle **zeichenidentisch**: `IssueModal` 2452,
+  `StageIssueModal` 2413, `GuestIssueModal` 2895, `Field` ohne mc 101,
+  **App-Root 25053** (die ueber alle Sessions konstante Zahl).
+- `smoke.mjs`: alle vier Leitstellen-Renderpfade laufen, **Classic-Farbreste 0**.
+- var-Check **mit Gegenprobe**: kaputte Variable eingebaut -> esbuild gruen,
+  Check schlaegt an. esbuild ist weiterhin kein Beweis.
+- `rg.mjs`: transitiver Rendergraph, inkl. Konstanten.
+
+## OFFEN, bewusst nicht angefasst (ausserhalb des Pakets)
+
+**`RideHistory` (4142) ist komplett Classic** (12 Zeilen Classic-Klassen, 0 MC),
+haengt nur an `RideForm` (eine Aufrufstelle, 4120), nur von `MissionControl`
+erreichbar. **Sie ist beim Bearbeiten JEDER bestehenden Fahrt sichtbar**, denn
+`logRide(nr, "created", ...)` legt beim Anlegen einen Log-Eintrag an, und die
+Bedingung ist `log.length > 0`. Damit sitzt ein Classic-Block unten im neuen
+MC-Formular. Klein (~40 Zeilen), risikoarm (nur von RideForm erreichbar).
+**Jordans Entscheidung, gehoert sauber in 27d oder einen Nachschlag zu 27a.**
+
+## Restliche neun Komponenten (27b/c/d) unveraendert
+
+`SettingsTab`, `FlightTab`, `MapTab`, `LiveGoogleMap`, `ChatPanel`,
+`TimelineView`, `BoardMiniMap`, `NoGpsSharingPanel`, `DriverRow`.
+**Achtung fuer 27b:** `SettingsTab` haengt ebenfalls an `Field`/`inp`. Der
+Schalter ist da, `mc` muss nur gesetzt und `inp` durch `mcInp` ersetzt werden.
+
+## Testfaelle (Leitstelle, Desktop, MC-Oberflaeche)
+
+1. [ ] Neue Fahrt anlegen: alle Felder lesbar, Speichern legt sie an.
+2. [ ] Bestehende Fahrt bearbeiten: Aenderung kommt an. **Der Historien-Block
+       unten ist noch Classic, das ist bekannt (siehe oben).**
+3. [ ] Fahrt mit Flugnummer: der Flug-Block ist blau statt sky, "Flugstatus
+       aktualisieren" laeuft, Abklingzeit-Text erscheint.
+4. [ ] "Von"/"Nach" auf "Anderer Ort" -> zweites Feld sieht aus wie die anderen.
+5. [ ] Fahrer zuteilen: "beste Wahl" blau, "knapp" orange, "zu klein" rot,
+       Hover hebt die Zeile leicht an. Zuteilen speichert.
+6. [ ] Zuteilung entfernen -> Rueckfrage bei laufender Fahrt kommt noch.
+7. [ ] WhatsApp-Texte: kopieren quittiert gruen.
+8. [ ] Stornieren -> Rueckfrage kommt noch.
+9. [ ] **Fahrer-App: Problem melden.** Der Dialog muss aussehen wie immer.
+       Genauso Stage-Login und Gast-Link. Das ist der Beweis fuer den Schalter.
+10. [ ] Login-Screen unveraendert.
