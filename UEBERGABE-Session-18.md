@@ -2995,3 +2995,140 @@ Bis 27a war alles harmlos: Dialoge ohne Eigenleben. Ab jetzt nicht mehr.
 **Halb umgebaut ist schlechter als beide Endzustaende.** Deshalb wird es
 durchgezogen. Aber: wenn eine Scheibe nicht sauber belegbar ist, lieber DIESE
 Scheibe zurueckhalten als sie ungeprueft mitnehmen.
+
+---
+
+# SESSION 27-MERGE + 27b-2 (16.07.), main = `a4560d3` -> Branch `fix/session-27b-chatpanel` = `2013746`
+
+## ⚠ DIE FALLE DIESER SESSION: die Historie war gegabelt, main war leer
+
+Beim Start stand `main` auf `28f005b` (8883 Zeilen, nur Doku). **Von 27a war
+NICHTS gemergt.** Schlimmer: die Historie hatte sich bei `ae82417` gegabelt und
+niemand hat es gemerkt, weil beide Aeste in derselben Stunde entstanden sind.
+
+```
+ae82417  05:59  "Opener fuer Session 27d"
+  |\
+  | \___ 480fe00 06:51  27a-2 Markenorange
+  |      d4eace1 06:56  27a-3 AA + Flug-Block
+  |      59dec44 07:03  Opener      -> fix/session-27a-modals
+  |
+  \____ ef15db5 06:15  27d, die vier Inseln
+        757fd92 06:16  "27d erledigt"   -> fix/session-27d-inseln
+        0931dee 06:24  MapTab-Rahmen
+        b009329 06:37  MapFilters/MapLegend/DriverDetailsPanel (27c)
+        4e7e8f7 06:39  Opener 27e       -> fix/session-27c-karte
+```
+
+**27d und 27c waren um 06:39 fertig. Der 27a-2/3-Ast wusste das nicht** und hat
+um 07:03 einen Opener geschrieben, der 27d nochmal beauftragt. Wer diesem Opener
+gefolgt waere, haette 27d ein zweites Mal gebaut.
+
+**Lehre, ab jetzt Pflicht am Sessionstart:** `git log --graph --oneline --all`
+UND `git rev-list --left-right --count main...origin/<branch>` fuer JEDEN
+offenen Branch, bevor irgendwas gebaut wird. Dem Opener nicht glauben, was den
+Stand von main angeht. Der Opener ist eine Absicht, kein Messwert.
+
+## Der Merge
+
+Beide Aeste fassen verschiedene Bausteine an (27a-2/3 sitzt in AssignModal 3788,
+RideForm 4027, MissionStyles 8563+; 27d/27c in TimelineView, BoardMiniMap,
+NoGpsSharingPanel, DriverRow, MapTab). `src/ShuttleLeitstelle.jsx` merged
+**automatisch**, einziger Konflikt war `UEBERGABE-Session-18.md`, weil beide
+unten angehaengt haben. Von Hand chronologisch sortiert: 27d, 27c, dann 27a-2/3.
+
+`main` = `a4560d3`, 8954 Zeilen. Alle Belege gruen, Sollwerte unveraendert.
+
+## 27b-2: ChatPanel ist auf MC
+
+Erreichbarkeit frisch gemessen, **nicht der Tabelle geglaubt**:
+
+| Ziel | von MissionControl | von Fahrer/Stage/Gast |
+|---|---|---|
+| `ChatPanel` (3579) | ja | **nein** |
+| `LiveGoogleMap` | ja | **nein** |
+| `SettingsTab` | ja | **nein**, aber Kind `inp` ist TABU |
+| `FlightTab` | ja | nein, aber Kinder `flightStyle` + `FLIGHT_STATUS` sind TABU |
+
+`ChatPanel`s einzige Kinder sind Lucide-Icons und zwei Logik-Funktionen. Kein
+Schalter noetig.
+
+**Zwei neue Klassen in MissionStyles**, beide neue Namen, Reichweite gemessen,
+treffen sonst nichts:
+- `.mc-fab` (8745), 1 Verwendung. Eigene Klasse, weil `.mc-btn-primary` den
+  Radius auf `var(--mc-r)` setzt und `rounded-full` damit plattgemacht haette.
+- `.mc-btn-quiet` (8756), 2 Verwendungen. Basis `--mc-hover`, damit er sich auf
+  `--mc-panel-raised` noch absetzt (auf `--mc-panel-raised` waere er unsichtbar).
+
+`.mc-btn-primary` selbst wurde NICHT angefasst, obwohl ChatPanel es benutzt.
+
+**Farben nach der 27a-Festlegung:** Bestaetigen Emerald -> Orange (Hauptaktion),
+Uebernommen bleibt gruen als `--mc-st-done` (Status erledigt), Speicherfehler
+`--mc-st-problem`, "Assistent nicht erreichbar" `--mc-st-assigned` (Warnung,
+kein Datenproblem).
+
+## ⚠ OFFENER LESBARKEITS-BEFUND, Jordan weiss davon, NICHT heimlich fixen
+
+**Die User-Blase im Chat hat 3.56 Kontrast** (weiss auf `--mc-brand`). Das ist
+unter AA (4.5) fuer normalen Text bei `text-sm`. **Kein Regress:** Classic hatte
+mit `bg-orange-600 text-white` exakt denselben Wert. Es ist derselbe Wert wie
+`.mc-btn-primary` ("brand-on auf brand 3.56"), den `kontrast.mjs` als ok fuehrt,
+weil Knopf-Beschriftungen kurz und fett sind. Eine Chat-Blase mit einem Satz
+Fliesstext bei 14px ist etwas anderes.
+
+Entschaerft dadurch, dass in der User-Blase steht, **was Jordan selbst getippt
+hat**. Die Antwort des Assistenten steht auf `--mc-panel-raised` mit 14.42.
+
+Drei Wege, falls Jordan es angeht: so lassen; User-Blase auf `--mc-brand-soft`
++ `--mc-text` (deutlicher Optik-Wechsel); oder ein eigener, dunklerer
+Blasen-Ton. **Jordans Entscheidung, nicht meine.**
+
+## Belege 27b-2 (alle reproduzierbar)
+
+- `pruefe.mjs`: genau ZWEI Bausteine geaendert (`ChatPanel`, `MissionStyles`),
+  0 neu, 0 entfernt, **285 von 287 byte-identisch**. `DriverApp`, `StageApp`,
+  `GuestApp`, `IssueModal`, `StageIssueModal`, `GuestIssueModal`, `Field`,
+  `inp`, `SettingsTab` unveraendert.
+- `pruefe.mjs` var-Check: keine undefinierte `var(--mc-*)`.
+- `rendertest.mjs`: alle fuenf Sollwerte unveraendert.
+- `kontrast.mjs`: 19 Kombis, 0 Fehler.
+- **`smoke27b.mjs` (neu)**: sieben Zustaende, alle rendern echt, Classic-Reste
+  0. **Umgeht die Toggle-Falle**: baut eine Wegwerf-Kopie, in der fuer
+  ChatPanel `open=false -> true` gesetzt und die Nachrichtenliste geseedet wird
+  (alle vier `resolved`-Zustaende + busy + err). Das Original wird nicht
+  angefasst. **Dieses Muster ist die Antwort auf die Toggle-Falle und sollte
+  fuer FlightTab/LiveGoogleMap/SettingsTab kopiert werden.**
+- Neue Kontrast-Kombis einzeln gerechnet: Verwerfen-Text 6.40, Verwerfen-Hover
+  12.08, Assistenten-Blase 14.42, Aktions-Zusammenfassung 6.85, Uebernommen
+  8.98, Fehler 5.91, Assistenten-Warnung 8.96, Kopf-Icon 5.14. **Alle AA ausser
+  der User-Blase (3.56), siehe oben.**
+
+## Was ein MENSCH ansehen muss (der Render-Test kann das nicht)
+
+1. Runder Chat-Knopf unten rechts: Position auf dem iPhone ueber der Mobil-Leiste
+   (`--mc-fab-lift`), Hover-Ton am Desktop.
+2. Panel-Einblendung: `.mc-panel` bringt `mc-panel-in` mit, das Panel fadet jetzt
+   beim Oeffnen ein. Vorher war es sofort da. **Falls das stoert: `mc-panel` raus,
+   Rahmen per Style. Sonst nichts.**
+3. Der Chat-FAB ueberlappt weiterhin die MC-Handy-Leiste (bekannter Punkt seit
+   S24, NICHT in dieser Session angefasst).
+
+## Regressionsrisiken 27b-2
+
+1. **Nur Optik.** Keine Handler, keine Props, keine Signatur, keine Feldlogik.
+   `send`, `confirmAction`, `dismissAction`, `askChatAssistant`,
+   `applyChatAction` sind byte-identisch.
+2. `.mc-*` greift nur unter `.mc-scope`. ChatPanel wird bei 8456 gerendert,
+   innerhalb des `.mc-scope`-Div ab 7963. Belegt, `fixed` aendert daran nichts,
+   CSS-Scope geht ueber die DOM-Verwandtschaft, nicht ueber die Optik.
+3. Die zwei neuen Klassen haben neue Namen. Reichweite gemessen: `.mc-fab` 1
+   Verwendung, `.mc-btn-quiet` 2, beide nur in ChatPanel.
+4. Kein Schema-Re-Run.
+
+## NOCH OFFEN im Design (Stand 16.07., nach 27b-2)
+
+| Rest | Zeilen | Lage |
+|---|---|---|
+| `SettingsTab` | 301 | Kind `inp` ist TABU -> `mcInp` tauschen, `Field mc`. Dazu sieben eigene Unterabschnitte (`AccessPinsSection`, `AuditLogSection`, `DispatcherUsers`, `DriverPhones`, `GuestLinksSection`, `PushSettingsSection`, `ReportSection`), die vorher EINZELN gemessen werden muessen. **Ist groesser als 301 Zeilen.** Eigener Chat. |
+| `FlightTab` | 162 | `flightStyle` + `FLIGHT_STATUS` sind TABU (Fahrer-Pfad). Gleiche Lage wie `Modal`/`inp` in 27a: optionaler `mc`-Schalter bzw. zweite Konstante, KEIN Fork. Eigener Chat. |
+| `LiveGoogleMap` | 127 | nur an MapTab, Kinder alles Logik. Klein, aber rendert nur hinter dem "Google Maps"-Umschalter UND mit geladener Google-API. Braucht das `smoke27b`-Muster plus ein Menschenauge. |
