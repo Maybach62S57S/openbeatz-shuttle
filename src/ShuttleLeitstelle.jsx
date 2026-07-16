@@ -3700,27 +3700,30 @@ function ChatPanel({ setup, dyn, day, updateDyn, by, liftOffset }) {
 // ==========================================================================
 
 function DriverRow({ setup, driver, stats }) {
-  const dot = stats.active ? "bg-blue-400" : "bg-emerald-400";
+  // Nur Farbe/Flaeche auf MC-Tokens, Layout und Logik unveraendert. Kein inline
+  // background auf .mc-ride-card, sonst stirbt der :hover der Klasse.
+  const dot = stats.active ? "var(--mc-st-enroute)" : "var(--mc-st-done)";
   const loc = setup.locations.find((l) => l.id === stats.locNow);
   const busyRide = stats.active;
+  const van = driver.vehicleType === "Van";
   return (
-    <div className="bg-stone-900 border border-stone-800 rounded-lg px-3 py-2 flex items-center gap-3">
-      <span className={`w-2.5 h-2.5 rounded-full ${dot} shrink-0`} />
+    <div className="mc-ride-card px-3 py-2 flex items-center gap-3">
+      <span className="w-2.5 h-2.5 rounded-full shrink-0" style={{ background: dot }} />
       <div className="min-w-0 flex-1">
-        <div className="text-sm text-stone-200 truncate flex items-center gap-1.5">
+        <div className="text-sm truncate flex items-center gap-1.5" style={{ color: "var(--mc-text)" }}>
           {driver.firstName} {driver.lastName}
-          <span className={`text-[10px] font-mono px-1 rounded ${driver.vehicleType === "Van" ? "bg-orange-500/20 text-orange-300" : "bg-sky-500/20 text-sky-300"}`}>{driver.vehicleType === "Van" ? "Van" : "Car"}</span>
+          <span className="text-[10px] px-1" style={{ borderRadius: "var(--mc-r-sm)", fontFamily: "var(--mc-font-mono)", background: van ? "var(--mc-st-assigned-soft)" : "var(--mc-st-new-soft)", color: van ? "var(--mc-st-assigned)" : "var(--mc-st-new)" }}>{van ? "Van" : "Car"}</span>
         </div>
-        <div className="text-[11px] text-stone-500 truncate">
+        <div className="text-[11px] truncate" style={{ color: "var(--mc-text-muted)" }}>
           {busyRide ? <>unterwegs → {setup.locations.find((l) => l.id === busyRide.toId)?.short || "Ziel"}</>
             : <>frei{loc ? " · " + loc.short : ""}</>}
         </div>
       </div>
       <div className="text-right shrink-0">
-        <div className="text-xs font-mono text-stone-300">{stats.count}×</div>
-        <div className={`text-[10px] ${stats.drivingMin >= setup.config.softHoursMin ? "text-orange-400" : "text-stone-500"}`}>{fmtDur(stats.drivingMin)}</div>
+        <div className="text-xs" style={{ fontFamily: "var(--mc-font-mono)", color: "var(--mc-text-secondary)" }}>{stats.count}×</div>
+        <div className="text-[10px]" style={{ color: stats.drivingMin >= setup.config.softHoursMin ? "var(--mc-st-assigned)" : "var(--mc-text-muted)" }}>{fmtDur(stats.drivingMin)}</div>
       </div>
-      {driver.phone && <a href={`tel:${driver.phone}`} title={`Anrufen: ${driver.phone}`} className="shrink-0 text-stone-500 hover:text-emerald-400 p-1"><Navigation className="w-4 h-4 rotate-90" /></a>}
+      {driver.phone && <a href={`tel:${driver.phone}`} title={`Anrufen: ${driver.phone}`} className="mc-iconbtn shrink-0 w-7 h-7"><Navigation className="w-4 h-4 rotate-90" /></a>}
     </div>
   );
 }
@@ -6440,7 +6443,7 @@ function MissionTimelinePage({ setup, dyn, day, onEdit, onAssign, updateDyn, by,
 function TimelineView({ setup, dyn, day, onEdit }) {
   const ln = (id, c) => setup.locations.find((l) => l.id === id)?.short || c || "—";
   const rides = (dyn.rides || []).filter((r) => r.dayKey === day && r.status !== "cancelled");
-  if (rides.length === 0) return <div className="text-stone-500 text-sm py-8 text-center">Keine Fahrten für die Timeline.</div>;
+  if (rides.length === 0) return <div className="text-sm py-8 text-center" style={{ color: "var(--mc-text-muted)" }}>Keine Fahrten für die Timeline.</div>;
 
   const start = (r) => sortMin(r.time);
   const end = (r) => sortMin(r.time) + effDur(setup.config, r);
@@ -6450,11 +6453,12 @@ function TimelineView({ setup, dyn, day, onEdit }) {
   const span = Math.max(60, winEnd - winStart);
   const pct = (m) => ((m - winStart) / span) * 100;
 
-  const barColor = (r) => r.status === "done" ? "bg-emerald-600/70 border-emerald-400"
-    : r.status === "onboard" ? "bg-orange-500/80 border-orange-300"
-      : r.status === "enroute_pickup" ? "bg-blue-500/80 border-blue-300"
-        : r.status === "accepted" ? "bg-blue-500/40 border-blue-400"
-          : "bg-stone-600/60 border-stone-400";
+  // Gleiche Farbzuordnung wie die grosse MC-Timeline (mcRideStatusKey + die
+  // -fill/-Rahmen-Tokens). Reine Darstellung, keine Statuslogik.
+  const barStyle = (r) => {
+    const k = mcRideStatusKey(r.status, !!r.assignedDriverId);
+    return { background: `var(--mc-st-${k}-fill)`, borderColor: `var(--mc-st-${k})` };
+  };
 
   // Stundenraster
   const hours = [];
@@ -6469,20 +6473,26 @@ function TimelineView({ setup, dyn, day, onEdit }) {
   const hasConflict = (rs, i) => rs.some((o, j) => j !== i && start(o) < end(rs[i]) && end(o) > start(rs[i]));
 
   const Row = ({ label, sub, rs, conflictCheck, warn }) => (
-    <div className="flex items-stretch border-b border-stone-800/60">
+    <div className="flex items-stretch" style={{ borderBottom: "1px solid var(--mc-border)" }}>
       <div className="w-28 shrink-0 px-2 py-1.5 text-xs">
-        <div className={`text-sm truncate ${warn ? "text-orange-400" : "text-stone-200"}`}>{label}</div>
-        {sub && <div className="text-[9px] font-mono text-stone-600 truncate">{sub}</div>}
+        <div className="text-sm truncate" style={{ color: warn ? "var(--mc-st-assigned)" : "var(--mc-text)" }}>{label}</div>
+        {sub && <div className="text-[9px] truncate" style={{ fontFamily: "var(--mc-font-mono)", color: "var(--mc-text-muted)" }}>{sub}</div>}
       </div>
       <div className="relative flex-1 h-9 my-0.5">
-        {hours.map((m) => <div key={m} className="absolute top-0 bottom-0 w-px bg-stone-800" style={{ left: `${pct(m)}%` }} />)}
+        {hours.map((m) => <div key={m} className="absolute top-0 bottom-0 w-px" style={{ left: `${pct(m)}%`, background: "var(--mc-border)" }} />)}
         {rs.map((r, i) => {
           const conflict = conflictCheck && hasConflict(rs, i);
+          const bar = barStyle(r);
           return (
             <button key={r.id} onClick={() => onEdit && onEdit(r)}
               title={`${r.time} ${ln(r.fromId, r.fromCustom)} → ${ln(r.toId, r.toCustom)} · ${r.djName || ""}`}
-              className={`absolute top-1 bottom-1 rounded border text-[9px] text-white px-1 overflow-hidden whitespace-nowrap ${warn ? "bg-orange-500/30 border-orange-500" : barColor(r)} ${conflict ? "ring-2 ring-red-500" : ""}`}
-              style={{ left: `${pct(start(r))}%`, width: `${Math.max(2.5, pct(end(r)) - pct(start(r)))}%` }}>
+              className="mc-tl-block absolute top-1 bottom-1 border text-[9px] px-1 overflow-hidden whitespace-nowrap"
+              style={{
+                left: `${pct(start(r))}%`, width: `${Math.max(2.5, pct(end(r)) - pct(start(r)))}%`,
+                borderRadius: "var(--mc-r-sm)", color: "#ffffff",
+                ...bar,
+                ...(conflict ? { borderColor: "var(--mc-st-problem)", boxShadow: "0 0 0 1.5px var(--mc-st-problem)" } : null),
+              }}>
               {r.djName || ln(r.toId, r.toCustom)}
             </button>
           );
@@ -6492,20 +6502,20 @@ function TimelineView({ setup, dyn, day, onEdit }) {
   );
 
   return (
-    <div className="bg-stone-900 border border-stone-800 rounded-xl p-3 mt-4">
+    <div className="mc-panel p-3 mt-4">
       <div className="flex items-center justify-between mb-2">
-        <h3 className="text-sm text-stone-300 flex items-center gap-2"><Gauge className="w-4 h-4" />Timeline · wer ist wann belegt</h3>
-        <div className="flex items-center gap-3 text-[10px] text-stone-500">
-          <span className="flex items-center gap-1"><span className="w-2.5 h-2.5 rounded bg-orange-500/80" />unterwegs</span>
-          <span className="flex items-center gap-1"><span className="w-2.5 h-2.5 rounded bg-emerald-600/70" />erledigt</span>
-          <span className="flex items-center gap-1"><span className="w-2.5 h-2.5 rounded ring-2 ring-red-500" />Konflikt</span>
+        <h3 className="text-sm flex items-center gap-2" style={{ color: "var(--mc-text-secondary)" }}><Gauge className="w-4 h-4" />Timeline · wer ist wann belegt</h3>
+        <div className="flex items-center gap-3 text-[10px]" style={{ color: "var(--mc-text-muted)" }}>
+          <span className="flex items-center gap-1"><span className="w-2.5 h-2.5" style={{ borderRadius: "var(--mc-r-sm)", background: "var(--mc-st-enroute)" }} />unterwegs</span>
+          <span className="flex items-center gap-1"><span className="w-2.5 h-2.5" style={{ borderRadius: "var(--mc-r-sm)", background: "var(--mc-st-done)" }} />erledigt</span>
+          <span className="flex items-center gap-1"><span className="w-2.5 h-2.5" style={{ borderRadius: "var(--mc-r-sm)", boxShadow: "0 0 0 1.5px var(--mc-st-problem)" }} />Konflikt</span>
         </div>
       </div>
       {/* Stundenachse */}
       <div className="flex">
         <div className="w-28 shrink-0" />
         <div className="relative flex-1 h-4">
-          {hours.map((m) => <div key={m} className="absolute text-[9px] text-stone-500" style={{ left: `${pct(m)}%`, transform: "translateX(-50%)" }}>{fromMin(m % 1440)}</div>)}
+          {hours.map((m) => <div key={m} className="absolute text-[9px]" style={{ left: `${pct(m)}%`, transform: "translateX(-50%)", color: "var(--mc-text-muted)" }}>{fromMin(m % 1440)}</div>)}
         </div>
       </div>
       <div className="max-h-[22rem] overflow-y-auto">
@@ -6606,12 +6616,12 @@ function MapTooltip({ pos, setup, nodes }) {
 // Legende (Punkt: Farben/Zähler + geschätzt/GPS-Hinweis).
 function MapLegend({ counts }) {
   return (
-    <div className="flex flex-wrap gap-x-4 gap-y-1.5 px-2 pt-2 text-xs text-stone-400">
+    <div className="flex flex-wrap gap-x-4 gap-y-1.5 px-2 pt-2 text-xs" style={{ color: "var(--mc-text-secondary)" }}>
       {Object.entries(STATUS_STYLE).map(([k, v]) => (
         <span key={k} className="flex items-center gap-1.5"><span className="w-2.5 h-2.5 rounded-full" style={{ background: v.fill }} />{v.label} ({counts[k] || 0})</span>
       ))}
-      <span className="flex items-center gap-1.5 text-stone-500"><span className="w-2.5 h-2.5 rounded-full border border-stone-500" style={{ borderStyle: "dashed" }} />geschätzt</span>
-      <span className="flex items-center gap-1.5 text-stone-500"><span className="w-2.5 h-2.5 rotate-45 border border-stone-500" />offene Fahrt</span>
+      <span className="flex items-center gap-1.5" style={{ color: "var(--mc-text-muted)" }}><span className="w-2.5 h-2.5 rounded-full border" style={{ borderStyle: "dashed", borderColor: "var(--mc-text-muted)" }} />geschätzt</span>
+      <span className="flex items-center gap-1.5" style={{ color: "var(--mc-text-muted)" }}><span className="w-2.5 h-2.5 rotate-45 border" style={{ borderColor: "var(--mc-text-muted)" }} />offene Fahrt</span>
     </div>
   );
 }
@@ -6623,7 +6633,10 @@ function MapFilters({ value, onChange, counts }) {
     <div className="flex flex-wrap gap-1">
       {MAP_FILTERS.map(([k, l]) => (
         <button key={k} onClick={() => onChange(k)}
-          className={`text-xs px-2.5 py-1 rounded-lg border ${value === k ? "bg-orange-600 border-orange-500 text-white" : "bg-stone-900 border-stone-800 text-stone-400 hover:text-stone-200"}`}>
+          className="text-xs px-2.5 py-1 border"
+          style={{ borderRadius: "var(--mc-r)", ...(value === k
+            ? { background: "var(--mc-st-assigned)", borderColor: "var(--mc-st-assigned)", color: "#ffffff" }
+            : { background: "var(--mc-panel)", borderColor: "var(--mc-border)", color: "var(--mc-text-secondary)" }) }}>
           {l}{k !== "all" && counts[k] ? ` ${counts[k]}` : ""}
         </button>
       ))}
@@ -6640,42 +6653,42 @@ function DriverDetailsPanel({ pos, setup, nodes, onClose }) {
     : nn(pos.nodeId);
   const srcLabel = { gps: "GPS", manual: "manuell gesetzt", estimated: "geschätzt" }[pos.positionSource];
   return (
-    <div className="bg-stone-900 border border-orange-500/40 rounded-xl p-3">
+    <div className="mc-panel p-3" style={{ borderColor: "var(--mc-st-assigned)" }}>
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-2">
-          <span className={`text-xs font-mono px-1.5 py-0.5 rounded ${pos.driver.vehicleType === "Van" ? "bg-orange-500/20 text-orange-300" : "bg-sky-500/20 text-sky-300"}`}>{pos.driver.vehicleType === "Van" ? "Van" : "Car"}</span>
-          <span className="text-sm text-stone-100 font-medium">{pos.driver.firstName} {pos.driver.lastName}</span>
+          <span className="text-xs px-1.5 py-0.5" style={{ borderRadius: "var(--mc-r-sm)", fontFamily: "var(--mc-font-mono)", background: pos.driver.vehicleType === "Van" ? "var(--mc-st-assigned-soft)" : "var(--mc-st-new-soft)", color: pos.driver.vehicleType === "Van" ? "var(--mc-st-assigned)" : "var(--mc-st-new)" }}>{pos.driver.vehicleType === "Van" ? "Van" : "Car"}</span>
+          <span className="text-sm font-medium" style={{ color: "var(--mc-text)" }}>{pos.driver.firstName} {pos.driver.lastName}</span>
         </div>
-        <button onClick={onClose} className="text-stone-500 hover:text-stone-300"><X className="w-4 h-4" /></button>
+        <button onClick={onClose} className="mc-iconbtn w-7 h-7"><X className="w-4 h-4" /></button>
       </div>
 
       <div className="flex items-center gap-1.5 mt-2">
         <span className="w-2 h-2 rounded-full" style={{ background: stl.fill }} />
-        <span className="text-xs text-stone-300">{stl.label}</span>
-        {pos.problem && <span className="text-[10px] bg-red-500/20 text-red-300 px-1.5 py-0.5 rounded">Problem</span>}
-        {pos.lateMin > 0 && <span className="text-[10px] bg-red-500/20 text-red-300 px-1.5 py-0.5 rounded">+{pos.lateMin} min</span>}
+        <span className="text-xs" style={{ color: "var(--mc-text-secondary)" }}>{stl.label}</span>
+        {pos.problem && <span className="mc-badge mc-badge--problem text-[10px]">Problem</span>}
+        {pos.lateMin > 0 && <span className="mc-badge mc-badge--problem text-[10px]">+{pos.lateMin} min</span>}
       </div>
 
       <dl className="mt-3 space-y-1.5 text-xs">
-        <div className="flex justify-between gap-2"><dt className="text-stone-500">Position</dt><dd className="text-stone-200 text-right">{posText}</dd></div>
-        <div className="flex justify-between gap-2"><dt className="text-stone-500">Quelle</dt><dd className="text-stone-300">{srcLabel}{pos.uncertain ? " · unsicher" : ""}{pos.positionSource === "gps" && pos.gps?.at ? ` · ${fmtAgo(pos.gps.at)}` : ""}</dd></div>
+        <div className="flex justify-between gap-2"><dt style={{ color: "var(--mc-text-muted)" }}>Position</dt><dd className="text-right" style={{ color: "var(--mc-text)" }}>{posText}</dd></div>
+        <div className="flex justify-between gap-2"><dt style={{ color: "var(--mc-text-muted)" }}>Quelle</dt><dd style={{ color: "var(--mc-text-secondary)" }}>{srcLabel}{pos.uncertain ? " · unsicher" : ""}{pos.positionSource === "gps" && pos.gps?.at ? ` · ${fmtAgo(pos.gps.at)}` : ""}</dd></div>
         {pos.ride && (
-          <div className="flex justify-between gap-2"><dt className="text-stone-500">Aktuelle Fahrt</dt><dd className="text-stone-200 text-right">{pos.ride.djName || "—"} · {pos.ride.time}{pos.ride.zone ? ` · ${pos.ride.zone}` : ""}</dd></div>
+          <div className="flex justify-between gap-2"><dt style={{ color: "var(--mc-text-muted)" }}>Aktuelle Fahrt</dt><dd className="text-right" style={{ color: "var(--mc-text)" }}>{pos.ride.djName || "—"} · {pos.ride.time}{pos.ride.zone ? ` · ${pos.ride.zone}` : ""}</dd></div>
         )}
         {pos.etaMin != null && (
-          <div className="flex justify-between gap-2"><dt className="text-stone-500">ETA Ziel</dt><dd className="text-stone-200">{pos.etaMin} min{pos.uncertain ? " (unsicher)" : ""}</dd></div>
+          <div className="flex justify-between gap-2"><dt style={{ color: "var(--mc-text-muted)" }}>ETA Ziel</dt><dd style={{ color: "var(--mc-text)" }}>{pos.etaMin} min{pos.uncertain ? " (unsicher)" : ""}</dd></div>
         )}
         {pos.nextRide && (
-          <div className="flex justify-between gap-2"><dt className="text-stone-500">Nächster Auftrag</dt><dd className="text-stone-200 text-right">{pos.nextRide.time} · {nodes[resolveNode(nodes, pos.nextRide.fromId, pos.nextRide.fromId === "festival" ? pos.nextRide.zone : null, pos.nextRide.fromCustom)]?.short || "?"} → {nodes[resolveNode(nodes, pos.nextRide.toId, pos.nextRide.zone, pos.nextRide.toCustom)]?.short || "?"}</dd></div>
+          <div className="flex justify-between gap-2"><dt style={{ color: "var(--mc-text-muted)" }}>Nächster Auftrag</dt><dd className="text-right" style={{ color: "var(--mc-text)" }}>{pos.nextRide.time} · {nodes[resolveNode(nodes, pos.nextRide.fromId, pos.nextRide.fromId === "festival" ? pos.nextRide.zone : null, pos.nextRide.fromCustom)]?.short || "?"} → {nodes[resolveNode(nodes, pos.nextRide.toId, pos.nextRide.zone, pos.nextRide.toCustom)]?.short || "?"}</dd></div>
         )}
         {pos.lastChange && (
-          <div className="flex justify-between gap-2"><dt className="text-stone-500">Letzte Änderung</dt><dd className="text-stone-300">{STATUS_LABEL[pos.lastChange.status] || pos.lastChange.status} · {fmtClock(pos.lastChange.at)}</dd></div>
+          <div className="flex justify-between gap-2"><dt style={{ color: "var(--mc-text-muted)" }}>Letzte Änderung</dt><dd style={{ color: "var(--mc-text-secondary)" }}>{STATUS_LABEL[pos.lastChange.status] || pos.lastChange.status} · {fmtClock(pos.lastChange.at)}</dd></div>
         )}
       </dl>
 
       {pos.driver.phone
-        ? <a href={`tel:${pos.driver.phone}`} className="mt-3 w-full inline-flex items-center justify-center gap-2 bg-emerald-600 hover:bg-emerald-500 text-white text-sm py-2 rounded-lg"><Navigation className="w-4 h-4" />Anrufen</a>
-        : <div className="mt-3 text-[11px] text-stone-600">Keine Telefonnummer hinterlegt.</div>}
+        ? <a href={`tel:${pos.driver.phone}`} className="mc-btn-primary mt-3 w-full inline-flex items-center justify-center gap-2 text-sm py-2" style={{ background: "var(--mc-st-done)", color: "#ffffff" }}><Navigation className="w-4 h-4" />Anrufen</a>
+        : <div className="mt-3 text-[11px]" style={{ color: "var(--mc-text-muted)" }}>Keine Telefonnummer hinterlegt.</div>}
     </div>
   );
 }
@@ -6900,32 +6913,32 @@ function BoardMiniMap({ setup, dyn, day, onEdit, SchematicComponent = SchematicM
   const sel = positions.find((p) => p.driver.id === selected);
 
   return (
-    <div className="bg-stone-900 border border-stone-800 rounded-xl p-2">
+    <div className="mc-panel p-2">
       <div className="flex items-center gap-2 px-1 pb-1.5">
-        <MapIcon className="w-4 h-4 text-stone-400" />
-        <span className="text-xs text-stone-400">Live-Karte</span>
+        <MapIcon className="w-4 h-4" style={{ color: "var(--mc-text-secondary)" }} />
+        <span className="mc-eyebrow">Live-Karte</span>
         {!isToday && (
           <div className="flex items-center gap-1.5 flex-1 min-w-0">
-            <span className="font-mono text-[11px] text-stone-300 w-9 shrink-0">{fromMin(nowMin < 0 ? 720 : nowMin)}</span>
+            <span className="text-[11px] w-9 shrink-0" style={{ fontFamily: "var(--mc-font-mono)", color: "var(--mc-text-secondary)" }}>{fromMin(nowMin < 0 ? 720 : nowMin)}</span>
             <input type="range" min="720" max="1620" step="5" value={Math.min(1620, Math.max(720, nowMin < 0 ? 720 : nowMin))}
-              onChange={(e) => setSimMin(Number(e.target.value))} className="flex-1 accent-orange-500 h-1" />
+              onChange={(e) => setSimMin(Number(e.target.value))} className="flex-1 h-1" style={{ accentColor: "var(--mc-st-assigned)" }} />
           </div>
         )}
-        {isToday && <span className="text-[10px] text-emerald-400 ml-auto">live</span>}
+        {isToday && <span className="text-[10px] ml-auto flex items-center gap-1.5" style={{ color: "var(--mc-st-done)" }}><span className="mc-live-dot" />live</span>}
       </div>
       <SchematicComponent nodes={nodes} positions={positions} openRides={openRides}
         selected={selected} hovered={hovered} onSelect={setSelected} onHover={setHovered}
         activeOpen={null} onOpenClick={() => {}} />
-      <div className="flex flex-wrap gap-x-3 gap-y-1 px-1 pt-1.5 text-[10px] text-stone-400">
+      <div className="flex flex-wrap gap-x-3 gap-y-1 px-1 pt-1.5 text-[10px]" style={{ color: "var(--mc-text-muted)" }}>
         {Object.entries(STATUS_STYLE).map(([k, v]) => (
           <span key={k} className="flex items-center gap-1"><span className="w-2 h-2 rounded-full" style={{ background: v.fill }} />{v.label} ({counts[k] || 0})</span>
         ))}
       </div>
       {sel && (
-        <button onClick={() => onEdit && sel.ride && onEdit(sel.ride)} className="w-full text-left mt-1.5 px-2 py-1.5 rounded-lg bg-stone-950/60 hover:bg-stone-800 text-xs">
-          <span className="font-mono text-stone-300">{sel.driver.vehicleType === "Van" ? "Van" : "Car"}</span>
-          <span className="text-stone-400"> · {sel.driver.firstName} {sel.driver.lastName} · {STATUS_STYLE[sel.mode]?.label}</span>
-          {sel.ride && <span className="text-stone-500"> · {nodes[sel.fromId]?.short} → {nodes[sel.toId]?.short}</span>}
+        <button onClick={() => onEdit && sel.ride && onEdit(sel.ride)} className="mc-ride-card w-full text-left mt-1.5 px-2 py-1.5 text-xs">
+          <span style={{ fontFamily: "var(--mc-font-mono)", color: "var(--mc-text)" }}>{sel.driver.vehicleType === "Van" ? "Van" : "Car"}</span>
+          <span style={{ color: "var(--mc-text-secondary)" }}> · {sel.driver.firstName} {sel.driver.lastName} · {STATUS_STYLE[sel.mode]?.label}</span>
+          {sel.ride && <span style={{ color: "var(--mc-text-muted)" }}> · {nodes[sel.fromId]?.short} → {nodes[sel.toId]?.short}</span>}
         </button>
       )}
     </div>
@@ -7116,14 +7129,14 @@ function NoGpsSharingPanel({ setup, dyn, day }) {
   if (withoutGps.length === 0) return null; // nichts Auffälliges -> kein leeres/beruhigendes Panel nötig
 
   return (
-    <div className="bg-stone-900 border border-amber-800/40 rounded-xl p-3">
-      <div className="text-xs text-amber-300 mb-2 flex items-center gap-1.5"><AlertTriangle className="w-3.5 h-3.5" />Kein Live-Standort ({withoutGps.length})</div>
+    <div className="mc-panel p-3" style={{ borderColor: "var(--mc-st-assigned)" }}>
+      <div className="text-xs mb-2 flex items-center gap-1.5" style={{ color: "var(--mc-st-assigned)" }}><AlertTriangle className="w-3.5 h-3.5" />Kein Live-Standort ({withoutGps.length})</div>
       <div className="space-y-1">
         {withoutGps.map((d) => (
           <div key={d.id} className="flex items-center gap-2 text-xs">
-            <span className={`text-[10px] font-mono px-1.5 py-0.5 rounded shrink-0 ${d.vehicleType === "Van" ? "bg-orange-500/20 text-orange-300" : "bg-sky-500/20 text-sky-300"}`}>{d.vehicleType === "Van" ? "Van" : "Car"}</span>
-            <span className="text-stone-300 truncate flex-1">{d.firstName} {d.lastName}</span>
-            {d.phone && <a href={`tel:${d.phone}`} className="text-stone-500 hover:text-emerald-400 shrink-0" title={`Anrufen: ${d.phone}`}><Navigation className="w-3.5 h-3.5 rotate-90" /></a>}
+            <span className="text-[10px] px-1.5 py-0.5 shrink-0" style={{ borderRadius: "var(--mc-r-sm)", fontFamily: "var(--mc-font-mono)", background: d.vehicleType === "Van" ? "var(--mc-st-assigned-soft)" : "var(--mc-st-new-soft)", color: d.vehicleType === "Van" ? "var(--mc-st-assigned)" : "var(--mc-st-new)" }}>{d.vehicleType === "Van" ? "Van" : "Car"}</span>
+            <span className="truncate flex-1" style={{ color: "var(--mc-text)" }}>{d.firstName} {d.lastName}</span>
+            {d.phone && <a href={`tel:${d.phone}`} className="mc-iconbtn shrink-0 w-6 h-6" title={`Anrufen: ${d.phone}`}><Navigation className="w-3.5 h-3.5 rotate-90" /></a>}
           </div>
         ))}
       </div>
@@ -7166,41 +7179,41 @@ function MapTab({ setup, dyn, day, onEdit, SchematicComponent = SchematicMap, gl
   return (
     <div>
       <div className="flex flex-wrap items-center gap-3 mb-3">
-        <h3 className="text-sm text-stone-400 flex items-center gap-2"><MapIcon className="w-4 h-4" />Shuttle-Netz · {fmtDate(day)}</h3>
-        <div className="flex items-center gap-1 bg-stone-900 border border-stone-800 rounded-lg p-0.5">
+        <h3 className="text-sm flex items-center gap-2" style={{ color: "var(--mc-text-secondary)" }}><MapIcon className="w-4 h-4" />Shuttle-Netz · {fmtDate(day)}</h3>
+        <div className="flex items-center gap-1 p-0.5" style={{ background: "var(--mc-inset)", border: "1px solid var(--mc-border)", borderRadius: "var(--mc-r)" }}>
           <button onClick={() => { setMode("live"); if (isToday) setSimMin(dayNowMin(day)); }}
-            className={`text-xs px-2.5 py-1 rounded ${mode === "live" ? "bg-emerald-600 text-white" : "text-stone-400"}`}>{isToday ? "Live" : "Live"}</button>
+            className="text-xs px-2.5 py-1" style={{ borderRadius: "var(--mc-r-sm)", ...(mode === "live" ? { background: "var(--mc-st-done)", color: "#ffffff" } : { color: "var(--mc-text-muted)" }) }}>{isToday ? "Live" : "Live"}</button>
           <button onClick={() => setMode("sim")}
-            className={`text-xs px-2.5 py-1 rounded ${mode === "sim" ? "bg-orange-600 text-white" : "text-stone-400"}`}>Simulation</button>
+            className="text-xs px-2.5 py-1" style={{ borderRadius: "var(--mc-r-sm)", ...(mode === "sim" ? { background: "var(--mc-st-assigned)", color: "#ffffff" } : { color: "var(--mc-text-muted)" }) }}>Simulation</button>
         </div>
         <div className="flex items-center gap-2 flex-1 min-w-[220px]">
-          <span className="font-mono text-sm text-stone-200 w-12">{fromMin(nowMin < 0 ? 720 : nowMin > 1620 ? 1620 : nowMin)}</span>
+          <span className="text-sm w-12" style={{ fontFamily: "var(--mc-font-mono)", color: "var(--mc-text)" }}>{fromMin(nowMin < 0 ? 720 : nowMin > 1620 ? 1620 : nowMin)}</span>
           <input type="range" min="720" max="1620" step="5" disabled={mode === "live"}
             value={Math.min(1620, Math.max(720, nowMin < 0 ? 720 : nowMin))}
             onChange={(e) => { setMode("sim"); setSimMin(Number(e.target.value)); }}
-            className="flex-1 accent-orange-500 disabled:opacity-40" />
+            className="flex-1 disabled:opacity-40" style={{ accentColor: "var(--mc-st-assigned)" }} />
         </div>
       </div>
 
       <div className="mb-3 flex flex-wrap items-center gap-3">
         <MapFilters value={filter} onChange={setFilter} counts={counts} />
-        <div className="flex items-center gap-1 bg-stone-900 border border-stone-800 rounded-lg p-0.5">
+        <div className="flex items-center gap-1 p-0.5" style={{ background: "var(--mc-inset)", border: "1px solid var(--mc-border)", borderRadius: "var(--mc-r)" }}>
           <button onClick={() => setMapView("schema")}
-            className={`text-xs px-2.5 py-1 rounded ${mapView === "schema" ? "bg-stone-700 text-white" : "text-stone-400"}`}>Schema-Karte</button>
+            className="text-xs px-2.5 py-1" style={{ borderRadius: "var(--mc-r-sm)", ...(mapView === "schema" ? { background: "var(--mc-text)", color: "var(--mc-bg)", fontWeight: 500 } : { color: "var(--mc-text-muted)" }) }}>Schema-Karte</button>
           <button onClick={() => setMapView("google")} title="Lädt Google Maps (externe Verbindung, siehe BACKEND-README)"
-            className={`text-xs px-2.5 py-1 rounded ${mapView === "google" ? "bg-stone-700 text-white" : "text-stone-400"}`}>Google Maps</button>
+            className="text-xs px-2.5 py-1" style={{ borderRadius: "var(--mc-r-sm)", ...(mapView === "google" ? { background: "var(--mc-text)", color: "var(--mc-bg)", fontWeight: 500 } : { color: "var(--mc-text-muted)" }) }}>Google Maps</button>
         </div>
       </div>
 
       {mode === "live" && !isToday && (
-        <div className="text-xs text-orange-300/80 mb-2">Live-Modus zeigt den echten Status – am gewählten (zukünftigen) Tag noch nichts unterwegs. Für „wer ist wann wo" auf Simulation wechseln.</div>
+        <div className="text-xs mb-2" style={{ color: "var(--mc-st-assigned)" }}>Live-Modus zeigt den echten Status – am gewählten (zukünftigen) Tag noch nichts unterwegs. Für „wer ist wann wo" auf Simulation wechseln.</div>
       )}
       {mode === "sim" && (
-        <div className="text-xs text-stone-500 mb-2">Simulation: reiner Fahrplan zur gewählten Uhrzeit (Status/Zeitstempel werden ignoriert).</div>
+        <div className="text-xs mb-2" style={{ color: "var(--mc-text-muted)" }}>Simulation: reiner Fahrplan zur gewählten Uhrzeit (Status/Zeitstempel werden ignoriert).</div>
       )}
 
       <div className="grid grid-cols-1 lg:grid-cols-4 gap-4">
-        <div className="lg:col-span-3 bg-stone-900 border border-stone-800 rounded-xl p-2">
+        <div className="mc-panel lg:col-span-3 p-2">
           {mapView === "google" ? (
             <LiveGoogleMap setup={setup} dyn={dyn} glide={glideMarkers} />
           ) : (
@@ -7219,38 +7232,39 @@ function MapTab({ setup, dyn, day, onEdit, SchematicComponent = SchematicMap, gl
           <NoGpsSharingPanel setup={setup} dyn={dyn} day={day} />
 
           {/* Offene Fahrten */}
-          <div className="bg-stone-900 border border-stone-800 rounded-xl p-3">
-            <div className="text-xs text-stone-400 mb-2 flex items-center gap-1.5"><Navigation className="w-3.5 h-3.5" />Offene Fahrten ({openRides.length})</div>
+          <div className="mc-panel p-3">
+            <div className="text-xs mb-2 flex items-center gap-1.5" style={{ color: "var(--mc-text-secondary)" }}><Navigation className="w-3.5 h-3.5" />Offene Fahrten ({openRides.length})</div>
             <div className="space-y-1 max-h-48 overflow-y-auto">
-              {openRides.length === 0 && <div className="text-xs text-stone-600">alle Fahrten zugeteilt</div>}
+              {openRides.length === 0 && <div className="text-xs" style={{ color: "var(--mc-text-muted)" }}>alle Fahrten zugeteilt</div>}
               {openRides.sort((a, b) => sortMin(a.ride.time) - sortMin(b.ride.time)).map((o, i) => (
                 <button key={i} onClick={() => setActiveOpen(activeOpen === o ? null : o)}
-                  className={`w-full flex items-center gap-2 text-left text-xs rounded px-1.5 py-1 ${activeOpen === o ? "bg-stone-800" : "hover:bg-stone-800"}`}>
+                  className="mc-ride-card w-full flex items-center gap-2 text-left text-xs px-1.5 py-1"
+                  style={activeOpen === o ? { borderColor: "var(--mc-text)" } : undefined}>
                   <span className="w-2 h-2 rotate-45 shrink-0" style={{ background: o.color }} />
-                  <span className="font-mono text-stone-300">{o.ride.time}</span>
-                  <span className="text-stone-400 truncate">{nodes[o.fromNode]?.short || "?"} → {nodes[o.toNode]?.short || "?"}</span>
-                  <span className="text-stone-500 ml-auto shrink-0">{o.ride.passengerCount}P</span>
+                  <span style={{ fontFamily: "var(--mc-font-mono)", color: "var(--mc-text)" }}>{o.ride.time}</span>
+                  <span className="truncate" style={{ color: "var(--mc-text-secondary)" }}>{nodes[o.fromNode]?.short || "?"} → {nodes[o.toNode]?.short || "?"}</span>
+                  <span className="ml-auto shrink-0" style={{ color: "var(--mc-text-muted)" }}>{o.ride.passengerCount}P</span>
                 </button>
               ))}
             </div>
           </div>
 
           {/* Unterwegs */}
-          <div className="bg-stone-900 border border-stone-800 rounded-xl p-3">
-            <div className="text-xs text-stone-400 mb-2">Unterwegs ({counts.unterwegs || 0})</div>
+          <div className="mc-panel p-3">
+            <div className="text-xs mb-2" style={{ color: "var(--mc-text-secondary)" }}>Unterwegs ({counts.unterwegs || 0})</div>
             <div className="space-y-1">
               {positions.filter((p) => p.mode === "onboard" || p.mode === "toPickup").sort((a, b) => a.driver.vehicleId.localeCompare(b.driver.vehicleId)).map((p) => (
-                <button key={p.driver.id} onClick={() => setSelected(p.driver.id)} className="w-full flex items-center gap-2 text-left text-xs hover:bg-stone-800 rounded px-1.5 py-1">
+                <button key={p.driver.id} onClick={() => setSelected(p.driver.id)} className="mc-ride-card w-full flex items-center gap-2 text-left text-xs px-1.5 py-1">
                   <span className="w-2 h-2 rounded-full shrink-0" style={{ background: (STATUS_STYLE[p.mode] || {}).fill }} />
-                  <span className="text-stone-300 truncate">{p.driver.vehicleType === "Van" ? "Van" : "Car"} · {p.driver.firstName}</span>
-                  <span className="text-stone-500 ml-auto shrink-0">→ {nodes[p.toId]?.short || "?"}</span>
+                  <span className="truncate" style={{ color: "var(--mc-text)" }}>{p.driver.vehicleType === "Van" ? "Van" : "Car"} · {p.driver.firstName}</span>
+                  <span className="ml-auto shrink-0" style={{ color: "var(--mc-text-muted)" }}>→ {nodes[p.toId]?.short || "?"}</span>
                 </button>
               ))}
-              {(counts.unterwegs || 0) === 0 && <div className="text-xs text-stone-600">niemand unterwegs</div>}
+              {(counts.unterwegs || 0) === 0 && <div className="text-xs" style={{ color: "var(--mc-text-muted)" }}>niemand unterwegs</div>}
             </div>
           </div>
 
-          <div className="text-[11px] text-stone-600 px-1">Positionen nutzen echtes Fahrer-GPS wo verfügbar (sonst Fahrplan-Schätzung). Für die Ansicht mit echter Straßenkarte oben auf „Google Maps" wechseln.</div>
+          <div className="text-[11px] px-1" style={{ color: "var(--mc-text-muted)" }}>Positionen nutzen echtes Fahrer-GPS wo verfügbar (sonst Fahrplan-Schätzung). Für die Ansicht mit echter Straßenkarte oben auf „Google Maps" wechseln.</div>
         </div>
       </div>
 
