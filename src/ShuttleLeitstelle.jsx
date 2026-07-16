@@ -4027,7 +4027,7 @@ function RideForm({ setup, ride, onClose, onSave, onDelete }) {
         <Field label="Personen" mc><input type="number" min="1" max="8" className={mcInp} value={f.passengerCount} onChange={(e) => set("passengerCount", e.target.value)} /></Field>
         <Field label="Flugnummer" mc><input className={mcInp} value={f.flightNo} onChange={(e) => set("flightNo", e.target.value)} placeholder="z. B. KL1845" /></Field>
         {(f.fromId === "airport" || f.flightNo) && (
-          <div className="col-span-2 p-3 mt-1" style={{ background: "var(--mc-st-new-soft)", border: "1px solid var(--mc-st-new)", borderRadius: "var(--mc-r)" }}>
+          <div className="col-span-2 p-3 mt-1" style={{ background: "var(--mc-inset)", border: "1px solid var(--mc-border)", borderRadius: "var(--mc-r)" }}>
             <div className="text-xs font-medium mb-2 flex items-center justify-between" style={{ color: "var(--mc-st-new)" }}>
               <span className="flex items-center gap-1.5"><Plane className="w-3.5 h-3.5" />Flug-Details</span>
               {ride.manualOverride && <span className="mc-badge mc-badge--assigned text-[10px]">manuell überschrieben</span>}
@@ -8563,7 +8563,11 @@ function MissionStyles() {
         /* Text */
         --mc-text: #e7ebf0;
         --mc-text-secondary: #9aa4b2;
-        --mc-text-muted: #616d7c;
+        /* 27a-3: von #616d7c auf #828d9c. Der alte Ton hatte auf Panel nur
+           3.47 Kontrast, AA fuer Fliesstext braucht 4.5. Jetzt 5.43. Haengt an
+           ueber 80 Textstellen (Uhrzeiten, Log, Hinweise). Nicht #7c8797
+           nehmen, das ist exakt --mc-st-idle. */
+        --mc-text-muted: #828d9c;
         /* Statusfarben: Akzent + weiche Fuellung */
         --mc-st-new: #4b90f6;       --mc-st-new-soft: rgba(75,144,246,0.30);
         --mc-st-assigned: #f5a524;  --mc-st-assigned-soft: rgba(245,165,36,0.30);
