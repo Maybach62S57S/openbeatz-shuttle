@@ -2495,3 +2495,104 @@ Vercel -> altes Deployment -> Promote to Production.
 - `ChatPanel` (3579) nach Bedarf.
 - **Inhalt, nicht Design:** `RideHistory` zeigt `e.by` roh (`"dispo:1"`) statt
   ueber `byLabel(setup, e.by)`. Braucht `setup` als Prop. Nach dem Festival.
+
+---
+
+## Ready-to-paste Opener: Session 27c (Stand 16.07., nach 27d)
+
+```
+Erst PROJEKT-ANWEISUNGEN.md lesen, dann Repo holen. Repo:
+Maybach62S57S/openbeatz-shuttle. PAT setze ich hier ein: <HIER DEIN PAT>
+Nach dem Klonen: git config (user.name/email), npm ci, Baseline-esbuild gruen:
+./node_modules/.bin/esbuild src/ShuttleLeitstelle.jsx --bundle=false --format=esm --outfile=/tmp/x.js
+Dann: ln -sfn <repo-pfad> /home/claude/repo (rendertest.mjs/smoke.mjs
+schreiben dorthin, sonst laufen sie nicht).
+
+STAND: 27a und 27d sind gebaut. main = <HIER main NACH den FF-Merges>,
+8934 Zeilen. Falls ich NICHT gemergt habe, sag es mir: dann ist
+fix/session-27d-inseln (= 757fd92) die Basis, der haengt auf
+fix/session-27a-modals (= ae82417), der haengt auf main. Classic ist seit
+Session 19 bis 24 komplett raus, Mission Control ist die einzige
+Leitstellen-Oberflaeche.
+
+Auf MC-Design sind: RideForm, AssignModal, WhatsAppModal, RideHistory (27a),
+TimelineView, BoardMiniMap, NoGpsSharingPanel, DriverRow (27d).
+Dazu Modal und Field mit optionaler mc-Prop, Konstante mcInp.
+
+RUECKWEG: Tag stabil-vor-mc-design-2026-07-16 = Branch backup/vor-mc-design
+= 676b02b (Stand VOR allem Design). Sonst: Vercel -> altes Deployment ->
+Promote to Production.
+
+Danach UEBERGABE-Session-18.md lesen, KOMPLETT, vor allem "SESSION 27a: DIE
+FALLE", "SESSION 27a: ERLEDIGT", "SESSION 27d: ERLEDIGT" und diesen Opener.
+Die Datei waechst nach UNTEN an. Anker sind auf 757fd92, per grep gegenpruefen.
+
+AUFTRAG 27c: FlightTab (5375), MapTab (7134), LiveGoogleMap (6971) auf
+MC-Design. Ca. 416 Zeilen. FANG BEIM MAPTAB-RAHMEN AN: MapTab rendert seit 27d
+MC-Panels (TimelineView, NoGpsSharingPanel) in einem Classic-Rahmen, das ist
+gerade der haesslichste Bruch in der App. Erreichbarkeit vor dem Bauen NEU
+messen, nicht der Tabelle glauben.
+
+REGELN, aus 27a und 27d teuer gelernt:
+- Erreichbarkeit IMMER transitiv messen (rg.mjs), KONSTANTEN mitsammeln.
+- rg.mjs kennt nur Top-Level-Namen: bei jedem Treffer im Quelltext nachsehen,
+  ob der Name LOKAL neu gebunden wird (Row in TimelineView shadowt die
+  Top-Level-Row) und ob es ueberhaupt eine Komponente ist (Gauge ist ein Icon).
+- Alles, was auch von DriverApp/StageApp/GuestApp erreichbar ist, ist TABU.
+  Fuer 27c konkret: MapIcon haengt an GuestRideCard -> TABU, nur die className
+  an der Aufrufstelle aendern, nie MapIcon selbst. STATUS_STYLE ist an sieben
+  Stellen geteilt (Kartenmarker) -> nicht anfassen.
+- Brauchst du trotzdem etwas Geteiltes: optionale mc-Prop wie bei Modal/Field,
+  plus Render-Test vorher/nachher, ZEICHENIDENTISCH. KEIN zweiter Fork.
+- NUR className/Style. KEINE Handler, KEINE Feldlogik, KEINE Props ausser einem
+  reinen Design-Schalter. Layout/Groesse bleibt Tailwind, nur Farbe/Flaeche
+  wird MC-Token. Dann verschiebt sich nichts.
+- KEIN neues CSS in MissionStyles. Vorhandene Klassen: .mc-panel, .mc-input,
+  .mc-btn-primary, .mc-btn-assign, .mc-badge, .mc-eyebrow, .mc-iconbtn,
+  .mc-modal-fade, .mc-ride-card, .mc-metric, .mc-live-dot, .mc-tl-block.
+- Kein inline background auf etwas mit .mc-ride-card: inline schlaegt Klasse
+  und legt den :hover tot. Ueber borderColor loesen.
+- Gibt es fuer eine Sache schon ein MC-Muster, kopier das statt neu zu erfinden
+  (Van/Car-Chip aus AssignModal, Balkenfarbe aus MissionTimelinePage ueber
+  mcRideStatusKey + var(--mc-st-${k}-fill)).
+- Enterprise dark, ruhig, nachtschichttauglich. Kein Gaming, kein Cyberpunk,
+  kein Neon, keine uebertriebenen Animationen.
+- SettingsTab NICHT anfassen, das ist 27b.
+- Weiter tabu: die Datenschicht, das dyn_data/RPC-Thema, der Fallschirm,
+  Stage bleibt read-only. Fahrer/Stage/Gast auf MC-Design ist NICHT Thema,
+  eigenes Projekt nach dem Festival.
+
+BELEGE, die ich sehen will. Die Skripte liegen im Repo, benutz die:
+- pruefe.mjs: genau die umgebauten Bausteine geaendert, ALLES andere
+  byte-identisch, insbesondere DriverApp, StageApp, GuestApp, IssueModal,
+  StageIssueModal, GuestIssueModal, MissionStyles, inp, Field, SettingsTab,
+  MapIcon, STATUS_STYLE.
+- rendertest.mjs, Sollwerte konstant: App-Root 25053, IssueModal 2452,
+  StageIssueModal 2413, GuestIssueModal 2895, Field ohne mc 101.
+- smoke27d.mjs als Vorlage fuer einen eigenen 27c-Smoke: jeder umgebaute Pfad
+  muss echt rendern und Classic-Farbreste 0 zeigen. Deck dabei BEIDE Zustaende
+  ab, wo es welche gibt.
+- rg.mjs: transitiver Rendergraph inkl. Konstanten.
+- Jede var(--mc-*) einzeln gegen MissionStyles (macht pruefe.mjs mit).
+  --mc-st-new-soft steht auf einer GETEILTEN Zeile, zeilenweiser Grep findet
+  sie nicht.
+- TOGGLE-FALLE: ein Render-Test sieht nur den STARTZUSTAND. Alles hinter
+  Toggle/Tab/Akkordeon rendert im Test nicht und ist NICHT belegt. Dann per
+  Quelltext pruefen und mir sagen, was ein Mensch anschauen muss. LiveGoogleMap
+  und MapTab haben genau solche Zustaende (Kartenmodus, Auswahl, Tooltip).
+- esbuild ist kein Beweis (Session 23, 24, 27a je mit Gegenprobe belegt).
+- git diff --stat luegt bei aehnlichen Bloecken, --patience nutzen.
+
+Branch: fix/session-27c-karte von der genannten Basis. Nach meinem OK
+FF-Merge. Commit ueber /tmp/msg.txt. Sprache Deutsch, informell, keine
+Gedankenstriche, korrekte Umlaute. Warn mich rechtzeitig, wenn der Chat zu
+lang wird.
+
+Zum Schluss: Diff-Beleg, Regressionsrisiken, konkrete manuelle Testfaelle,
+Uebergabe fortschreiben, Opener fuer die naechste Session.
+
+ZEITFENSTER: bis Freitagabend 17.07. darf gebaut werden. Ab Samstag 18.07. ist
+Ruhe, dann teste ich mit mehreren Fahrern. Was am Festival laufen soll, muss
+VOR dem Test drin sein. Ab 21.07. wird nichts mehr geloescht.
+Festival 23. bis 27.07.
+```
