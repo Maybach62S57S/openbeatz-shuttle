@@ -4647,54 +4647,56 @@ function GuestLinksSection({ setup, dyn, updateSetup, onPreviewGuest }) {
 
   return (
     <div>
-      <h3 className="font-medium text-stone-200 mb-1 flex items-center gap-2"><Link2 className="w-4 h-4" />Gast-/Artist-Links</h3>
-      <p className="text-xs text-stone-500 mb-3">
-        Persönliche Info-Seite für Artist/Manager — nur Ansicht, keine Dispo-Funktionen, standardmäßig Englisch.
-        <b className="text-orange-300/90"> Sicherheitshinweis:</b> Im Chat-Artifact blendet der Link nur die Oberfläche aus, ist keine echte Zugriffssperre. Nach dem Supabase-Deploy ist der Link echt auf die eigenen Fahrten beschränkt (RPC-basiert); die vollständige Liste hier ist trotzdem nur für die Leitstelle gedacht, nicht zum Weitergeben.
-      </p>
+      <SectionHeader icon={Link2} title="Gast-/Artist-Links" className="mb-3"
+        subtitle={<>Persönliche Info-Seite für Artist/Manager — nur Ansicht, keine Dispo-Funktionen, standardmäßig Englisch.
+          {/* Session 27b: Sicherheitshinweis ist eine WARNUNG, nicht die Marke.
+              Vorher orange-300 = Markenfarbe, das war der Regelbruch. Amber ist
+              die Warnfarbe, identisch zum oddPhones-Hinweis in DriverPhones. */}
+          <b style={{ color: "var(--mc-st-assigned)" }}> Sicherheitshinweis:</b> Im Chat-Artifact blendet der Link nur die Oberfläche aus, ist keine echte Zugriffssperre. Nach dem Supabase-Deploy ist der Link echt auf die eigenen Fahrten beschränkt (RPC-basiert); die vollständige Liste hier ist trotzdem nur für die Leitstelle gedacht, nicht zum Weitergeben.</>} />
       {saveError && (
-        <div className="mb-3 text-xs bg-red-500/10 border border-red-500/30 text-red-300 px-3 py-2 rounded-lg flex items-center gap-2">
+        <div className="mc-note mc-note--error mb-3 text-xs flex items-center gap-2">
           <AlertTriangle className="w-3.5 h-3.5 shrink-0" />{saveError}
         </div>
       )}
 
-      <div className="mb-4 pb-4 border-b border-stone-800">
-        <Field label="Zentrale Shuttle-Coordination-Nummer (nicht die private Fahrer-Nummer)">
+      <div className="mb-4 pb-4 border-b" style={{ borderColor: "var(--mc-border)" }}>
+        <Field mc label="Zentrale Shuttle-Coordination-Nummer (nicht die private Fahrer-Nummer)">
           <div className="flex gap-2">
-            <input type="tel" className={inp} value={coordPhone} onChange={(e) => setCoordPhone(e.target.value)} placeholder="+49 …" />
-            <button onClick={savePhone} disabled={coordPhone === (setup.config.coordinationPhone || "")} className="shrink-0 bg-orange-600 hover:bg-orange-500 disabled:opacity-40 text-white text-sm px-3 rounded-lg">Speichern</button>
+            <input type="tel" className={mcInp} value={coordPhone} onChange={(e) => setCoordPhone(e.target.value)} placeholder="+49 …" />
+            <button onClick={savePhone} disabled={coordPhone === (setup.config.coordinationPhone || "")} className="mc-btn-primary shrink-0 disabled:opacity-40 text-sm px-3">Speichern</button>
           </div>
         </Field>
         {phoneLooksInvalid(coordPhone) && (
-          <div className="text-xs text-amber-300 mt-1.5">Diese Nummer sieht ungewöhnlich aus. Für den WhatsApp-Link an Gäste sollten es nur + und Ziffern sein. Speichern geht trotzdem.</div>
+          <div className="text-xs mt-1.5" style={{ color: "var(--mc-st-assigned)" }}>Diese Nummer sieht ungewöhnlich aus. Für den WhatsApp-Link an Gäste sollten es nur + und Ziffern sein. Speichern geht trotzdem.</div>
         )}
-        {savedPhone && <span className="text-xs text-emerald-400 flex items-center gap-1 mt-1.5"><Check className="w-3.5 h-3.5" />gespeichert</span>}
+        {savedPhone && <span className="text-xs flex items-center gap-1 mt-1.5" style={{ color: "var(--mc-st-done)" }}><Check className="w-3.5 h-3.5" />gespeichert</span>}
       </div>
 
       <div className="mb-3">
-        <span className="text-stone-400 text-xs mb-1 block">Neuen Link erzeugen</span>
+        <span className="text-xs mb-1 block" style={{ color: "var(--mc-text-secondary)" }}>Neuen Link erzeugen</span>
         <div className="flex flex-wrap gap-1.5 mb-2">
           {artistOptions.filter((n) => !existingNames.has(n.toLowerCase())).slice(0, 12).map((n) => (
-            <button key={n} onClick={() => genFor(n)} className="text-xs bg-stone-900 hover:bg-stone-800 border border-stone-800 text-stone-300 px-2.5 py-1 rounded-lg">{n}</button>
+            <button key={n} onClick={() => genFor(n)} className="mc-btn-quiet text-xs px-2.5 py-1">{n}</button>
           ))}
         </div>
         <div className="flex gap-2">
-          <input className={inp} value={newArtist} onChange={(e) => setNewArtist(e.target.value)} placeholder="oder Künstlername eingeben" onKeyDown={(e) => e.key === "Enter" && genFor(newArtist)} />
-          <button onClick={() => genFor(newArtist)} className="shrink-0 bg-stone-800 hover:bg-stone-700 text-stone-100 text-sm px-3 rounded-lg flex items-center gap-1.5"><Plus className="w-3.5 h-3.5" />Link</button>
+          <input className={mcInp} value={newArtist} onChange={(e) => setNewArtist(e.target.value)} placeholder="oder Künstlername eingeben" onKeyDown={(e) => e.key === "Enter" && genFor(newArtist)} />
+          <button onClick={() => genFor(newArtist)} className="mc-btn-quiet shrink-0 text-sm px-3 flex items-center gap-1.5"><Plus className="w-3.5 h-3.5" />Link</button>
         </div>
       </div>
 
       <div className="space-y-1.5 max-h-72 overflow-y-auto">
-        {tokens === null && <div className="text-xs text-stone-600">Lädt…</div>}
-        {tokens !== null && list.length === 0 && <div className="text-xs text-stone-600">Noch keine Gast-Links erzeugt.</div>}
+        {tokens === null && <div className="text-xs" style={{ color: "var(--mc-text-muted)" }}>Lädt…</div>}
+        {tokens !== null && list.length === 0 && <div className="text-xs" style={{ color: "var(--mc-text-muted)" }}>Noch keine Gast-Links erzeugt.</div>}
         {list.slice().sort((a, b) => b.createdAt - a.createdAt).map((t) => (
-          <div key={t.token} className="flex items-center gap-2 text-sm bg-stone-950/50 rounded-lg px-2.5 py-2">
-            <span className="text-stone-200 truncate">{t.djName}</span>
-            <span className="text-[10px] font-mono text-stone-600 truncate">{t.token.slice(0, 8)}…</span>
+          <div key={t.token} className="flex items-center gap-2 text-sm rounded-lg px-2.5 py-2" style={{ background: "var(--mc-inset)" }}>
+            <span className="truncate" style={{ color: "var(--mc-text)" }}>{t.djName}</span>
+            <span className="text-[10px] truncate" style={{ fontFamily: "var(--mc-font-mono)", color: "var(--mc-text-muted)" }}>{t.token.slice(0, 8)}…</span>
             <div className="ml-auto flex items-center gap-1 shrink-0">
-              <button onClick={() => onPreviewGuest?.(t.token)} title="Vorschau" className="text-stone-500 hover:text-stone-200 p-1.5"><Eye className="w-3.5 h-3.5" /></button>
-              <button onClick={() => copyLink(t.token)} title="Link kopieren" className="text-stone-500 hover:text-emerald-400 p-1.5">{copiedTok === t.token ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}</button>
-              <button onClick={() => revoke(t.token)} title="Löschen" className="text-stone-500 hover:text-red-400 p-1.5"><Trash2 className="w-3.5 h-3.5" /></button>
+              <button onClick={() => onPreviewGuest?.(t.token)} title="Vorschau" aria-label="Vorschau" className="mc-iconbtn w-7 h-7"><Eye className="w-3.5 h-3.5" /></button>
+              {/* Kopiert-Bestaetigung behaelt bewusst die Erfolgsfarbe, wie "gespeichert". */}
+              <button onClick={() => copyLink(t.token)} title="Link kopieren" aria-label="Link kopieren" className="mc-iconbtn w-7 h-7">{copiedTok === t.token ? <Check className="w-3.5 h-3.5" style={{ color: "var(--mc-st-done)" }} /> : <Copy className="w-3.5 h-3.5" />}</button>
+              <button onClick={() => revoke(t.token)} title="Löschen" aria-label="Löschen" className="mc-iconbtn w-7 h-7"><Trash2 className="w-3.5 h-3.5" /></button>
             </div>
           </div>
         ))}
