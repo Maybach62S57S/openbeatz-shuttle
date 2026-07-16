@@ -2191,15 +2191,24 @@ faelschlich "nicht erreichbar". `rg.mjs` macht das jetzt richtig.
   Check schlaegt an. esbuild ist weiterhin kein Beweis.
 - `rg.mjs`: transitiver Rendergraph, inkl. Konstanten.
 
-## OFFEN, bewusst nicht angefasst (ausserhalb des Pakets)
+## `RideHistory`: NACHGEZOGEN (Jordan hat es freigegeben, 16.07.)
 
-**`RideHistory` (4142) ist komplett Classic** (12 Zeilen Classic-Klassen, 0 MC),
-haengt nur an `RideForm` (eine Aufrufstelle, 4120), nur von `MissionControl`
-erreichbar. **Sie ist beim Bearbeiten JEDER bestehenden Fahrt sichtbar**, denn
-`logRide(nr, "created", ...)` legt beim Anlegen einen Log-Eintrag an, und die
-Bedingung ist `log.length > 0`. Damit sitzt ein Classic-Block unten im neuen
-MC-Formular. Klein (~40 Zeilen), risikoarm (nur von RideForm erreichbar).
-**Jordans Entscheidung, gehoert sauber in 27d oder einen Nachschlag zu 27a.**
+War die letzte Classic-Insel im neuen Formular und bei **jeder** bestehenden
+Fahrt sichtbar (`logRide(nr, "created", ...)` -> `log.length > 0` ist immer
+wahr). Fest auf MC, kein Schalter: nur von `RideForm` erreichbar, eine einzige
+Aufrufstelle. Issue-Zustaende nutzen jetzt `mc-badge--problem/assigned/done`.
+
+**Merke fuer 27b/c/d:** der Render-Test deckte hier nur den ZUGEKLAPPTEN
+Zustand ab, weil `open` auf `false` startet. Der aufgeklappte Zweig war per
+Render-Test unsichtbar und ist per Quelltext-Check belegt (0 Classic-Farbklassen
+im Block). **Bei allem, was hinter einem Toggle/Tab sitzt, ist der Render-Test
+allein kein Beweis.**
+
+## OFFEN (Inhalt, nicht Design, ausserhalb jedes Design-Pakets)
+
+`RideHistory` zeigt in der Log-Zeile **`e.by` roh** (`"dispo:1"`) statt ueber
+`byLabel(setup, e.by)` wie sonst ueberall in der App. Braucht `setup` als Prop,
+also eine Signatur-Aenderung -> eigenes Thema, nach dem Festival.
 
 ## Restliche neun Komponenten (27b/c/d) unveraendert
 
@@ -2211,8 +2220,11 @@ Schalter ist da, `mc` muss nur gesetzt und `inp` durch `mcInp` ersetzt werden.
 ## Testfaelle (Leitstelle, Desktop, MC-Oberflaeche)
 
 1. [ ] Neue Fahrt anlegen: alle Felder lesbar, Speichern legt sie an.
-2. [ ] Bestehende Fahrt bearbeiten: Aenderung kommt an. **Der Historien-Block
-       unten ist noch Classic, das ist bekannt (siehe oben).**
+2. [ ] Bestehende Fahrt bearbeiten: Aenderung kommt an.
+2b. [ ] **"Verlauf & Meldungen" AUFKLAPPEN.** Der Render-Test hat den
+       aufgeklappten Zustand nie gesehen, das muss ein Mensch anschauen.
+       Eine Fahrt mit gemeldetem Problem nehmen: offen = rot, in Arbeit =
+       orange, erledigt = gruen.
 3. [ ] Fahrt mit Flugnummer: der Flug-Block ist blau statt sky, "Flugstatus
        aktualisieren" laeuft, Abklingzeit-Text erscheint.
 4. [ ] "Von"/"Nach" auf "Anderer Ort" -> zweites Feld sieht aus wie die anderen.
