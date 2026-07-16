@@ -3306,3 +3306,175 @@ Werte LIVE gegen `MissionStyles`, statt sie zu wiederholen.
 3. `MissionControl` referenziert `flightStyle` direkt (gemessen). Ausserhalb
    dieses Auftrags, nicht angefasst. Vor der naechsten Flug-Session kurz
    ansehen, ob dort noch eine Classic-Farbe am Flugstatus haengt.
+
+---
+
+# Session 27b (16.07.2026): SettingsTab auf MC-Design, Scheibe 1a + 1b
+
+Branch `fix/session-27b-settings`, zwei Commits, gepusht. Nach Jordans OK
+FF-Merge auf main. Datei 9031 -> 9074 Zeilen.
+
+## Schritt 0: Stand gemessen, nicht geglaubt
+
+Der Opener stimmte diesmal exakt. Kein Branch war ahead von main (alle 17
+Remote-Branches 0 ahead), `cb2b33c` lag in der Historie, Datei bei 9031 Zeilen,
+esbuild gruen, rendertest auf allen fuenf Sollwerten. main-Spitze war `d38d29e`
+(Doku-Commit).
+
+## Erreichbarkeit NEU gemessen (nicht der Tabelle im Opener geglaubt)
+
+`rg.mjs` erweitert: Zielliste um die acht 27b-Bausteine, plus ein neuer Modus,
+der pro Ziel die transitiv erreichbaren TABU-Kinder auswirft
+(`node rg.mjs <datei> SettingsTab DriverPhones ...`).
+
+Ergebnis: alle acht (SettingsTab, DriverPhones, DispatcherUsers,
+AccessPinsSection, GuestLinksSection, PushSettingsSection, AuditLogSection,
+ReportSection) sind **nur von MissionControl** erreichbar, keiner haengt am
+Fahrer-, Stage- oder Gast-Pfad. Tabu-Kinder mit Design-Bezug: genau `inp` und
+`Field`, beide wie vorgesehen ueber `mcInp` bzw. `<Field mc>` geloest. Der Rest
+im Tabu-Baum ist reine Logik (fmtDate, setRideStatus, sortMin, logRide, travel)
+und lucide-Icons.
+
+## Was gebaut wurde
+
+**Scheibe 1a (Commit `a4fc182`): SettingsTab-Rahmen.**
+- 13 Panel-Huellen `bg-stone-900/border-stone-800/rounded-xl` -> `.mc-panel`
+- alle h3+p-Koepfe auf die Basiskomponente `SectionHeader` (icon+title+subtitle).
+  Bewusst NICHT `MissionPanel` mit Kopfzeile: dann haetten die sieben
+  Unterbausteine ihren Titel als Prop nach aussen geben muessen, das waere eine
+  Prop-Aenderung statt reinem Design. So haben alle 13 Panels denselben Kopf.
+- `inp` -> `mcInp`, Matrix-Felder auf `.mc-input`, Buttons auf
+  `.mc-btn-primary` / `.mc-btn-quiet` / `.mc-btn-danger`
+- X-Knopf bei den Festival-Tagen auf `.mc-iconbtn`, dabei `title`/`aria-label`
+  ergaenzt (fehlte komplett, reines Attribut, kein Handler)
+
+**Scheibe 1b (Commit `9cecaa2`): die vier kleinen.** DriverPhones,
+DispatcherUsers, AccessPinsSection, PushSettingsSection. Gleiches Muster,
+plus: "gespeichert" emerald -> `--mc-st-done`, Fehlerzeile red ->
+`--mc-st-problem`, Warnzeile amber -> `--mc-st-assigned`.
+
+**MissionStyles, drei NEUE Klassen. Rein additiv, per `git diff` belegt: keine
+einzige bestehende Zeile geaendert, also trifft es keinen anderen Baustein.**
+- `.mc-note` / `.mc-note--warn` / `.mc-note--error`: Hinweisboxen der
+  Import-Zusammenfassung. **BEWUSST NICHT `--mc-st-*-soft`** (30 Prozent, ist
+  Badge-Fuellung und flaechig zu laut, genau der Rueckbau aus 27a-3 am
+  Flug-Block). Hier 12 Prozent Flaeche, 28 Prozent Rahmen.
+- `.mc-btn-danger`: "Alle Fahrten loeschen", gleiche Zurueckhaltung.
+
+**`ExportIcon` (neu):** duenner Wrapper um `Upload` mit `rotate-180`.
+`SectionHeader` rendert das Icon selbst und reicht KEINE Klasse durch, exakt
+dieselbe Grenze wie `IconButton` in FlightTab 27e. Ohne den Wrapper waere
+`<Upload className="rotate-180" />` dort nie angekommen.
+
+**Van/Car-Badges auf die 27e-Farbregel gezogen** (DriverPhones Z. 4476 und
+"Fahrer & Fahrzeuge" Z. 7564): vorher Van = orange-500/20, also die
+MARKENfarbe fuer einen Fahrzeugtyp. Jetzt Van = Amber, Car = Blau, identisch
+zu AssignModal Z. 3827. Das war ein echter Regelbruch im Bestand.
+
+## Belege
+
+- `pruefe.mjs`: GEAENDERT **genau** DriverPhones, DispatcherUsers,
+  AccessPinsSection, PushSettingsSection, SettingsTab, MissionStyles. NEU:
+  ExportIcon. ENTFERNT: keine. **284 von 290 Bausteinen byte-identisch**,
+  darunter DriverApp, StageApp, GuestApp, IssueModal, StageIssueModal,
+  GuestIssueModal, `inp`, `Field`, `LocSelect`.
+- `rendertest.mjs`: alle fuenf Sollwerte unveraendert (25053 / 2452 / 2413 /
+  2895 / 101).
+- **`smoke27b-settings.mjs` (neu)**, Muster von smoke27b/27e. Wegwerf-Kopie mit
+  geseedeten `wb`/`sheet`/`imp`/`importing`. 11 Toggle-Zustaende x 2 Laeufe:
+  Lauf A rendert SettingsTab echt inkl. der noch nicht umgebauten
+  Unterbausteine (0 Crashes), Lauf B klammert die sieben Unterbausteine per
+  Platzhalter aus und misst damit **genau den Rahmen: 0 Classic-Reste**.
+  Abgedeckt: Startzustand, ein Blatt, mehrere Blaetter, Vorschau normal,
+  Duplikate, Warnbox noName, Warnbox offDates, Fehlerbox, >8 Fahrten,
+  "Importiere…", alles gleichzeitig.
+- **`smoke27b-sections.mjs` (neu)**: 15 Zustaende ueber die vier kleinen mit
+  geseedetem `saved`/`saveError` (Grundzustand, gespeichert, Speicherfehler,
+  Warnhinweis kaputte Nummer, Warnung+Fehler gleichzeitig, leere Nutzerliste,
+  Push-Key gesetzt/leer). 0 Fehler, 0 Classic-Reste.
+- `var(--mc-*)`-Check: keine undefinierte Variable, alle dynamischen aufgeloest.
+- `kontrast.mjs` unveraendert **19 Kombis, 0 Fehler**. Die drei neuen Kombis
+  einzeln nachgerechnet (kontrast.mjs kennt sie nicht):
+  `.mc-note--warn` **7.30**, `.mc-note--error` **5.36**, `.mc-btn-danger`
+  **5.36** (Hover 4.53). Alle ueber AA.
+- esbuild gruen, keine doppelten Funktionsnamen, `git diff --patience`.
+
+## Regressionsrisiken
+
+Gering, aber nicht null:
+1. **`SectionHeader` rendert `<h2>`, vorher stand dort `<h3>`.** Rein
+   semantisch, optisch identisch. Kein Skript prueft das.
+2. **Der "Verwerfen"-Knopf im Import hat jetzt eine Flaeche** (`.mc-btn-quiet`
+   statt nacktem `text-stone-400`). Bewusst: genau dafuer wurde die Klasse in
+   27b-2 gebaut. Er ist damit sichtbarer als vorher.
+3. **Der X-Knopf bei den Festival-Tagen hat keinen roten Hover mehr**
+   (`.mc-iconbtn` faerbt neutral). Das Loesch-Signal steckt jetzt nur noch im
+   Icon. Bewusst, weil `.mc-iconbtn` die Konvention ist. Wenn es dir zu leise
+   ist: sag Bescheid, das ist eine Zeile.
+4. Der Import-Pfad selbst (`parseSheet`/`doImport`/`rideSig`) ist byte-identisch,
+   aber die Vorschau wurde nur simuliert gerendert, nicht mit echtem Excel.
+
+## Manuelle Testfaelle (Leitstelle, Desktop, Mission Control)
+
+1. Einstellungen oeffnen -> alle 13 Bloecke im dunklen MC-Look, jeder mit
+   gleichem Kopf (Icon + Titel + grauer Untertitel). Keine braun/stone-Kachel.
+2. Echte Excel-Pickup-Liste waehlen -> Vorschau erscheint. Zahlen (neue
+   Fahrten / Tage / Fahrer zugeordnet) muessen exakt wie vorher stimmen.
+3. Eine Datei mit einem Datum ausserhalb der Festivaltage -> **amber Hinweisbox**
+   erscheint, ist gut lesbar und **nicht schreiend**. Genau hier bitte
+   draufschauen, das ist die -soft-Falle aus 27a-3.
+4. Eine Datei mit einer Zeile ohne Datum -> rote Fehlerbox, gleiche Ruhe.
+5. Importieren doppelt klicken -> Knopf sperrt, Text "Importiere…", nur EIN
+   Import landet.
+6. "Verwerfen" -> Vorschau weg.
+7. Festival-Tage: Datum aendern, Tag ueber X entfernen, unten neuen Tag
+   hinzufuegen -> Feld leert sich wieder. **Kalender-Knopf sieht hell aus, das
+   ist der bekannte `color-scheme`-Punkt, kein neuer Fehler.**
+8. Fahrzeit-Matrix: Wert eintippen, wegklicken -> gespeichert, Feld monospace.
+9. Fahrer & Fahrzeuge: **Van-Badges amber, Car-Badges blau**, nicht orange.
+10. Fahrer-Telefonnummern: Nummer aendern -> "Speichern" wird aktiv -> gruenes
+    "gespeichert". Bei einem Fahrer Buchstaben eintippen -> amber Warnzeile,
+    Speichern geht trotzdem.
+11. Leitstellen-Nutzer: "Person hinzufuegen" -> Prompt -> Person erscheint.
+12. Zugangs-PINs + VAPID-Key: Feldbeschriftungen grau, Felder im MC-Look.
+13. "Alle Fahrten loeschen" -> Rueckfrage kommt, Knopf ist rot aber ruhig.
+14. **Gegenprobe, dass nichts geleakt ist:** Fahrer-App, Stage-App und
+    Gast-Link einmal oeffnen -> unveraendert im alten Look. Problem melden in
+    allen drei -> unveraendert.
+
+## Offen fuer die naechsten Scheiben
+
+- **Scheibe 2: GuestLinksSection** (Z. 4578, 125 Zeilen, der dickste Brocken).
+  Bewusst NICHT mehr in Session 27b gebaut, der Chat war voll. Toggle-Zustaende,
+  die ein Render-Test nicht sieht und die geseedet werden muessen: Link erzeugen,
+  Link kopieren (`copyText`), Vorschau, `coordPhone`-Warnung
+  (`phoneLooksInvalid`), `hasSupabase` an/aus, leere Tokenliste.
+- **Scheibe 3: AuditLogSection + ReportSection** (Z. 4751 und 5983, zusammen
+  108 Zeilen). Toggle: Tagesfilter, Log auf/zu, leerer Tag.
+- Danach ist `smoke27b-settings.mjs` Lauf A automatisch bei 0 Classic-Resten.
+  **Der Rest-Zaehler in Lauf A ist der Fortschrittsbalken: 17 -> 14 nach
+  Scheibe 1b -> muss am Ende 0 sein.**
+
+## Weitere gefundene Punkte fuer spaetere Sessions (NICHT heimlich fixen)
+
+4. **Van/Car-Badges haben durch die 27e-Farbregel WENIGER Kontrast als vorher.**
+   Gemessen: alt Van 8.96 / Car 9.09 (orange-300 bzw. sky-300 auf 20 Prozent
+   ueber stone-950). Neu Van **5.08** / Car **3.84** (Statusfarbe auf
+   `-soft` = 30 Prozent). Car liegt damit unter AA, bei `text-[10px]`.
+   **Kein Fehler nach der Skript-Regel** (`kontrast.mjs` fuehrt
+   `mc-badge--new` mit 3.61 als ok, Badges laufen auf der AA-large-Schwelle)
+   und **kein Alleingang von mir**: die Kombination steckt seit 27e identisch
+   in AssignModal Z. 3827. Aber der Zahlenwert sinkt an dieser Stelle klar, und
+   10px ist klein. Nachgerechnet: eine Absenkung der Badge-Fuellung von 30 auf
+   16 Prozent wuerde Van auf 7.15 und Car auf **4.93** heben, also beide ueber
+   AA. Das traefe `.mc-badge` global (Board, Rueckfahrten, Timeline) und ist
+   deshalb eine eigene Entscheidung, keine Nebensache.
+5. **`PROJEKT-ANWEISUNGEN.md` ist hoffnungslos veraltet** und fuehrt jede neue
+   Session in die Irre: sie behauptet Stand 15.07., Branch
+   `feature/mission-control-beta`, 10638 Zeilen, "Classic bleibt byte-genau
+   unveraendert" und "Mission Control NICHT auf main". Alles falsch seit
+   Session 19 bis 24. Da jeder Opener mit "Erst PROJEKT-ANWEISUNGEN.md lesen"
+   anfaengt, ist das eine echte Falle. In dieser Session nur ein Warnblock
+   oben drauf gesetzt (Verweis auf diese Datei), der Rest bewusst nicht
+   angefasst, weil ausserhalb des Pakets. Eine kleine eigene Doku-Session
+   waere hier gut investiert.

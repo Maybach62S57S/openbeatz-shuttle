@@ -1,5 +1,32 @@
 # Open Beatz Shuttle-Leitstelle – Projekt-Kontext
 
+> ## ⚠ ACHTUNG, DIESES DOKUMENT IST VERALTET (Stand 16.07.2026)
+>
+> Alles unterhalb dieser Box beschreibt den Stand vom 15.07. und ist in den
+> zentralen Punkten **falsch**. Nicht darauf verlassen. Konkret ueberholt:
+>
+> - **Mission Control ist NICHT mehr "Beta auf einem Branch neben Classic".**
+>   Es ist seit den Sessions 19 bis 24 die **einzige** Leitstellen-Oberflaeche
+>   und liegt auf `main`. **Classic wurde geloescht, nicht erhalten.**
+> - Damit hinfaellig: "Classic bleibt byte-genau unveraendert", der
+>   `uiMode`-Umschalter, "NICHT direkt auf main pushen", der ganze Abschnitt
+>   zu `feature/mission-control-beta`, die Zeilenzahl 10638 und jede
+>   Commit-Angabe.
+>
+> **Der verbindliche Stand steht in `UEBERGABE-Session-18.md`** (fortlaufend,
+> Session 27a bis 27e und 27b). Von dort aus arbeiten.
+>
+> Weiter gueltig sind aus diesem Dokument nur die zeitlosen Teile: die festen
+> Konventionen (Sprache, esbuild ist kein Beweis, Referenz-Gegencheck), die
+> `dyn_data`/RPC-Falle, die Datenschutz-Trennung `notes` vs. `guestNote`, das
+> PIN-Thema (vertagt, nicht von selbst ansprechen) und die Supabase-Stolperfallen.
+>
+> Diese Box wurde in Session 27b gesetzt, weil jeder Opener mit "Erst
+> PROJEKT-ANWEISUNGEN.md lesen" beginnt und das Dokument sonst jede neue
+> Session in die Irre fuehrt. Das Aufraeumen selbst waere ausserhalb des
+> Pakets gewesen und wartet auf eine eigene kleine Doku-Session.
+
+
 VIP-Shuttle-Dispositions-App für das Open Beatz Festival (Juli 2026, Herzogenaurach bei Nürnberg). Läuft produktiv auf Vercel + Supabase (nicht mehr nur Chat-Artifact-Stand). Jordan (Betreiber) organisiert die Fahrten für Artists/Manager mit 20 Fahrern.
 
 ## Mission Control Beta (Branch `feature/mission-control-beta`) — laufender Umbau, NICHT auf `main`
