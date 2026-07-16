@@ -2249,12 +2249,14 @@ Nach dem Klonen: git config (user.name/email), npm ci, Baseline-esbuild gruen:
 
 STAND: 27a ist fertig und gemergt, main = <HIER main NACH dem FF-Merge>,
 8924 Zeilen. Falls ich doch NICHT gemergt habe, sag es mir, dann arbeiten wir
-auf fix/session-27a-modals (= ebcd74b) weiter und du nimmst DEN als Basis.
+auf fix/session-27a-modals (= d4eace1) weiter und du nimmst DEN als Basis.
 Classic ist seit Session 19 bis 24 komplett raus, Mission Control ist die
 einzige Leitstellen-Oberflaeche.
 
 In 27a auf MC-Design gebracht: RideForm, AssignModal, WhatsAppModal,
 RideHistory. Dazu Modal und Field mit optionaler mc-Prop, neue Konstante mcInp.
+Danach noch: Markenorange zurueck (--mc-brand, .mc-btn-primary und Fokus sind
+jetzt orange), --mc-text-muted auf AA gehoben, Flug-Block entblaut.
 
 RUECKWEG: Tag stabil-vor-mc-design-2026-07-16 = Branch backup/vor-mc-design
 = 676b02b (das ist der Stand VOR allem Design). Sonst: Vercel -> altes
@@ -2265,7 +2267,7 @@ stabil-vor-design-2026-07-13 = 4d13e59.
 Danach UEBERGABE-Session-18.md lesen, KOMPLETT, vor allem die drei Abschnitte
 ganz unten: "SESSION 27a: DIE FALLE, DIE DEN UMBAU SPRENGT", "SESSION 27a:
 ERLEDIGT" und dieser Opener. Die Datei waechst nach UNTEN an, alles weiter
-oben ist aelter. Anker sind auf ebcd74b, per grep gegenpruefen.
+oben ist aelter. Anker sind auf d4eace1, per grep gegenpruefen.
 
 AUFTRAG 27d: TimelineView (6440), BoardMiniMap (6888), NoGpsSharingPanel
 (7106), DriverRow (3702) auf MC-Design. Zusammen ca. 176 Zeilen. Sitzen direkt
@@ -2283,7 +2285,25 @@ REGELN, aus 27a teuer gelernt:
   KEIN zweiter Fork daneben, wir haben sechs Sessions lang Forks rausgeworfen.
 - NUR className/Style. KEINE Handler, KEINE Feldlogik, KEINE Props ausser
   einem reinen Design-Schalter.
-- KEIN neues CSS in MissionStyles. Vorhandene Klassen wiederverwenden:
+- MEINE HAUPTSACHE: es soll am Ende richtig gut aussehen UND richtig gut
+  lesbar sein. Wenn dir unterwegs auffaellt, dass etwas schlecht lesbar oder
+  unruhig ist, sag es mir, auch wenn es nicht im Auftrag steht. Nicht heimlich
+  aendern, aber auch nicht verschweigen.
+- Farbbedeutungen, seit 27a festgelegt, bitte einhalten:
+    Orange (--mc-brand)      = Marke, Hauptaktion, Fokus, beste Wahl
+    Amber  (--mc-st-assigned)= Status "zugeteilt" UND Warnungen ("knapp")
+    Blau   (--mc-st-new)     = Status "neu"
+    Rot    (--mc-st-problem) = Problem
+  Nicht mischen. In Classic hiess Orange in einer Liste vier Dinge, das war
+  das Problem.
+- Weiche Fuellungen (-soft) sind mit 30 Prozent Deckkraft SEHR laut, wenn man
+  sie flaechig einsetzt. Der Flug-Block hatte das und musste zurueckgebaut
+  werden. Fuer Badges gedacht, nicht fuer Panels.
+- MissionStyles darf angefasst werden, wenn es die RICHTIGE Stelle ist (eine
+  Regel statt fuenf verstreuter Hex-Codes). Aber: die Klassen sind geteilt,
+  .mc-btn-primary haengt auch an der Shell und der Timeline. Vorher messen,
+  wen es sonst noch trifft, und es mir SAGEN.
+- Sonst: vorhandene Klassen wiederverwenden statt neu bauen:
   .mc-panel, .mc-input, .mc-btn-primary, .mc-btn-assign, .mc-badge,
   .mc-eyebrow, .mc-iconbtn, .mc-modal-fade, .mc-ride-card, .mc-metric.
 - Kein inline background auf etwas mit .mc-ride-card: inline schlaegt Klasse
@@ -2306,6 +2326,11 @@ BELEGE, die ich sehen will. Die vier Skripte liegen im Repo, benutz die:
 - smoke.mjs: jeder umgebaute Pfad muss echt rendern und Classic-Farbreste 0
   zeigen. esbuild kompiliert durch undefinierte JSX-Referenzen DURCH.
 - rg.mjs: transitiver Rendergraph inkl. Konstanten.
+- kontrast.mjs: WCAG-Kontrast aller Tokens, liest live aus MissionStyles.
+  Stand heute bestehen ALLE zehn Textfarben AA (4.5). Wenn du eine Farbe
+  anfasst oder eine neue einfuehrst, muss das so bleiben. Skripte, die Werte
+  hartcodieren, luegen nach der naechsten Aenderung - kontrast.mjs hat genau
+  diesen Fehler gehabt und ist repariert.
 - Jede var(--mc-*) einzeln gegen MissionStyles. Eine Variable, die es nicht
   gibt, macht die ganze CSS-Regel ungueltig und esbuild meldet das NIE.
   Achtung: --mc-st-new-soft steht auf einer GETEILTEN Zeile, ein zeilenweiser
@@ -2346,3 +2371,84 @@ geloescht. Festival 23. bis 27.07.
 - `ChatPanel` (3579) nach Bedarf.
 - **Inhalt, nicht Design:** `RideHistory` zeigt `e.by` roh (`"dispo:1"`) statt
   ueber `byLabel(setup, e.by)`. Braucht `setup` als Prop. Nach dem Festival.
+
+---
+
+# SESSION 27a-2/3: Orange zurueck + Lesbarkeit (16.07., Jordans Korrektur)
+
+**Jordans Hauptsache, gilt ab jetzt fuer alles:** es soll am Ende **richtig gut
+aussehen und richtig gut lesbar** sein. Das schlaegt Paketgrenzen-Puristik.
+
+## Was passiert ist
+
+Nach 27a war die Leitstelle weiss/blau (Designsystem-Default). Jordan wollte
+sein Orange zurueck, auch bei "beste Wahl". Umgesetzt:
+
+- **Neue Tokens:** `--mc-brand` (#ea580c), `-soft`, `-hover`, `-on`.
+  **Bewusst ein anderer Ton als `--mc-st-assigned` (#f5a524).**
+- **Umgefaerbt wurde die REGEL, nicht die Aufrufstellen:** `.mc-btn-primary`,
+  `.mc-input:focus`, `--mc-focus`. Neu: `.mc-badge--brand`.
+- **Radius groesser als 27a, mit Absicht:** `.mc-btn-primary` haengt auch am
+  "Neue Fahrt" der Shell (8154, 8171) und am "Verschieben" der Timeline (6336),
+  `.mc-input` am Suchfeld des Boards. Die sind jetzt mit orange. **Ein eigenes
+  `.mc-btn-brand` nur fuer die Dialoge waere falsch gewesen:** weisser
+  "Neue Fahrt" vor orangem "Speichern" im Dialog dahinter sieht aus wie ein Bug.
+  Der Code dieser Komponenten ist unveraendert, nur die CSS-Regel.
+
+## Farbbedeutungen, ab jetzt verbindlich
+
+| Farbe | Token | Bedeutung |
+|---|---|---|
+| Orange | `--mc-brand` | Marke, Hauptaktion, Fokus, beste Wahl |
+| Amber | `--mc-st-assigned` | Status "zugeteilt" **und** Warnungen ("knapp") |
+| Blau | `--mc-st-new` | Status "neu" |
+| Rot | `--mc-st-problem` | Problem |
+
+"Beste Wahl" ist Orange, "knapp" bleibt Amber. **Zwei Toene, nicht einer** -
+sonst heisst Orange in einer Liste wieder vier Dinge (das war das
+Classic-Problem und der Grund, warum ich zuerst Blau vorgeschlagen hatte).
+
+## Lesbarkeit: der Befund, den keiner gesucht hat
+
+`--mc-text-muted` war **#616d7c = 3.47 Kontrast** auf Panel. **AA braucht 4.5.**
+Daran haengen **ueber 80 Textstellen**: Uhrzeiten, Log-Zeilen, Hinweise,
+Fahrzeit-Angabe. Also genau das Kleingedruckte fuer nachts um drei.
+
+Jetzt **#828d9c = 5.43**. Nicht #7c8797 nehmen, das ist exakt `--mc-st-idle`.
+**Alle zehn Textfarben bestehen jetzt AA.**
+
+`kontrast.mjs` rechnet das nach. **Es hatte die Werte erst hartcodiert und hat
+nach dem Fix weiter 3.47 gemeldet** - ein Pruefskript mit eingefrorenen Werten
+luegt nach der ersten Aenderung. Liest jetzt live aus `MissionStyles`,
+Gegenprobe: alte Datei -> "ZU WENIG", neue -> "ok".
+
+## Flug-Block entblaut
+
+Die Flaeche war `--mc-st-new-soft` (**30 Prozent Deckkraft**) plus voller blauer
+Rahmen. Hat lauter geschrien als der Speichern-Knopf. Jetzt `--mc-inset` /
+`--mc-border`, nur die Ueberschrift blau. **Merke: die `-soft`-Toene sind fuer
+Badges gedacht, flaechig auf einem Panel sind sie zu laut.**
+
+## Stand nach 27a komplett
+
+Geaendert: `Modal`, `Field`, `LocSelect`, `RideForm`, `RideHistory`,
+`AssignModal`, `WhatsAppModal`, `MissionStyles`. Neu: `mcInp`.
+Fahrer/Stage/Gast/Login zeichenidentisch ueber alle Commits.
+
+## Was noch aussteht (frisch gemessen auf d4eace1)
+
+| Paket | Komponenten | Zeilen | Classic-Treffer |
+|---|---|---|---|
+| **27d** | TimelineView 78, BoardMiniMap 46, NoGpsSharingPanel 27, DriverRow 25 | **176** | 27/13/10/15 |
+| ChatPanel | 105 | **105** | 34 |
+| 27c | FlightTab 162, MapTab 127, LiveGoogleMap 127 | **416** | 45/36/4 |
+| 27b | SettingsTab 301 | **301** | 86 |
+
+**998 Zeilen, 9 Komponenten, alle null MC-Tokens.**
+
+**Empfehlung:** 27d ist Pflicht (sitzt mitten in den MC-Seiten). ChatPanel und
+27c sind Zugabe. **SettingsTab nach dem Festival** - ein Tab, den Jordan einmal
+einrichtet und nie wieder anfasst, 301 Zeilen sind das vor dem Festival nicht
+wert. Ein Classic-SettingsTab liest sich als "noch nicht dran", nicht als
+"kaputt". **Halb umgebaut ist schlechter als beide Endzustaende** - das ist das
+eigentliche Risiko am Zeitplan.
