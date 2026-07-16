@@ -1453,8 +1453,19 @@ function Login({ setup, onLogin }) {
   );
 }
 const inp = "w-full bg-stone-900 border border-stone-800 rounded-lg px-3 py-2.5 text-stone-100 text-base sm:text-sm placeholder-stone-600 focus:outline-none focus:border-orange-500";
-function Field({ label, children }) {
-  return (<label className="block"><span className="text-stone-400 text-xs mb-1 block">{label}</span>{children}</label>);
+// MC-Pendant zu inp. inp haengt transitiv im Login UND in DriverApp/StageApp/
+// GuestApp (ueber IssueModal/StageIssueModal/GuestIssueModal) und ist deshalb
+// tabu. Statt inp umzubauen, nutzt die Leitstelle die bereits vorhandene
+// Designsystem-Klasse .mc-input (Flaeche, Rahmen, Farbe, Radius, Fokus-Ring);
+// hier stehen nur noch Breite, Innenabstand und Schriftgroesse. Das eigentliche
+// Design liegt damit in MissionStyles, nicht in dieser Konstante.
+// Wirkt NUR unter .mc-scope.
+const mcInp = "mc-input w-full px-3 py-2.5 text-base sm:text-sm";
+// Session 27a: mc ist ein reiner Design-Schalter, wie bei Modal. Ohne mc rendert
+// Field zeichenidentisch wie vor 27a (Login, IssueModal, StageIssueModal,
+// GuestIssueModal, SettingsTab setzen ihn NICHT).
+function Field({ label, children, mc }) {
+  return (<label className="block"><span className={mc ? "text-xs mb-1 block" : "text-stone-400 text-xs mb-1 block"} style={mc ? { color: "var(--mc-text-secondary)" } : undefined}>{label}</span>{children}</label>);
 }
 
 /* =========================================================================
@@ -3996,53 +4007,53 @@ function RideForm({ setup, ride, onClose, onSave, onDelete }) {
   };
 
   return (
-    <Modal onClose={onClose} title={isNew ? "Neue Fahrt" : "Fahrt bearbeiten"} wide>
+    <Modal onClose={onClose} title={isNew ? "Neue Fahrt" : "Fahrt bearbeiten"} wide mc>
       <div className="grid grid-cols-2 gap-3">
-        <Field label="Datum"><input type="date" className={inp} value={f.date} onChange={(e) => set("date", e.target.value)} /></Field>
-        <Field label="Uhrzeit"><input type="time" className={inp} value={f.time} onChange={(e) => set("time", e.target.value)} /></Field>
+        <Field label="Datum" mc><input type="date" className={mcInp} value={f.date} onChange={(e) => set("date", e.target.value)} /></Field>
+        <Field label="Uhrzeit" mc><input type="time" className={mcInp} value={f.time} onChange={(e) => set("time", e.target.value)} /></Field>
         <LocSelect setup={setup} label="Von" value={f.fromId} custom={f.fromCustom}
           onId={(v) => set("fromId", v)} onCustom={(v) => set("fromCustom", v)} />
         <LocSelect setup={setup} label="Nach" value={f.toId} custom={f.toCustom}
           onId={(v) => set("toId", v)} onCustom={(v) => set("toCustom", v)} />
         {toIsFestival && (
-          <Field label="Abladezone">
-            <select className={inp} value={f.zone} onChange={(e) => set("zone", e.target.value)}>
+          <Field label="Abladezone" mc>
+            <select className={mcInp} value={f.zone} onChange={(e) => set("zone", e.target.value)}>
               <option value="">– wählen –</option>
               {setup.zones.map((z) => <option key={z} value={z}>{z}</option>)}
             </select>
           </Field>
         )}
-        <Field label="DJ / Artist"><input className={inp} value={f.djName} onChange={(e) => set("djName", e.target.value)} placeholder="z. B. Alok" /></Field>
-        <Field label="Personen"><input type="number" min="1" max="8" className={inp} value={f.passengerCount} onChange={(e) => set("passengerCount", e.target.value)} /></Field>
-        <Field label="Flugnummer"><input className={inp} value={f.flightNo} onChange={(e) => set("flightNo", e.target.value)} placeholder="z. B. KL1845" /></Field>
+        <Field label="DJ / Artist" mc><input className={mcInp} value={f.djName} onChange={(e) => set("djName", e.target.value)} placeholder="z. B. Alok" /></Field>
+        <Field label="Personen" mc><input type="number" min="1" max="8" className={mcInp} value={f.passengerCount} onChange={(e) => set("passengerCount", e.target.value)} /></Field>
+        <Field label="Flugnummer" mc><input className={mcInp} value={f.flightNo} onChange={(e) => set("flightNo", e.target.value)} placeholder="z. B. KL1845" /></Field>
         {(f.fromId === "airport" || f.flightNo) && (
-          <div className="col-span-2 rounded-xl border border-sky-500/25 bg-sky-500/5 p-3 mt-1">
-            <div className="text-xs text-sky-300 font-medium mb-2 flex items-center justify-between">
+          <div className="col-span-2 p-3 mt-1" style={{ background: "var(--mc-st-new-soft)", border: "1px solid var(--mc-st-new)", borderRadius: "var(--mc-r)" }}>
+            <div className="text-xs font-medium mb-2 flex items-center justify-between" style={{ color: "var(--mc-st-new)" }}>
               <span className="flex items-center gap-1.5"><Plane className="w-3.5 h-3.5" />Flug-Details</span>
-              {ride.manualOverride && <span className="text-[10px] bg-amber-500/20 text-amber-300 px-1.5 py-0.5 rounded">manuell überschrieben</span>}
+              {ride.manualOverride && <span className="mc-badge mc-badge--assigned text-[10px]">manuell überschrieben</span>}
             </div>
             <div className="grid grid-cols-2 gap-2.5">
-              <Field label="Airline"><input className={inp} value={f.airline} onChange={(e) => set("airline", e.target.value)} placeholder="z. B. KLM" /></Field>
-              <Field label="Terminal"><input className={inp} value={f.terminal} onChange={(e) => set("terminal", e.target.value)} placeholder="z. B. Terminal 1" /></Field>
-              <Field label="Geplante Ankunft"><input type="time" className={inp} value={f.scheduledArrival} onChange={(e) => set("scheduledArrival", e.target.value)} /></Field>
-              <Field label="Erwartete Ankunft"><input type="time" className={inp} value={f.estimatedArrival} onChange={(e) => set("estimatedArrival", e.target.value)} /></Field>
-              <Field label="Echte Ankunft"><input type="time" className={inp} value={f.actualArrival} onChange={(e) => set("actualArrival", e.target.value)} /></Field>
-              <Field label="Flugstatus">
-                <select className={inp} value={f.flightStatus} onChange={(e) => set("flightStatus", e.target.value)}>
+              <Field label="Airline" mc><input className={mcInp} value={f.airline} onChange={(e) => set("airline", e.target.value)} placeholder="z. B. KLM" /></Field>
+              <Field label="Terminal" mc><input className={mcInp} value={f.terminal} onChange={(e) => set("terminal", e.target.value)} placeholder="z. B. Terminal 1" /></Field>
+              <Field label="Geplante Ankunft" mc><input type="time" className={mcInp} value={f.scheduledArrival} onChange={(e) => set("scheduledArrival", e.target.value)} /></Field>
+              <Field label="Erwartete Ankunft" mc><input type="time" className={mcInp} value={f.estimatedArrival} onChange={(e) => set("estimatedArrival", e.target.value)} /></Field>
+              <Field label="Echte Ankunft" mc><input type="time" className={mcInp} value={f.actualArrival} onChange={(e) => set("actualArrival", e.target.value)} /></Field>
+              <Field label="Flugstatus" mc>
+                <select className={mcInp} value={f.flightStatus} onChange={(e) => set("flightStatus", e.target.value)}>
                   {FLIGHT_STATUS.map((s) => <option key={s.k} value={s.k}>{s.k === "" ? "– unbekannt –" : s.l}</option>)}
                 </select>
               </Field>
             </div>
             <div className="flex items-center gap-2 mt-2.5">
               <button type="button" onClick={() => fetchFlight(false)} disabled={flightBusy || !f.flightNo}
-                className="text-xs bg-sky-600 hover:bg-sky-500 disabled:opacity-40 text-white px-2.5 py-1.5 rounded-lg flex items-center gap-1.5">
+                className="mc-btn-primary text-xs disabled:opacity-40 px-2.5 py-1.5 flex items-center gap-1.5">
                 <RefreshCw className={`w-3.5 h-3.5 ${flightBusy ? "animate-spin" : ""}`} />Flugstatus aktualisieren
               </button>
               {flightMsg && (
-                <span className={`text-[11px] ${flightMsg.ok ? "text-emerald-400" : "text-amber-400"}`}>
+                <span className="text-[11px]" style={{ color: flightMsg.ok ? "var(--mc-st-done)" : "var(--mc-st-assigned)" }}>
                   {flightMsg.text}
                   {flightMsg.cooldown && (
-                    <> · <button type="button" onClick={() => fetchFlight(true)} className="underline hover:text-emerald-300">trotzdem abfragen</button></>
+                    <> · <button type="button" onClick={() => fetchFlight(true)} className="underline hover:opacity-80">trotzdem abfragen</button></>
                   )}
                 </span>
               )}
@@ -4050,11 +4061,12 @@ function RideForm({ setup, ride, onClose, onSave, onDelete }) {
           </div>
         )}
         <div className="col-span-2">
-          <Field label="Passagiere (Namen)"><input className={inp} value={f.passengers} onChange={(e) => set("passengers", e.target.value)} /></Field>
+          <Field label="Passagiere (Namen)" mc><input className={mcInp} value={f.passengers} onChange={(e) => set("passengers", e.target.value)} /></Field>
           {contacts.length > 0 && (
             <div className="mt-1.5 flex flex-wrap gap-1.5">
               {contacts.map((c, i) => (
-                <a key={i} href={`tel:${c.phone}`} className="inline-flex items-center gap-1.5 text-xs bg-emerald-500/10 border border-emerald-500/30 text-emerald-300 px-2 py-1 rounded-lg hover:bg-emerald-500/20">
+                <a key={i} href={`tel:${c.phone}`} className="inline-flex items-center gap-1.5 text-xs px-2 py-1 hover:opacity-80"
+                  style={{ background: "var(--mc-st-done-soft)", border: "1px solid var(--mc-st-done)", color: "var(--mc-st-done)", borderRadius: "var(--mc-r)" }}>
                   <Navigation className="w-3 h-3 rotate-90" />{c.name ? `${c.name}: ` : ""}{c.phone}
                 </a>
               ))}
@@ -4062,43 +4074,44 @@ function RideForm({ setup, ride, onClose, onSave, onDelete }) {
           )}
         </div>
         <div className="col-span-2">
-          <Field label="Treffpunkt"><input className={inp} value={f.meetingPoint} onChange={(e) => set("meetingPoint", e.target.value)} placeholder="z. B. Infront of the Hotel" /></Field>
+          <Field label="Treffpunkt" mc><input className={mcInp} value={f.meetingPoint} onChange={(e) => set("meetingPoint", e.target.value)} placeholder="z. B. Infront of the Hotel" /></Field>
         </div>
         <div className="col-span-2">
-          <Field label="Notiz (intern)"><input className={inp} value={f.notes} onChange={(e) => set("notes", e.target.value)} /></Field>
+          <Field label="Notiz (intern)" mc><input className={mcInp} value={f.notes} onChange={(e) => set("notes", e.target.value)} /></Field>
         </div>
         <div className="col-span-2">
-          <Field label="Hinweis für den Gast (Artist/Manager-Link)">
-            <input className={inp} value={f.guestNote} onChange={(e) => set("guestNote", e.target.value)} placeholder="z. B. Bitte Ausweis bereithalten" />
+          <Field label="Hinweis für den Gast (Artist/Manager-Link)" mc>
+            <input className={mcInp} value={f.guestNote} onChange={(e) => set("guestNote", e.target.value)} placeholder="z. B. Bitte Ausweis bereithalten" />
           </Field>
-          <p className="text-[11px] text-stone-600 mt-1">Getrennt von der internen Notiz oben — nur dieser Text erscheint im Gast-Link.</p>
+          <p className="text-[11px] mt-1" style={{ color: "var(--mc-text-muted)" }}>Getrennt von der internen Notiz oben — nur dieser Text erscheint im Gast-Link.</p>
         </div>
-        <label className="col-span-2 flex items-center gap-2 text-sm text-stone-300 mt-1">
-          <input type="checkbox" checked={f.onDemand} onChange={(e) => set("onDemand", e.target.checked)} className="accent-orange-500 w-4 h-4" />
+        <label className="col-span-2 flex items-center gap-2 text-sm mt-1" style={{ color: "var(--mc-text-secondary)" }}>
+          <input type="checkbox" checked={f.onDemand} onChange={(e) => set("onDemand", e.target.checked)} className="w-4 h-4" style={{ accentColor: "var(--mc-st-new)" }} />
           Rückfahrt / on demand (Zeit flexibel)
         </label>
       </div>
 
       {tooBig && (
-        <div className="mt-3 text-xs text-orange-300 flex items-center gap-2"><AlertTriangle className="w-3.5 h-3.5" />{pax} Personen passen in kein einzelnes Fahrzeug (V-Klasse max. 7) – ggf. auf zwei Fahrten aufteilen.</div>
+        <div className="mt-3 text-xs flex items-center gap-2" style={{ color: "var(--mc-st-assigned)" }}><AlertTriangle className="w-3.5 h-3.5" />{pax} Personen passen in kein einzelnes Fahrzeug (V-Klasse max. 7) – ggf. auf zwei Fahrten aufteilen.</div>
       )}
 
       {inputWarnings.map((w, i) => (
-        <div key={i} className="mt-3 text-xs text-orange-300 flex items-center gap-2"><AlertTriangle className="w-3.5 h-3.5 shrink-0" />{w}</div>
+        <div key={i} className="mt-3 text-xs flex items-center gap-2" style={{ color: "var(--mc-st-assigned)" }}><AlertTriangle className="w-3.5 h-3.5 shrink-0" />{w}</div>
       ))}
 
       <div className="mt-3">
         {durKnown ? (
-          <div className="text-xs text-stone-500 flex items-center gap-2">
-            <Route className="w-3.5 h-3.5" />Geschätzte Fahrzeit aus Matrix: <b className="text-stone-300">{fmtDur(dur.min)}</b> · {dur.km} km
+          <div className="text-xs flex items-center gap-2" style={{ color: "var(--mc-text-muted)" }}>
+            <Route className="w-3.5 h-3.5" />Geschätzte Fahrzeit aus Matrix: <b style={{ color: "var(--mc-text-secondary)" }}>{fmtDur(dur.min)}</b> · {dur.km} km
           </div>
         ) : (
           <div className="flex items-center gap-2 text-xs">
-            <AlertTriangle className="w-3.5 h-3.5 text-orange-400" />
-            <span className="text-orange-300">Fahrzeit für diese Strecke nicht hinterlegt – bitte manuell angeben:</span>
-            <input type="number" min="1" className="w-20 bg-stone-950 border border-stone-800 rounded px-2 py-1 text-center font-mono text-xs focus:outline-none focus:border-orange-500"
+            <AlertTriangle className="w-3.5 h-3.5" style={{ color: "var(--mc-st-assigned)" }} />
+            <span style={{ color: "var(--mc-st-assigned)" }}>Fahrzeit für diese Strecke nicht hinterlegt – bitte manuell angeben:</span>
+            <input type="number" min="1" className="mc-input w-20 px-2 py-1 text-center text-xs"
+              style={{ fontFamily: "var(--mc-font-mono)" }}
               value={manualDur} onChange={(e) => setManualDur(e.target.value)} placeholder="min" />
-            <span className="text-stone-500">min</span>
+            <span style={{ color: "var(--mc-text-muted)" }}>min</span>
           </div>
         )}
       </div>
@@ -4108,16 +4121,17 @@ function RideForm({ setup, ride, onClose, onSave, onDelete }) {
       )}
 
       {saveErr && (
-        <div className="mt-4 text-sm text-red-300 bg-red-500/10 border border-red-500/25 rounded-lg px-3 py-2 flex items-center justify-between gap-3">
+        <div className="mt-4 text-sm px-3 py-2 flex items-center justify-between gap-3"
+          style={{ color: "var(--mc-st-problem)", background: "var(--mc-st-problem-soft)", border: "1px solid var(--mc-st-problem)", borderRadius: "var(--mc-r)" }}>
           <span>{saveErr}</span>
-          <button onClick={save} disabled={saving || deleting} className="shrink-0 text-xs underline hover:text-red-200 disabled:opacity-40">Erneut versuchen</button>
+          <button onClick={save} disabled={saving || deleting} className="shrink-0 text-xs underline hover:opacity-80 disabled:opacity-40">Erneut versuchen</button>
         </div>
       )}
 
       <div className="flex items-center gap-2 mt-5">
-        <button onClick={save} disabled={saving || deleting} className="bg-orange-600 hover:bg-orange-500 disabled:opacity-50 text-white px-4 py-2.5 rounded-lg text-sm font-medium">{saving ? "Speichere…" : "Speichern"}</button>
-        <button onClick={onClose} disabled={saving || deleting} className="text-stone-400 hover:text-stone-200 disabled:opacity-40 px-4 py-2.5 text-sm">Abbrechen</button>
-        {onDelete && <button onClick={doDelete} disabled={saving || deleting} className="ml-auto text-red-400 hover:text-red-300 disabled:opacity-40 text-sm flex items-center gap-1"><Ban className="w-4 h-4" />{deleting ? "Storniere…" : "Stornieren"}</button>}
+        <button onClick={save} disabled={saving || deleting} className="mc-btn-primary disabled:opacity-50 px-4 py-2.5 text-sm">{saving ? "Speichere…" : "Speichern"}</button>
+        <button onClick={onClose} disabled={saving || deleting} className="hover:opacity-80 disabled:opacity-40 px-4 py-2.5 text-sm" style={{ color: "var(--mc-text-secondary)" }}>Abbrechen</button>
+        {onDelete && <button onClick={doDelete} disabled={saving || deleting} className="ml-auto hover:opacity-80 disabled:opacity-40 text-sm flex items-center gap-1" style={{ color: "var(--mc-st-problem)" }}><Ban className="w-4 h-4" />{deleting ? "Storniere…" : "Stornieren"}</button>}
       </div>
     </Modal>
   );
@@ -4164,14 +4178,17 @@ function RideHistory({ ride }) {
   );
 }
 
+// Nur von RideForm aus erreichbar (transitiv gemessen, Session 27a), deshalb
+// fest auf MC-Design statt mit Schalter. Kommt es je woanders hin, braucht es
+// hier dieselbe mc-Prop wie bei Field/Modal.
 function LocSelect({ setup, label, value, custom, onId, onCustom }) {
   return (
-    <Field label={label}>
-      <select className={inp} value={value} onChange={(e) => onId(e.target.value)}>
+    <Field label={label} mc>
+      <select className={mcInp} value={value} onChange={(e) => onId(e.target.value)}>
         {setup.locations.map((l) => <option key={l.id} value={l.id}>{l.short}</option>)}
         <option value="__custom">Anderer Ort…</option>
       </select>
-      {value === "__custom" && <input className={inp + " mt-1.5"} value={custom} onChange={(e) => onCustom(e.target.value)} placeholder="Ort eingeben" />}
+      {value === "__custom" && <input className={mcInp + " mt-1.5"} value={custom} onChange={(e) => onCustom(e.target.value)} placeholder="Ort eingeben" />}
     </Field>
   );
 }
