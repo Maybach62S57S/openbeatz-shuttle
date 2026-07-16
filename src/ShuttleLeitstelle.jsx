@@ -1938,6 +1938,25 @@ const FLIGHT_STATUS = [
   { k: "annulliert", l: "annulliert", cls: "bg-red-500/25 text-red-300" },
 ];
 const flightStyle = (k) => FLIGHT_STATUS.find((s) => s.k === k) || FLIGHT_STATUS[0];
+
+// Session 27e: MC-Farben zum Flugstatus. BEWUSST eine zweite Konstante daneben
+// statt eines mc-Schalters in flightStyle: flightStyle haengt auch am Fahrer-
+// und am Stage-Pfad (DriverApp direkt, StageApp ueber stageTrafficLight >
+// flightAlert) und bleibt deshalb byte-identisch. Dasselbe Muster wie mcInp
+// neben inp. Hier stehen NUR Farben, Labels und Reihenfolge kommen weiter aus
+// FLIGHT_STATUS.
+//
+// Farbbedeutung nach der 27a-Regel: „verspätet" ist eine WARNUNG (Amber), kein
+// Problem (Rot). Das deckt sich mit flightAlert(), das „verspätet" als level
+// „warn" fuehrt und ALERT_ROW dafuer schon immer den amberfarbenen Rand zieht.
+// Classic hatte das Feld rot: derselbe Zeilenblock zeigte links einen amber
+// Rand und daneben ein rotes Feld. Rot bleibt dem echten Problem (annulliert)
+// und der kritischen Lage („gelandet, kein Fahrer") vorbehalten.
+const MC_FLIGHT_TONE = { "": "idle", geplant: "new", verspätet: "assigned", gelandet: "done", annulliert: "problem" };
+const mcFlightStyle = (k) => {
+  const t = MC_FLIGHT_TONE[k] || "idle";
+  return { color: `var(--mc-st-${t})`, background: `var(--mc-st-${t}-soft)` };
+};
 // Fahrt ist „flugkritisch": Status verspätet/annulliert ODER echte Ankunft nach geplanter.
 function flightDelayed(r) {
   if (!r) return false;
@@ -1976,7 +1995,16 @@ function flightAlert(r) {
   if (!st) return { level: "info", label: "Flugstatus unbekannt" };
   return { level: "none", label: flightStyle(st).l };
 }
-const ALERT_ROW = { critical: "border-l-2 border-red-500", warn: "border-l-2 border-amber-500", info: "", none: "" };
+// Session 27e: aus den Tailwind-Klassen werden Style-Objekte, weil die MC-Karte
+// ihre Farben aus Tokens zieht. ALERT_ROW haengt nur an FlightTab (gemessen),
+// sonst nirgends. Randstaerke 3px statt 2px, damit es zum Rand der Fall-Karten
+// in MissionEmergencyTab passt.
+const ALERT_ROW = {
+  critical: { borderLeft: "3px solid var(--mc-st-problem)" },
+  warn: { borderLeft: "3px solid var(--mc-st-assigned)" },
+  info: undefined,
+  none: undefined,
+};
 
 // Kritischer Flugstatus alarmiert die Leitstelle nur bei Fahrten, die der
 // Shuttle wirklich vom Flughafen abholt (direkt zum Sheraton oder Festival).
@@ -5471,66 +5499,76 @@ function FlightTab({ setup, dyn, day, updateDyn, by, onErr, onEdit }) {
   const ln = (id, c) => setup.locations.find((l) => l.id === id)?.short || c || "—";
 
   return (
-    <div>
-      <div className="flex flex-wrap items-center gap-3 mb-3">
-        <h3 className="text-sm text-stone-400 flex items-center gap-2"><Plane className="w-4 h-4" />Flughafen-Pickups · {fmtDate(day)}</h3>
-        <button onClick={updateAll} disabled={busy === "all"} className="text-xs bg-sky-600 hover:bg-sky-500 disabled:opacity-40 text-white px-2.5 py-1.5 rounded-lg flex items-center gap-1.5">
+    <div className="mc-scope space-y-3">
+      <div className="flex flex-wrap items-center gap-3">
+        <h3 className="text-sm flex items-center gap-2" style={{ color: "var(--mc-text-secondary)" }}><Plane className="w-4 h-4" />Flughafen-Pickups · {fmtDate(day)}</h3>
+        <button onClick={updateAll} disabled={busy === "all"} className="mc-btn-primary text-xs px-2.5 py-1.5 flex items-center gap-1.5 disabled:opacity-40">
           <RefreshCw className={`w-3.5 h-3.5 ${busy === "all" ? "animate-spin" : ""}`} />Alle Flüge aktualisieren
         </button>
-        {note && note.id === "all" && <span className={`text-xs ${note.ok ? "text-emerald-400" : "text-amber-400"}`}>{note.text}</span>}
-        <span className="text-[11px] text-stone-600 ml-auto">Provider: {FLIGHT_PROVIDER} · Live-Abruf nur im Deployment; manuelle Pflege immer möglich.</span>
+        {note && note.id === "all" && <span className="text-xs" style={{ color: note.ok ? "var(--mc-st-done)" : "var(--mc-st-assigned)" }}>{note.text}</span>}
+        <span className="text-[11px] ml-auto" style={{ color: "var(--mc-text-muted)" }}>Provider: {FLIGHT_PROVIDER} · Live-Abruf nur im Deployment; manuelle Pflege immer möglich.</span>
       </div>
 
-      {rides.length === 0 && <div className="text-stone-500 text-sm py-10 text-center border border-dashed border-stone-800 rounded-xl">Keine Flughafen-Abholungen an diesem Tag.</div>}
+      {rides.length === 0 && (
+        <MissionPanel padded>
+          <EmptyState icon={Plane} title="Keine Flughafen-Abholungen an diesem Tag."
+            hint="Hier stehen nur Fahrten ab Flughafen oder mit hinterlegter Flugnummer." />
+        </MissionPanel>
+      )}
 
       <div className="space-y-1.5">
         {rides.map((r) => {
           const drv = setup.drivers.find((d) => d.id === r.assignedDriverId);
           const al = flightAlert(r);
-          const fs = flightStyle(r.flightStatus);
+          const alTone = al.level === "critical" ? "problem" : al.level === "warn" ? "assigned" : null;
           return (
-            <div key={r.id} className={`bg-stone-900 border border-stone-800 rounded-lg px-3 py-2.5 ${ALERT_ROW[al.level]}`}>
+            <div key={r.id} className="mc-ride-card px-3 py-2.5" style={ALERT_ROW[al.level]}>
               <div className="flex items-center flex-wrap gap-x-3 gap-y-1.5">
                 <div className="flex items-center gap-2 w-40 shrink-0">
-                  <Plane className="w-4 h-4 text-sky-400 shrink-0" />
+                  <Plane className="w-4 h-4 shrink-0" style={{ color: "var(--mc-st-new)" }} />
                   <div>
-                    <div className="text-sm font-mono text-stone-100">{r.flightNo || "—"}</div>
-                    <div className="text-[10px] text-stone-500">{r.airline || "Airline ?"}</div>
+                    <div className="text-sm" style={{ fontFamily: "var(--mc-font-mono)", color: "var(--mc-text)" }}>{r.flightNo || "—"}</div>
+                    <div className="text-[10px]" style={{ color: "var(--mc-text-muted)" }}>{r.airline || "Airline ?"}</div>
                   </div>
                 </div>
 
-                <div className="text-xs text-stone-400 w-24 shrink-0">
-                  <div>Plan: <span className="text-stone-200 font-mono">{r.scheduledArrival || "—"}</span></div>
-                  <div>Live: <span className={`font-mono ${al.level === "warn" || al.level === "critical" ? "text-red-300" : "text-stone-200"}`}>{r.actualArrival || r.estimatedArrival || "—"}</span></div>
+                <div className="text-xs w-24 shrink-0" style={{ color: "var(--mc-text-muted)" }}>
+                  <div>Plan: <span style={{ fontFamily: "var(--mc-font-mono)", color: "var(--mc-text-secondary)" }}>{r.scheduledArrival || "—"}</span></div>
+                  <div>Live: <span style={{ fontFamily: "var(--mc-font-mono)", color: alTone ? `var(--mc-st-${alTone})` : "var(--mc-text)", fontWeight: alTone ? 600 : 400 }}>{r.actualArrival || r.estimatedArrival || "—"}</span></div>
                 </div>
 
                 {/* schnelle Korrektur */}
                 <input type="time" value={r.actualArrival || ""} onChange={(e) => quickSet(r.id, { actualArrival: e.target.value })}
-                  title="Echte Ankunft" className="w-24 bg-stone-950 border border-stone-800 rounded px-2 py-1 text-xs font-mono text-stone-200 focus:outline-none focus:border-sky-500" />
+                  title="Echte Ankunft" className="mc-input w-24 px-2 py-1 text-xs" style={{ fontFamily: "var(--mc-font-mono)" }} />
                 <input value={r.terminal || ""} onChange={(e) => quickSet(r.id, { terminal: e.target.value })} placeholder="Terminal"
-                  className="w-24 bg-stone-950 border border-stone-800 rounded px-2 py-1 text-xs text-stone-200 placeholder-stone-600 focus:outline-none focus:border-sky-500" />
+                  className="mc-input w-24 px-2 py-1 text-xs" />
                 <select value={r.flightStatus || ""} onChange={(e) => quickSet(r.id, { flightStatus: e.target.value })}
-                  className={`w-28 rounded px-2 py-1 text-xs border-0 ${fs.cls}`}>
-                  {FLIGHT_STATUS.map((s) => <option key={s.k} value={s.k} className="bg-stone-900 text-stone-200">{s.k === "" ? "unbekannt" : s.l}</option>)}
+                  className="w-28 px-2 py-1 text-xs" style={{ border: "none", borderRadius: "var(--mc-r-sm)", fontWeight: 500, ...mcFlightStyle(r.flightStatus) }}>
+                  {FLIGHT_STATUS.map((s) => <option key={s.k} value={s.k} style={{ background: "var(--mc-panel-raised)", color: "var(--mc-text)", fontWeight: 400 }}>{s.k === "" ? "unbekannt" : s.l}</option>)}
                 </select>
 
                 <div className="text-xs w-28 shrink-0">
-                  <div className="text-stone-300 truncate">{drv ? `${drv.vehicleType === "Van" ? "Van" : "Car"} · ${drv.firstName}` : <span className="text-orange-400">kein Fahrer</span>}</div>
-                  <div className="text-[10px] text-stone-500">Pickup {r.time}</div>
+                  <div className="truncate" style={{ color: "var(--mc-text-secondary)" }}>{drv ? `${drv.vehicleType === "Van" ? "Van" : "Car"} · ${drv.firstName}` : <span style={{ color: "var(--mc-st-problem)", fontWeight: 500 }}>kein Fahrer</span>}</div>
+                  <div className="text-[10px]" style={{ color: "var(--mc-text-muted)" }}>Pickup {r.time}</div>
                 </div>
 
                 <div className="ml-auto flex items-center gap-2 shrink-0">
-                  {r.manualOverride && <span className="text-[10px] bg-amber-500/20 text-amber-300 px-1.5 py-0.5 rounded">manuell</span>}
-                  {note && note.id === r.id && <span className={`text-[11px] ${note.ok ? "text-emerald-400" : "text-amber-400"}`}>{note.text}</span>}
-                  <button onClick={() => updateOne(r, note && note.id === r.id && note.cooldown)} disabled={busy === r.id} title="Flugstatus aktualisieren" className="text-stone-500 hover:text-sky-400 p-1"><RefreshCw className={`w-4 h-4 ${busy === r.id ? "animate-spin" : ""}`} /></button>
-                  {r.manualOverride && <button onClick={() => quickSet(r.id, { manualOverride: false })} title="Auto-Update wieder erlauben" className="text-[10px] text-stone-500 hover:text-stone-300">auto</button>}
-                  <button onClick={() => onEdit(r)} className="text-stone-600 hover:text-stone-300"><ChevronRight className="w-4 h-4" /></button>
+                  {r.manualOverride && <span className="mc-badge mc-badge--assigned" title="manuell gepflegt, Auto-Update übersprungen">manuell</span>}
+                  {note && note.id === r.id && <span className="text-[11px]" style={{ color: note.ok ? "var(--mc-st-done)" : "var(--mc-st-assigned)" }}>{note.text}</span>}
+                  {/* bewusst kein IconButton: der reicht keine Klasse ans Icon durch,
+                      das Rad soll beim Abfragen aber weiter drehen. Gleiche Klasse. */}
+                  <button onClick={() => updateOne(r, note && note.id === r.id && note.cooldown)} disabled={busy === r.id}
+                    title="Flugstatus aktualisieren" aria-label="Flugstatus aktualisieren" className="mc-iconbtn">
+                    <RefreshCw className={`w-[18px] h-[18px] ${busy === r.id ? "animate-spin" : ""}`} />
+                  </button>
+                  {r.manualOverride && <button onClick={() => quickSet(r.id, { manualOverride: false })} title="Auto-Update wieder erlauben" className="mc-btn-quiet text-[10px] px-2 py-1">auto</button>}
+                  <IconButton icon={ChevronRight} label="Fahrt öffnen" onClick={() => onEdit(r)} />
                 </div>
               </div>
               {al.level !== "none" && al.label && (
-                <div className={`text-[11px] mt-1 flex items-center gap-1.5 ${al.level === "critical" ? "text-red-300" : al.level === "warn" ? "text-amber-300" : "text-stone-500"}`}>
-                  {(al.level === "critical" || al.level === "warn") && <AlertTriangle className="w-3 h-3" />}{al.label}
-                  {r.lastFlightUpdate && <span className="text-stone-600 ml-2">· Stand {fmtClock(r.lastFlightUpdate)} ({r.flightUpdateSource})</span>}
+                <div className="text-[11px] mt-1 flex items-center gap-1.5" style={{ color: alTone ? `var(--mc-st-${alTone})` : "var(--mc-text-muted)" }}>
+                  {alTone && <AlertTriangle className="w-3 h-3" />}{al.label}
+                  {r.lastFlightUpdate && <span className="ml-2" style={{ color: "var(--mc-text-muted)" }}>· Stand {fmtClock(r.lastFlightUpdate)} ({r.flightUpdateSource})</span>}
                 </div>
               )}
             </div>
@@ -6977,6 +7015,14 @@ function driverInfoWindowHtml(driver, fix) {
 // (keine Ausgangsposition, GPS-Fix weit weg) werden hart gesetzt statt ueber die
 // halbe Karte zu fliegen.
 const GOOGLE_GLIDE_MS = 380;
+// Session 27e: Google zeichnet seine Marker auf ein Canvas und versteht KEINE
+// CSS-Variablen, deshalb hier echte Hex-Werte. Sie sind 1:1 die MC-Tokens, damit
+// die Google-Karte dieselbe Sprache spricht wie die Schema-Karte:
+//   Van = --mc-st-assigned, Car = --mc-st-new (dieselbe Zuordnung wie in
+//   AssignModal und DriverDetailsPanel), Ort = --mc-st-idle, Kontur = --mc-bg.
+// Wenn ein Token in MissionStyles geaendert wird, muss es hier mitgezogen werden,
+// automatisch geht das nicht.
+const GMAP_COLORS = { van: "#f5a524", car: "#4b90f6", place: "#7c8797", stroke: "#0a0c10" };
 const GOOGLE_GLIDE_MAX_JUMP_DEG = 0.02; // ~2 km; groesserer Sprung -> hart setzen
 function googleMarkerBigJump(from, to) {
   if (!from || !to) return true;
@@ -7035,7 +7081,7 @@ function LiveGoogleMap({ setup, dyn, glide = false }) {
       locs.forEach((l) => {
         new maps.Marker({
           position: { lat: l.lat, lng: l.lng }, map: mapRef.current, title: l.name,
-          icon: { path: maps.SymbolPath.CIRCLE, scale: 6, fillColor: "#78716c", fillOpacity: 1, strokeColor: "#1c1917", strokeWeight: 1.5 },
+          icon: { path: maps.SymbolPath.CIRCLE, scale: 6, fillColor: GMAP_COLORS.place, fillOpacity: 1, strokeColor: GMAP_COLORS.stroke, strokeWeight: 1.5 },
         });
       });
       setStatus("ready");
@@ -7060,7 +7106,7 @@ function LiveGoogleMap({ setup, dyn, glide = false }) {
       // kein eigenes Icon/SVG nötig) - sonst sind bei mehreren Fahrern auf
       // der Karte nur gleichfarbige Punkte zu unterscheiden.
       const initials = `${(d.firstName || "?")[0] || "?"}${(d.lastName || "")[0] || ""}`.toUpperCase();
-      const markerLabel = { text: initials, color: "#0c0a09", fontSize: "10px", fontWeight: "700" };
+      const markerLabel = { text: initials, color: GMAP_COLORS.stroke, fontSize: "10px", fontWeight: "700" };
       if (markersRef.current[d.id]) {
         const marker = markersRef.current[d.id];
         const p0 = marker.getPosition();
@@ -7075,7 +7121,7 @@ function LiveGoogleMap({ setup, dyn, glide = false }) {
       } else {
         const marker = new maps.Marker({
           position: pos, map: mapRef.current, title, label: markerLabel,
-          icon: { path: maps.SymbolPath.CIRCLE, scale: 11, fillColor: d.vehicleType === "Van" ? "#fb923c" : "#38bdf8", fillOpacity: 1, strokeColor: "#0c0a09", strokeWeight: 2 },
+          icon: { path: maps.SymbolPath.CIRCLE, scale: 11, fillColor: d.vehicleType === "Van" ? GMAP_COLORS.van : GMAP_COLORS.car, fillOpacity: 1, strokeColor: GMAP_COLORS.stroke, strokeWeight: 2 },
         });
         // Klick-Handler wird nur EINMAL beim Anlegen gesetzt, liest aber bei
         // jedem Klick aus driverDataRef.current -> zeigt immer die zuletzt
@@ -7098,16 +7144,23 @@ function LiveGoogleMap({ setup, dyn, glide = false }) {
   }, [status, setup.drivers, dyn.driverState]);
 
   if (status === "no-key") {
-    return <div className="p-4 text-xs text-stone-500">Kein Google-Maps-Key hinterlegt (Env-Variable <code>VITE_GOOGLE_MAPS_API_KEY</code>). Schema-Karte bleibt kostenlos nutzbar.</div>;
+    return (
+      <div className="mc-scope">
+        <EmptyState icon={MapIcon} title="Kein Google-Maps-Key hinterlegt"
+          hint={<>Env-Variable <code style={{ fontFamily: "var(--mc-font-mono)", color: "var(--mc-text-secondary)" }}>VITE_GOOGLE_MAPS_API_KEY</code> fehlt. Die Schema-Karte bleibt kostenlos nutzbar.</>} />
+      </div>
+    );
   }
   if (status === "error") {
-    return <div className="p-4 text-xs text-red-300">{errorMsg}</div>;
+    return <div className="mc-scope"><ErrorState title="Google Maps nicht geladen" message={errorMsg} /></div>;
   }
   return (
-    <div>
-      <div ref={containerRef} style={{ width: "100%", height: 420, borderRadius: 12, overflow: "hidden" }} />
-      {status === "loading" && <div className="text-xs text-stone-500 px-1 pt-1.5 flex items-center gap-1.5"><RefreshCw className="w-3 h-3 animate-spin" />Google Maps wird geladen…</div>}
-      <div className="text-[11px] text-stone-600 px-1 pt-1.5">Zeigt nur Fahrer mit aktueller GPS-Freigabe (jünger als {Math.round(GPS_MAX_AGE_MS / 60000)} Min).</div>
+    <div className="mc-scope">
+      {/* eigene Flaeche unter der Karte: bis Google gezeichnet hat, stand hier
+          sonst ein leeres Rechteck im Browser-Weiss statt im MC-Dunkel. */}
+      <div ref={containerRef} style={{ width: "100%", height: 420, borderRadius: "var(--mc-r-lg)", overflow: "hidden", background: "var(--mc-inset)", border: "1px solid var(--mc-border)" }} />
+      {status === "loading" && <div className="text-xs px-1 pt-1.5 flex items-center gap-1.5" style={{ color: "var(--mc-text-secondary)" }}><RefreshCw className="w-3 h-3 animate-spin" />Google Maps wird geladen…</div>}
+      <div className="text-[11px] px-1 pt-1.5" style={{ color: "var(--mc-text-muted)" }}>Zeigt nur Fahrer mit aktueller GPS-Freigabe (jünger als {Math.round(GPS_MAX_AGE_MS / 60000)} Min).</div>
     </div>
   );
 }
