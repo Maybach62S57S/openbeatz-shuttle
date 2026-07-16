@@ -3650,6 +3650,68 @@ Gering, aber nicht null:
 
 ## Offen fuer die naechste Scheibe
 
+### Der Restplan bis 0 (gemessen am 16.07., nach Scheibe 2)
+
+Vollstaendig gemessen mit Babel-Blockgrenzen + Erreichbarkeitsgraph. **Im
+Scope (nur von MissionControl erreichbar) sind noch 4 Bausteine:**
+
+| Baustein | Zeile | Zeilen | Classic | MC | Session |
+|---|---|---|---|---|---|
+| `MissionControl` (Shell) | 7909 | 620 | 31 | 122 | **28** |
+| `PresenceManager` | 5055 | 63 | 30 | 0 | 29 |
+| `MissionTimelinePage` | — | 426 | 6 | 75 | 29 |
+| `AuditLogSection` | 4753 | 54 | 20 | 0 | 30 |
+| `ReportSection` | 5985 | 54 | 32 | 0 | 30 |
+
+`GuestLinksSection` ist bei **0** (der eine Grep-Treffer ist ein Kommentar,
+der das Wort nennt, keine Klasse).
+
+Alles andere mit Classic-Resten ist TABU bzw. laut Jordans Regel nicht Thema:
+DriverApp 81, StageApp 37, GuestRideCard 31, StageTile 30, MessageComposer 22,
+MyMessages 18, GuestApp 12, Login 21, MissionControlFallbackScreen 11.
+
+**Reihenfolge ist bewusst nicht nach Wert sortiert: die Shell zuerst.** Sie ist
+das einzige verbleibende Stueck mit echtem Regressionsrisiko, und was dort
+schiefgeht, muss VOR dem Fahrertest am 18.07. auffallen. Session 30
+(SettingsTab) ist der Streichkandidat, nicht die Shell.
+
+- **Ready-to-paste Opener fuer Session 28 liegt in `OPENER-Session-28.md`.**
+- **Ready-to-paste Opener fuer Scheibe 3 (= Session 30) liegt in
+  `OPENER-Session-27b-3.md`.** Die Zahlen darin gelten weiter, die
+  Zeilennummern nicht, falls Session 28/29 vorher etwas einfuegen.
+
+### Zwei Befunde, die vorher niemand auf dem Zettel hatte
+
+1. **`PresenceManager` stand nie in der Zwoelfer-Planungstabelle** (Z. 343 ff
+   dieser Datei). Deshalb haben 27a bis 27e ihn nie angefasst. 63 Zeilen, 30
+   Classic-Treffer, **null MC**, komplett unberuehrt. Er haengt in
+   `MissionReturnsTab` (Z. 5326) unter "Anwesenheit verwalten" und ist damit
+   ein Baustein, den Jordan im Betrieb sieht. Luecke im Plan, kein Restposten.
+2. **Der Problem-Banner in der Shell ist der lauteste Rest im ganzen MC-Scope**
+   (Z. 8171 bis 8201, 28 der 31 Treffer). Solides Tailwind-Rot
+   (`bg-red-600`-Toast, `bg-red-500`-Badge, `red-500/10`-Banner) gegen die
+   MC-Konvention der Zurueckhaltung (`.mc-note--error`, 12 Prozent).
+   **Lesbarkeit ist NICHT das Problem**, gemessen: Banner-Text 11.54,
+   Zeilentext 8.33, Toast 4.83, Kritisch-Badge 3.76 (Badge, AA-large, nach der
+   Skript-Regel ok), MC-Konvention 5.34. Es geht um Lautstaerke, und das ist
+   Jordans Entscheidung, nicht die der Session. Im Opener 28 als solche
+   markiert, mit Wartepunkt vor dem Bauen.
+
+### Fallschirm: geklaert, bleibt tabu
+
+`MissionControlBoundary` (Z. 1253), `handleMcFallback` / `mcBlocked` /
+`mcFailReason` (Z. 767 ff) und `MissionControlFallbackScreen` sitzen im
+**App-Root**, nicht in `MissionControl` (ab 7909). Die 31 Treffer der Shell
+fassen ihn nicht an, Session 28 ist davon frei.
+
+Der urspruengliche Tabu-Grund ("landet noch auf Classic") ist seit Session 22
+weg. Der aktuelle Grund ist besser: der Fallschirm laeuft ausschliesslich dann,
+wenn schon alles andere abgestuerzt ist. Er ist damit das einzige Stueck Code,
+das man **nicht durch Hinschauen testen kann** — ein Fehler darin faellt im
+schlechtestmoeglichen Moment auf. Prioritaet 1 ist Stabilitaet, also bleibt er
+liegen. Folge: die Fehlerseite bleibt im Classic-Look, waehrend alles andere MC
+ist. Bewusst in Kauf genommen, sie erscheint nur nach einem Absturz.
+
 - **Scheibe 3: AuditLogSection (Z. 4753) + ReportSection (Z. 5985)**, zusammen
   108 Zeilen. Toggle: Tagesfilter, Log auf/zu, leerer Tag, leerer Suchtreffer.
   Danach ist `smoke27b-settings.mjs` Lauf A bei 0 Rest-Klassen und SettingsTab
