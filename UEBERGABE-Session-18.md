@@ -3484,8 +3484,37 @@ Gering, aber nicht null:
 # Session 27b Scheibe 2 (16.07.2026): GuestLinksSection auf MC-Design
 
 Branch `fix/session-27b-scheibe2`, abgezweigt von `fix/session-27b-settings`,
-ein Code-Commit `3dedb46`, gepusht. Nach Jordans OK FF-Merge.
+ein Code-Commit, gepusht. Nach Jordans OK FF-Merge.
 Datei 9074 -> 9076 Zeilen.
+
+> ## ⚠ NACHTRAG 16.07., der Branch wurde REBASET, die alten Hashes sind tot
+>
+> Diese Session lief **parallel** zu einer zweiten, die denselben Auftrag
+> gebaut hat (Jordan hatte im alten Chat versehentlich noch den Merge
+> angestossen, waehrend der neue Chat schon losgelegt hatte). Aufgefallen ist
+> es erst beim Push, den Git zu Recht abgelehnt hat. **Nichts wurde
+> ueberschrieben**, die zweite Fassung lag nur lokal und ist verworfen.
+>
+> Beide Fassungen waren fast deckungsgleich (gleiches Muster, gleicher
+> Farbregel-Befund beim Sicherheitshinweis). Diese hier ist die behaltene.
+> Sie wurde von der zweiten Session unabhaengig gegengeprueft und besteht
+> auch deren eigenen Smoke-Test (15 Zustaende, 0 Fehler).
+>
+> **Der urspruengliche FF-Merge ging nicht:** waehrenddessen war `main` auf
+> `3e58bba` weitergelaufen (zwei Doku-Commits an `OPENER-Session-27b-2.md`),
+> der Branch hing noch an `354000a`, Stand 2/2. Deshalb auf `origin/main`
+> rebaset. Beide Seiten fassten verschiedene Dateien an, der Rebase war
+> konfliktfrei und hat `src/ShuttleLeitstelle.jsx` **byte-identisch** gelassen
+> (Blob `3a78b09` vor und nach dem Rebase). Danach `main...branch` = 0/2,
+> FF-Merge wieder moeglich, esbuild/rendertest/pruefe/kontrast erneut gruen.
+>
+> **Alte Hashes `3dedb46` und `46c86f1` existieren nicht mehr.** Neuer Stand:
+> Code `baeb29a`, Doku `600aab2`. Der Vor-Rebase-Stand liegt zur Sicherheit
+> auf `backup/scheibe2-vor-rebase` (= `46c86f1`).
+>
+> **Lehre, unabhaengig vom Versehen:** Zeilenzahl und Blob-Hash sind die
+> verlaesslichen Messwerte, Commit-Hashes ueberleben einen Rebase nicht. Und
+> vor dem Push nochmal `git fetch` + messen, nicht nur zu Sessionbeginn.
 
 ## Schritt 0: Stand gemessen, nicht geglaubt
 
@@ -3625,6 +3654,17 @@ Gering, aber nicht null:
   108 Zeilen. Toggle: Tagesfilter, Log auf/zu, leerer Tag, leerer Suchtreffer.
   Danach ist `smoke27b-settings.mjs` Lauf A bei 0 Rest-Klassen und SettingsTab
   fertig. **Fortschrittsbalken: 17 -> 14 (Scheibe 1b) -> 12 (Scheibe 2) -> 0.**
+- **Ready-to-paste Opener liegt fertig in `OPENER-Session-27b-3.md`.** Zahlen
+  darin sind am 16.07. nach dem Rebase frisch gemessen: beide Bausteine je 54
+  Zeilen, beide nur von MissionControl erreichbar, und **keiner von beiden hat
+  ein Tabu-Kind mit Design-Bezug** (kein `inp`, kein `Field`, nur Logik). Damit
+  ist Scheibe 3 einfacher als Scheibe 2.
+- **Eine echte Entscheidung steckt in Scheibe 3, nicht nur Uebersetzung:**
+  `ReportSection` benutzt Orange fuer STATUS (KPI "Offen" / "Ohne Fahrer" /
+  "Offene Rueckf." als `text-orange-400`, Fahrer-Balken `bg-orange-500`).
+  Orange ist laut Regel die Marke. Derselbe Regelbruch wie bei den Van-Badges
+  und dem Sicherheitshinweis, aber diesmal ohne offensichtliche Zielfarbe.
+  Jordans Entscheidung, im Opener als solche markiert.
 
 ## Weitere gefundene Punkte fuer spaetere Sessions (NICHT heimlich fixen)
 
