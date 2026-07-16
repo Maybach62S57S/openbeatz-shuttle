@@ -1,0 +1,53 @@
+<!doctype html><html lang="de"><head><meta charset="utf-8"><link rel="stylesheet" href="style.css"></head><body>
+
+<div class="eyebrow">Open Beatz Festival 2026 &middot; Shuttle &middot; intern</div>
+<h1>Test-Checkliste Leitstelle</h1>
+<div class="rule"></div>
+<p class="sub">Nach dem Deploy von <b>main</b> &middot; Desktop + iPhone &middot; Stand 16.07.2026</p>
+
+<div class="lead">
+<b>Warum diese Liste wichtig ist:</b> auf main liegen inzwischen sieben Änderungsebenen übereinander (Session 21 bis 24c plus der komplette Design-Umbau), und <b>keine davon hat je ein Mensch am Gerät angesehen</b>. Teil 2 ist deshalb wichtiger als Teil 1. Wenn dort etwas auffällt, liegt die Ursache mit hoher Wahrscheinlichkeit in S21/S22/S23, nicht im Design.
+</div>
+
+<h2><span class="n">1</span> &nbsp;Neu aus dem Design-Umbau</h2>
+<ol class="checks">
+<li><span class="t">Chat-Knopf unten rechts</span><span class="d">Rund, orange, Hover reagiert. Auf dem iPhone NICHT von der unteren Leiste verdeckt. Bekannt und nicht gefixt: er überlappt die MC-Handy-Leiste (offen seit S24).</span></li>
+<li><span class="t">Chat öffnen</span><span class="d">Panel fadet weich ein (das ist neu, vorher war es sofort da). Text lesbar, Eingabefeld hat orangen Fokusring.</span></li>
+<li><span class="t">Chat mit Vorschlag</span><span class="d">Frage stellen &rarr; Vorschlag kommt &rarr; „Bestätigen" ist ORANGE (war grün), „Verwerfen" grau. Bestätigen &rarr; „Übernommen" in grün. Ist die Änderung wirklich in den Daten?</span></li>
+<li class="hot"><span class="t">Einmal alles ansehen und mir sagen was stört<span class="tag">deine Hauptsache</span></span><span class="d">Timeline, Karte, Fahrten-Dialog, Zuteilen-Dialog, Einstellungen. Ist irgendwas hässlich, unruhig oder schlecht lesbar? Das ist der Punkt, an dem du entscheidest, was noch passieren soll.</span></li>
+<li><span class="t">Orange User-Blase im Chat</span><span class="d">Kontrast 3.56, unter AA. Kein Regress, Classic hatte denselben Wert. Ist der Text für dich lesbar genug oder soll ich das ändern?</span></li>
+<li><span class="t">Hover-Lift in dichten Listen</span><span class="d">„Offene Fahrten" und „Unterwegs" haben seit 27c einen 1px-Lift beim Überfahren. In dichten Listen sichtbar. Stört es?</span></li>
+</ol>
+
+<h2><span class="n">2</span> &nbsp;Nie getestet: sieben Ebenen (S21 bis S24c + Design)</h2>
+<ol class="checks" start="7">
+<li><span class="t">Fahrer-Tab</span><span class="d">Fahrerliste mit Online/Offline und letztem Kontakt.</span></li>
+<li><span class="t">Chat / Nachrichten</span><span class="d">Fahrer-Nachricht kommt an, Antworten geht.</span></li>
+<li><span class="t">Rückfahrten</span><span class="d">Liste, Suche, „überfällig"-Markierung. Neue Rückfahrt anlegen, zuteilen, WhatsApp-Text erzeugen.</span></li>
+<li><span class="t">Probleme / Notfall</span><span class="d">Gemeldetes Problem da, Prioritäts-Filter geht, „Problem erledigt" landet im Protokoll. Notfall-Knopf im Kopf-Banner setzt den Tag (S24b-Fix).</span></li>
+<li><span class="t">Überblick</span><span class="d">Vier KPI-Kacheln da und klickbar. „Was brennt" plausibel. Bekannt: „Was brennt" ist tagesbezogen und darf vom Kopf-Banner abweichen, das ist kein Fehler.</span></li>
+<li class="hot"><span class="t">Timeline<span class="tag">höchstes Risiko</span></span><span class="d">Fahrt ziehen &rarr; Bestätigungs-Popover &rarr; „Verschieben" &rarr; Rückgängig-Hinweis erscheint 8 Sekunden. Escape und Klick daneben brechen ab. Jetzt-Linie an der richtigen Stelle. Hier trägt Inline-Style echte Positionslogik, deshalb genau hinsehen.</span></li>
+<li><span class="t">Karte: Schema-Ansicht</span><span class="d">Fahrer-Punkte auf der Schemakarte, Filter, Legende, Fahrer-Detail-Panel.</span></li>
+<li class="hot"><span class="t">Karte: Umschalten auf Google Maps<span class="tag">braucht key</span></span><span class="d">Ohne Google-Maps-API-Key in Vercel bleibt sie leer. LiveGoogleMap ist noch NICHT auf MC-Design, sieht also anders aus als der Rest. Das ist bekannt, kein Fehler.</span></li>
+<li><span class="t">iPhone: Mission Control</span><span class="d">Untere Leiste, alle Punkte plus „Mehr".</span></li>
+<li class="hot"><span class="t">Fahrer-Login selbst durchspielen<span class="tag">wichtig</span></span><span class="d">Annehmen bis abschließen. Das ist der Test für StatusPill, das seit S24 nur noch dort hängt.</span></li>
+<li><span class="t">Stage-Login</span><span class="d">Sieht nur, kann nur Problem melden. NICHTS anderes darf gehen.</span></li>
+<li><span class="t">Gast-Link öffnen</span><span class="d">Zeigt nur die Fahrten des einen Künstlernamens. Keine Fahrer-Telefonnummer, nur die zentrale Koordinations-Nummer.</span></li>
+<li><span class="t">Absturz-Test</span><span class="d">Fehlerseite mit „Neu laden" statt weißem Bildschirm (Fallschirm aus S22).</span></li>
+</ol>
+
+<h2><span class="n">3</span> &nbsp;Nur du kannst das, vor Samstag</h2>
+<ol class="checks" start="20">
+<li class="hot"><span class="t">Produktivdaten laden<span class="tag">blocker</span></span><span class="d">20 Fahrer, Fahrzeug-Matrix (6 V-Klasse, 14 SUV), echte Orte mit lat/lng, PINs.</span></li>
+<li class="hot"><span class="t">Google-Maps-API-Key in Vercel<span class="tag">blocker</span></span><span class="d">Sonst bleibt die Google-Karte leer.</span></li>
+<li><span class="t">Optional: weitere Keys</span><span class="d">AeroDataBox (Flug-Tracking), VAPID (echte Push), Anthropic (Chat-Assistent). Ohne die fällt jeweils sauber zurück, nichts bricht.</span></li>
+<li><span class="t">Fahrer-Liste verteilen</span><span class="d">Testliste-Fahrer.pdf an die 20 Fahrer, vor Samstag.</span></li>
+</ol>
+
+<div class="note">
+<b>Rückweg, falls etwas brennt:</b> Tag <b>stabil-vor-mc-design-2026-07-16</b> = 676b02b (Stand vor allem Design). Weiter zurück: stabil-classic-vorhanden-2026-07-15 = f7bb75d, stabil-vor-design-2026-07-13 = 4d13e59. Am schnellsten: Vercel &rarr; altes Deployment &rarr; Promote to Production.<br><br>
+<b>Zeitfenster:</b> bauen bis Freitagabend 17.07. &middot; Fahrer-Test Samstag 18.07. &middot; ab 21.07. nichts mehr löschen &middot; Festival 23. bis 27.07.
+</div>
+
+<div class="foot">Open Beatz Shuttle-Leitstelle &middot; Merg &amp; More &middot; Testliste Leitstelle (intern) &middot; Stand 16.07.2026 &middot; main = a4560d3</div>
+</body></html>

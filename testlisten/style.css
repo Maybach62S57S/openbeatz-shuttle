@@ -1,0 +1,24 @@
+@page { size: A4; margin: 16mm 15mm 14mm 15mm; }
+* { box-sizing: border-box; }
+body { font-family: "DejaVu Sans", "Helvetica Neue", Arial, sans-serif; color: #1c1917; font-size: 10.5pt; line-height: 1.45; margin: 0; }
+.eyebrow { font-size: 8pt; letter-spacing: 0.14em; text-transform: uppercase; color: #ea580c; font-weight: 700; }
+h1 { font-size: 19pt; margin: 2mm 0 1mm; letter-spacing: -0.01em; }
+.sub { color: #57534e; font-size: 9.5pt; margin: 0 0 5mm; }
+.rule { height: 3px; background: #ea580c; width: 46mm; margin: 0 0 5mm; border-radius: 2px; }
+h2 { font-size: 11.5pt; margin: 6mm 0 2mm; padding-bottom: 1.5mm; border-bottom: 1px solid #e7e5e4; page-break-after: avoid; }
+h2 .n { color: #ea580c; }
+.lead { background: #fff7ed; border-left: 3px solid #ea580c; padding: 3mm 4mm; margin: 0 0 5mm; font-size: 9.5pt; border-radius: 0 4px 4px 0; }
+.lead b { color: #9a3412; }
+ol.checks { list-style: none; counter-reset: c; padding: 0; margin: 0; }
+ol.checks > li { counter-increment: c; position: relative; padding: 2.2mm 0 2.2mm 17mm; border-bottom: 1px solid #f5f5f4; page-break-inside: avoid; }
+ol.checks > li::before { content: ""; position: absolute; left: 0; top: 2.6mm; width: 5mm; height: 5mm; border: 1.4px solid #a8a29e; border-radius: 2px; }
+ol.checks > li::after { content: counter(c); position: absolute; left: 7mm; top: 2.2mm; font-weight: 700; color: #ea580c; font-size: 10pt; width: 7mm; }
+li .t { font-weight: 600; }
+li .d { color: #57534e; font-size: 9pt; display: block; margin-top: 0.6mm; }
+li.hot::before { border-color: #ea580c; border-width: 2px; }
+li.hot { background: #fffbf7; }
+.tag { display: inline-block; background: #ea580c; color: #fff; font-size: 7pt; font-weight: 700; letter-spacing: 0.06em; padding: 0.4mm 1.8mm; border-radius: 3px; vertical-align: 2px; margin-left: 2mm; text-transform: uppercase; }
+.foot { margin-top: 7mm; padding-top: 3mm; border-top: 1px solid #e7e5e4; font-size: 8.5pt; color: #78716c; }
+.note { background: #fafaf9; border: 1px solid #e7e5e4; border-radius: 5px; padding: 3mm 4mm; font-size: 9pt; margin: 4mm 0 0; }
+.sign { margin-top: 6mm; font-size: 9pt; color: #57534e; }
+.sign span { display: inline-block; border-bottom: 1px solid #a8a29e; width: 55mm; margin-left: 3mm; }
