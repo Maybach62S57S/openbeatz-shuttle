@@ -17,9 +17,16 @@ const setup = {
 const dyn = { rides: [], driverState: {} };
 const ride = { id: "r1", time: "12:00", date: "2026-07-23", dayKey: "2026-07-23", djName: "Alok",
   fromId: "airport", toId: "festival", status: "planned", passengerCount: 2, issues: [], log: [], flightNo: "KL1845", zone: "Zone A" };
+// Fahrt MIT Verlauf: erzwingt den RideHistory-Pfad (sonst rendert er nie).
+const rideH = { ...ride, id: "r2",
+  log: [{ at: Date.now(), event: "created", by: "dispo:1", detail: "" }, { at: Date.now(), event: "time", by: "dispo:1", detail: "12:00 -> 13:00" }],
+  issues: [{ at: Date.now(), type: "Verspaetung", note: "Stau", state: "open" },
+           { at: Date.now(), type: "Gepaeck", note: "", state: "progress" },
+           { at: Date.now(), type: "Sonstiges", note: "", state: "done" }] };
 for (const [n, C, p] of [
   ["RideForm (bestehende Fahrt)", m.RideForm, { setup, ride, onClose(){}, onSave(){}, onDelete(){} }],
   ["RideForm (neue Fahrt)", m.RideForm, { setup, ride: { _new: true }, onClose(){}, onSave(){}, onDelete: null }],
+  ["RideForm (mit Verlauf)", m.RideForm, { setup, ride: rideH, onClose(){}, onSave(){}, onDelete(){} }],
   ["AssignModal", m.AssignModal, { setup, dyn, ride, onClose(){}, onAssign(){} }],
   ["WhatsAppModal", m.WhatsAppModal, { setup, ride, onClose(){}, onCopied(){} }],
 ]) {

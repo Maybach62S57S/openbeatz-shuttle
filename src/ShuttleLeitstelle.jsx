@@ -4139,13 +4139,16 @@ function RideForm({ setup, ride, onClose, onSave, onDelete }) {
 
 // Punkt 9: Verlauf/Audit-Log pro Fahrt + gemeldete Probleme mit Status.
 const LOG_LABEL = { created: "Fahrt erstellt", assigned: "Fahrer zugeteilt", reassigned: "Fahrer geändert", time: "Uhrzeit geändert", route: "Route geändert", status: "Status geändert", problem: "Problem gemeldet", problem_progress: "Problem in Bearbeitung", problem_done: "Problem erledigt", whatsapp: "WhatsApp-Text kopiert", flight: "Flugstatus geändert" };
+// Nur von RideForm aus erreichbar (transitiv gemessen, Session 27a), deshalb
+// fest auf MC-Design statt mit Schalter. Sichtbar bei JEDER bestehenden Fahrt,
+// weil logRide(nr, "created", ...) beim Anlegen schon einen Eintrag setzt.
 function RideHistory({ ride }) {
   const [open, setOpen] = useState(false);
   const log = (ride.log || []).slice().sort((a, b) => b.at - a.at);
   const issues = (ride.issues || []).slice().sort((a, b) => b.at - a.at);
   return (
-    <div className="mt-4 border-t border-stone-800 pt-3">
-      <button onClick={() => setOpen((o) => !o)} className="text-xs text-stone-400 hover:text-stone-200 flex items-center gap-1.5">
+    <div className="mt-4 pt-3" style={{ borderTop: "1px solid var(--mc-border)" }}>
+      <button onClick={() => setOpen((o) => !o)} className="text-xs hover:opacity-80 flex items-center gap-1.5" style={{ color: "var(--mc-text-secondary)" }}>
         <ChevronRight className={`w-3.5 h-3.5 transition ${open ? "rotate-90" : ""}`} />Verlauf &amp; Meldungen ({log.length + issues.length})
       </button>
       {open && (
@@ -4153,24 +4156,24 @@ function RideHistory({ ride }) {
           {issues.length > 0 && (
             <div className="space-y-1">
               {issues.map((i, k) => (
-                <div key={k} className="text-xs flex items-center gap-2 bg-stone-950/50 rounded px-2 py-1">
-                  <span className={`px-1.5 py-0.5 rounded text-[10px] ${i.state === "done" ? "bg-emerald-500/20 text-emerald-300" : i.state === "progress" ? "bg-amber-500/20 text-amber-300" : "bg-red-500/20 text-red-300"}`}>{ISSUE_STATE_LABEL[i.state] || "offen"}</span>
-                  <span className="text-stone-300">{i.type}{i.note ? `: ${i.note}` : ""}</span>
-                  <span className="text-stone-600 ml-auto">{fmtClock(i.at)}</span>
+                <div key={k} className="text-xs flex items-center gap-2 px-2 py-1" style={{ background: "var(--mc-inset)", borderRadius: "var(--mc-r-sm)" }}>
+                  <span className={`mc-badge text-[10px] ${i.state === "done" ? "mc-badge--done" : i.state === "progress" ? "mc-badge--assigned" : "mc-badge--problem"}`}>{ISSUE_STATE_LABEL[i.state] || "offen"}</span>
+                  <span style={{ color: "var(--mc-text-secondary)" }}>{i.type}{i.note ? `: ${i.note}` : ""}</span>
+                  <span className="ml-auto" style={{ color: "var(--mc-text-muted)" }}>{fmtClock(i.at)}</span>
                 </div>
               ))}
             </div>
           )}
           <div className="space-y-0.5 max-h-40 overflow-y-auto">
             {log.map((e, k) => (
-              <div key={k} className="text-[11px] flex items-center gap-2 text-stone-500">
-                <span className="font-mono text-stone-600 shrink-0">{fmtClock(e.at)}</span>
-                <span className="text-stone-300">{LOG_LABEL[e.event] || e.event}</span>
-                {e.detail && <span className="text-stone-500 truncate">· {e.detail}</span>}
-                <span className="text-stone-700 ml-auto shrink-0">{e.by}</span>
+              <div key={k} className="text-[11px] flex items-center gap-2" style={{ color: "var(--mc-text-muted)" }}>
+                <span className="shrink-0" style={{ fontFamily: "var(--mc-font-mono)", color: "var(--mc-text-muted)" }}>{fmtClock(e.at)}</span>
+                <span style={{ color: "var(--mc-text-secondary)" }}>{LOG_LABEL[e.event] || e.event}</span>
+                {e.detail && <span className="truncate" style={{ color: "var(--mc-text-muted)" }}>· {e.detail}</span>}
+                <span className="ml-auto shrink-0" style={{ color: "var(--mc-text-muted)" }}>{e.by}</span>
               </div>
             ))}
-            {log.length === 0 && <div className="text-[11px] text-stone-600">Noch keine Einträge.</div>}
+            {log.length === 0 && <div className="text-[11px]" style={{ color: "var(--mc-text-muted)" }}>Noch keine Einträge.</div>}
           </div>
         </div>
       )}
