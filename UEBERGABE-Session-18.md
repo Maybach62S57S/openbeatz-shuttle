@@ -3478,3 +3478,165 @@ Gering, aber nicht null:
    oben drauf gesetzt (Verweis auf diese Datei), der Rest bewusst nicht
    angefasst, weil ausserhalb des Pakets. Eine kleine eigene Doku-Session
    waere hier gut investiert.
+
+---
+
+# Session 27b Scheibe 2 (16.07.2026): GuestLinksSection auf MC-Design
+
+Branch `fix/session-27b-scheibe2`, abgezweigt von `fix/session-27b-settings`,
+ein Code-Commit `3dedb46`, gepusht. Nach Jordans OK FF-Merge.
+Datei 9074 -> 9076 Zeilen.
+
+## Schritt 0: Stand gemessen, nicht geglaubt
+
+Der Opener stimmte exakt, aber die Messung war diesmal NICHT ueberfluessig:
+`origin/fix/session-27b-settings` war **4 Commits ahead von main**, main lag
+noch bei `d38d29e` mit 9031 Zeilen. Jordan hatte also nicht gemergt. Nach der
+Regel im Opener deshalb von `fix/session-27b-settings` abgezweigt, nicht von
+main. Alle 16 anderen Remote-Branches waren 0 ahead. Auf dem Branch: 9074
+Zeilen, `9cecaa2` in der Historie, esbuild gruen, rendertest auf allen fuenf
+Sollwerten, kontrast 19/0, smoke27b-settings Lauf A bei 14 Rest-Klassen.
+
+## Erreichbarkeit NEU gemessen
+
+`node rg.mjs src/ShuttleLeitstelle.jsx GuestLinksSection`: nur von
+MissionControl erreichbar, kein Fahrer-/Stage-/Gast-Pfad. Tabu-Kinder:
+`AlertTriangle, Check, Copy, Field, copyText, hasSupabase, inp`. Davon haben
+nur `Field` und `inp` Design-Bezug, beide wie vorgesehen ueber `<Field mc>`
+bzw. `mcInp` geloest. Der Rest ist Logik und lucide-Icons.
+
+## Was gebaut wurde
+
+Reines className/Style. Keine Handler, keine Feldlogik, keine Prop-Aenderung.
+**`MissionStyles` ist unveraendert geblieben, es war keine neue Klasse noetig.**
+
+- `h3`+`p` -> `SectionHeader` (icon `Link2`), Untertitel als JSX, weil der
+  Sicherheitshinweis als `<b>` mittendrin steckt.
+- **`orange-300`-Sicherheitshinweis -> `--mc-st-assigned`.** Orange ist laut
+  Farbregel die MARKE (Hauptaktion, Fokus), ein Sicherheitshinweis ist eine
+  WARNUNG. Derselbe Regelbruch im Bestand wie Van=orange in Scheibe 1b, dieselbe
+  Korrektur. Amber ist jetzt identisch zum oddPhones-Hinweis in DriverPhones.
+- `saveError`-Box `bg-red-500/10 border-red-500/30 text-red-300` ->
+  `.mc-note mc-note--error`. Genau der Fall, fuer den die Klasse in Scheibe 1a
+  gebaut wurde: 12 statt 30 Prozent Flaeche, die `-soft`-Falle aus 27a-3.
+- `Field` -> `<Field mc>`, `inp` -> `mcInp`.
+- Speichern -> `.mc-btn-primary`. Vorschlags-Chips und der "Link"-Knopf ->
+  `.mc-btn-quiet` (Zweitknopf, wie "Person hinzufuegen" in DispatcherUsers).
+  Die drei Zeilen-Icons -> `.mc-iconbtn w-7 h-7` (kompakte Variante, wie
+  Z. 3757/7195).
+- `amber-300` -> `--mc-st-assigned`, `emerald-400` "gespeichert" UND der
+  Kopiert-Haken -> `--mc-st-done`.
+- Tokenzeile `bg-stone-950/50` -> `--mc-inset`, `font-mono` -> `--mc-font-mono`,
+  `text-stone-600` -> `--mc-text-muted`, `text-stone-200` -> `--mc-text`.
+- `aria-label` an den drei Icon-Knoepfen ergaenzt (fehlte komplett, reines
+  Attribut, kein Handler, gleiche Linie wie der X-Knopf in Scheibe 1a).
+
+## Belege
+
+- **`smoke27b-guest.mjs` (neu)**, Muster von smoke27b-sections. Wegwerf-Kopie,
+  `coordPhone`/`savedPhone`/`copiedTok`/`saveError`/`tokens` aus `globalThis`
+  geseedet, Original unangetastet. **16 Zustaende, 0 Fehler**: Grundzustand,
+  `tokens=null` ("Laedt…", der hasSupabase-Zweig), Tokenliste gefuellt,
+  Vorschlaege leer, Vorschlag schon vergeben, "gespeichert",
+  Kopiert-Bestaetigung, Ladefehler, Speicherfehler bei gefuellter Liste,
+  coordPhone kaputt -> Warnung, coordPhone leer -> keine Warnung, Warnung +
+  Fehler, Warnung + gespeichert + kopiert, alles gleichzeitig, ohne
+  `onPreviewGuest`, >12 Vorschlaege (Cap).
+- **GEGENPROBE, und die ist der eigentliche Beweis:** derselbe Test gegen
+  `/tmp/alt.jsx` (Vorher-Stand) ist **16 von 16 rot**, mit bis zu 18
+  Classic-Klassen pro Zustand. Der Test misst also wirklich etwas und ist nicht
+  nur gruen, weil er nichts anschaut.
+- **Falle im eigenen Test, fuer die naechste Session:** mein erster
+  CLASSIC-Regex hat `font-mono` gesucht und damit `var(--mc-font-mono)`
+  getroffen, also 11 Fehlalarme auf dem RICHTIGEN Ergebnis. Jetzt mit
+  `(?<![-a-z])font-mono`. Wer den Regex kopiert: aufpassen.
+- `pruefe.mjs`: **290 von 291 Bausteinen byte-identisch**, GEAENDERT genau
+  `GuestLinksSection`, NEU/ENTFERNT keine. `DriverApp`, `StageApp`, `GuestApp`,
+  `IssueModal`, `StageIssueModal`, `GuestIssueModal`, `inp`, `Field`,
+  `LocSelect`, `SettingsTab`, `MissionStyles` alle unveraendert.
+- `rendertest.mjs`: 25053 / 2452 / 2413 / 2895 / 101, alle unveraendert.
+- **`smoke27b-settings.mjs` Lauf A: Rest-Zaehler 14 -> 12** (weg sind
+  `orange-3` und `orange-6`). Lauf B bleibt 0. Die verbleibenden 12 stammen
+  jetzt nur noch aus AuditLogSection + ReportSection, also Scheibe 3.
+- `smoke27b-sections.mjs`: 15 Zustaende, 0 Fehler.
+- `kontrast.mjs`: 19 Kombis, 0 Fehler, unveraendert. Die sechs Kombis, die das
+  Skript nicht kennt, einzeln nachgerechnet (gleiche Mathematik, Tokens live):
+  `--mc-text` auf inset **16.01**, `--mc-text-muted` auf inset **5.70**,
+  `--mc-st-done` auf inset **9.97**, `.mc-btn-quiet` **6.40** (Hover 12.08),
+  `.mc-iconbtn` Hover **13.49**. Alle ueber AA.
+- `var(--mc-*)`-Check: keine undefinierte Variable.
+- esbuild gruen, keine doppelten Funktionsnamen, `git diff --patience`
+  (26 Zeilen rein, 24 raus, eine einzige Datei).
+
+## Regressionsrisiken
+
+Gering, aber nicht null:
+
+1. **Die drei Icon-Knoepfe haben keinen farbigen Hover mehr.** Vorher
+   `hover:text-emerald-400` beim Kopieren und `hover:text-red-400` beim
+   Loeschen, jetzt faerbt `.mc-iconbtn` neutral. Dasselbe Thema wie Risiko 3 aus
+   Scheibe 1a (X-Knopf bei den Festival-Tagen). Das Loesch-Signal steckt jetzt
+   nur noch im Muelltonnen-Icon. Bewusst, weil `.mc-iconbtn` die Konvention ist.
+   **Der Kopiert-Haken bleibt gruen** (`--mc-st-done`), die Rueckmeldung nach dem
+   Klick ist also unveraendert da. Wenn dir der Loeschen-Hover zu leise ist: eine
+   Zeile.
+2. **Die Vorschlags-Chips sehen jetzt aus wie der "Link"-Knopf daneben**, beide
+   `.mc-btn-quiet`. Vorher waren die Chips `bg-stone-900` mit Rahmen, der Knopf
+   `bg-stone-800` ohne. Optisch naeher beieinander als vorher. Beides sind
+   Zweitknoepfe, insofern korrekt, aber es ist eine sichtbare Aenderung.
+3. **`SectionHeader` rendert `<h2>`, vorher stand dort `<h3>`.** Rein
+   semantisch, optisch identisch. Gleiches Risiko wie Scheibe 1a, kein Skript
+   prueft es.
+4. **Die Fehlerbox ist etwas kompakter**: `.mc-note` bringt `padding: 6px 10px`
+   mit, vorher `px-3 py-2` (12/8). Bewusst, weil die Klasse die Konvention ist.
+5. Der Token-Pfad selbst (`persist`/`genFor`/`revoke`/`copyLink`/`linkFor`) ist
+   byte-identisch. Aber: `copyText` und `loadGuestTokens` laufen im Test NICHT
+   (kein Browser, kein `useEffect` bei `renderToStaticMarkup`). Der
+   Kopier-Vorgang und das Nachladen im Supabase-Betrieb sind nur simuliert
+   gerendert, nicht echt ausgefuehrt. Muss manuell geprueft werden.
+
+## Manuelle Testfaelle (Leitstelle, Desktop, Mission Control)
+
+1. Einstellungen -> Block "Gast-/Artist-Links": Kopf wie alle anderen zwoelf
+   (Icon + Titel + grauer Untertitel). **Der Sicherheitshinweis im Untertitel
+   ist jetzt amber statt orange** -> soll warnen, nicht schreien. Draufschauen.
+2. Coordination-Nummer aendern -> Speichern-Knopf wird aktiv, klicken ->
+   gruenes "gespeichert" erscheint und verschwindet nach knapp 2 Sekunden.
+3. Ins Nummernfeld `abc` tippen -> **amber Warnzeile** direkt unter dem Feld,
+   Speichern bleibt trotzdem moeglich. Feld leeren -> Warnung weg.
+4. Einen Vorschlags-Chip (Kuenstlername) klicken -> Link entsteht, der Chip
+   verschwindet aus den Vorschlaegen (weil schon vergeben).
+5. Kuenstlername von Hand eintippen + Enter -> gleicher Effekt wie "Link".
+6. **Link kopieren** -> Icon springt kurz auf einen gruenen Haken. Danach in
+   einem privaten Fenster einfuegen -> Gast-Seite oeffnet sich, zeigt nur die
+   Fahrten dieses Namens. **Das ist der Test, den kein Skript machen kann.**
+7. **Vorschau** (Auge) -> Gast-Ansicht oeffnet sich in der Leitstelle.
+8. **Loeschen** (Muelltonne) -> Rueckfrage kommt, nach OK ist der Link weg.
+   Danach den alten Link nochmal aufrufen -> darf nicht mehr funktionieren.
+9. Tokenliste leer -> "Noch keine Gast-Links erzeugt." in Grau, kein Bruch.
+10. Viele Links anlegen (>10) -> Liste scrollt bei `max-h-72`, Layout haelt.
+11. **Gegenprobe, dass nichts geleakt ist:** Fahrer-App, Stage-App und
+    Gast-Link einmal oeffnen -> unveraendert im alten Look. Problem melden in
+    allen drei -> unveraendert.
+
+## Offen fuer die naechste Scheibe
+
+- **Scheibe 3: AuditLogSection (Z. 4753) + ReportSection (Z. 5985)**, zusammen
+  108 Zeilen. Toggle: Tagesfilter, Log auf/zu, leerer Tag, leerer Suchtreffer.
+  Danach ist `smoke27b-settings.mjs` Lauf A bei 0 Rest-Klassen und SettingsTab
+  fertig. **Fortschrittsbalken: 17 -> 14 (Scheibe 1b) -> 12 (Scheibe 2) -> 0.**
+
+## Weitere gefundene Punkte fuer spaetere Sessions (NICHT heimlich fixen)
+
+6. **`.mc-btn-primary` ist jetzt auch im Gast-Link-Block drin** (Speichern der
+   Coordination-Nummer). Damit haengt der bekannte offene Punkt 1 (weiss auf
+   `--mc-brand` = **3.56**, unter AA) an einer Stelle mehr. Kein Regress, der
+   Knopf war vorher `bg-orange-600` mit `text-white`, also praktisch derselbe
+   Wert. Nur zur Kenntnis, wie von Jordan verlangt.
+7. **Der Untertitel des Gast-Link-Blocks ist der mit Abstand laengste auf der
+   ganzen Seite** (rund vier Zeilen `text-xs` in `--mc-text-secondary`). Er war
+   vorher genauso lang, ist also kein Regress, faellt aber im MC-Look staerker
+   auf, weil alle anderen zwoelf Koepfe knapp sind. Lesbarkeit waere besser,
+   wenn der Sicherheitshinweis aus dem Untertitel raus und in eine eigene
+   `.mc-note mc-note--warn` unter den Kopf wandert. **Das waere aber Struktur,
+   nicht Farbe, und damit ausserhalb dieses Pakets.** Jordans Entscheidung.
