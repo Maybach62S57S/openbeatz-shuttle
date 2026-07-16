@@ -3749,49 +3749,54 @@ function AssignModal({ setup, dyn, ride, onClose, onAssign }) {
   };
 
   return (
-    <Modal onClose={onClose} title="Fahrer zuteilen" wide>
-      <div className="bg-stone-950 border border-stone-800 rounded-xl p-3 mb-4 text-sm">
+    <Modal onClose={onClose} title="Fahrer zuteilen" wide mc>
+      <div className="p-3 mb-4 text-sm" style={{ background: "var(--mc-inset)", border: "1px solid var(--mc-border)", borderRadius: "var(--mc-r)" }}>
         <div className="flex items-center gap-3">
-          <span className="font-mono text-lg">{ride.time}</span>
-          <span className="text-stone-400">{locName(ride.fromId, ride.fromCustom)}</span>
-          <ArrowRight className="w-4 h-4 text-stone-600" />
-          <span className="text-stone-100 font-medium">{locName(ride.toId, ride.toCustom)}</span>
-          {ride.zone && <span className="text-xs bg-orange-500/20 text-orange-300 px-1.5 py-0.5 rounded">{ride.zone}</span>}
-          <span className="text-stone-500 flex items-center gap-1 ml-auto"><Users className="w-3.5 h-3.5" />{ride.passengerCount} Pers.</span>
+          <span className="text-lg" style={{ fontFamily: "var(--mc-font-mono)", fontVariantNumeric: "tabular-nums" }}>{ride.time}</span>
+          <span style={{ color: "var(--mc-text-secondary)" }}>{locName(ride.fromId, ride.fromCustom)}</span>
+          <ArrowRight className="w-4 h-4" style={{ color: "var(--mc-text-muted)" }} />
+          <span className="font-medium" style={{ color: "var(--mc-text)" }}>{locName(ride.toId, ride.toCustom)}</span>
+          {ride.zone && <span className="text-xs px-1.5 py-0.5" style={{ background: "var(--mc-st-assigned-soft)", color: "var(--mc-st-assigned)", borderRadius: "var(--mc-r-sm)" }}>{ride.zone}</span>}
+          <span className="flex items-center gap-1 ml-auto" style={{ color: "var(--mc-text-muted)" }}><Users className="w-3.5 h-3.5" />{ride.passengerCount} Pers.</span>
         </div>
-        {ride.djName && <div className="mt-1.5 text-base font-semibold text-orange-300 truncate">{ride.djName}</div>}
+        {ride.djName && <div className="mt-1.5 text-base font-semibold truncate" style={{ color: "var(--mc-st-assigned)" }}>{ride.djName}</div>}
       </div>
 
       {current && (
-        <div className="text-xs text-stone-500 mb-2">Aktuell zugeteilt: <span className="text-stone-300">{current.firstName} {current.lastName} ({current.vehicleType === "Van" ? "Van" : "Car"})</span></div>
+        <div className="text-xs mb-2" style={{ color: "var(--mc-text-muted)" }}>Aktuell zugeteilt: <span style={{ color: "var(--mc-text-secondary)" }}>{current.firstName} {current.lastName} ({current.vehicleType === "Van" ? "Van" : "Car"})</span></div>
       )}
 
-      <div className="text-xs text-stone-500 mb-2 flex items-center gap-1.5"><Gauge className="w-3.5 h-3.5" />Vorschläge – Nähe &amp; Verfügbarkeit zuerst, Reisezeiten &amp; Fairness berücksichtigt</div>
+      <div className="text-xs mb-2 flex items-center gap-1.5" style={{ color: "var(--mc-text-muted)" }}><Gauge className="w-3.5 h-3.5" />Vorschläge – Nähe &amp; Verfügbarkeit zuerst, Reisezeiten &amp; Fairness berücksichtigt</div>
       <div className="space-y-1.5 max-h-[46vh] overflow-y-auto pr-1">
-        {suggestions.length === 0 && <div className="text-stone-500 text-sm py-6 text-center">Kein passender Fahrer (Kapazität/Überschneidung). Manuell unten wählen.</div>}
+        {suggestions.length === 0 && <div className="text-sm py-6 text-center" style={{ color: "var(--mc-text-muted)" }}>Kein passender Fahrer (Kapazität/Überschneidung). Manuell unten wählen.</div>}
         {suggestions.slice(0, 8).map((x, i) => {
           const best = i === 0 && x.feasible;
+          // Nur borderColor inline, damit der :hover aus .mc-ride-card (Flaeche +
+          // Rahmen + 1px Lift) in allen drei Zustaenden lebt. Ein inline
+          // background wuerde den Hover-Hintergrund ueberschreiben (inline > class).
           return (
             <button key={x.driver.id} onClick={() => doAssign(x.driver.id)} disabled={assigning}
-              className={`w-full text-left rounded-xl px-3 py-2.5 border transition flex items-center gap-3 disabled:opacity-50 ${best ? "border-orange-500/60 bg-orange-500/10 hover:bg-orange-500/15" : x.feasible ? "border-stone-800 bg-stone-900 hover:border-stone-700" : "border-orange-500/30 bg-orange-500/5 hover:border-orange-500/50"}`}>
-              <span className={`w-8 h-8 rounded-lg flex items-center justify-center text-xs font-mono shrink-0 ${x.driver.vehicleType === "Van" ? "bg-orange-500/20 text-orange-300" : "bg-sky-500/20 text-sky-300"}`}>{x.driver.vehicleType === "Van" ? "Van" : "Car"}</span>
+              className="mc-ride-card w-full text-left px-3 py-2.5 flex items-center gap-3 disabled:opacity-50"
+              style={best ? { borderColor: "var(--mc-st-new)" } : !x.feasible ? { borderColor: "var(--mc-st-assigned)" } : undefined}>
+              <span className="w-8 h-8 flex items-center justify-center text-xs shrink-0"
+                style={{ borderRadius: "var(--mc-r-sm)", fontFamily: "var(--mc-font-mono)", background: x.driver.vehicleType === "Van" ? "var(--mc-st-assigned-soft)" : "var(--mc-st-new-soft)", color: x.driver.vehicleType === "Van" ? "var(--mc-st-assigned)" : "var(--mc-st-new)" }}>{x.driver.vehicleType === "Van" ? "Van" : "Car"}</span>
               <div className="min-w-0 flex-1">
-                <div className="text-sm text-stone-100 flex items-center gap-2">
+                <div className="text-sm flex items-center gap-2" style={{ color: "var(--mc-text)" }}>
                   {x.driver.firstName} {x.driver.lastName}
-                  {best && <span className="text-[10px] bg-orange-600 text-white px-1.5 py-0.5 rounded-full">beste Wahl</span>}
-                  {!x.feasible && <span className="text-[10px] bg-orange-500/20 text-orange-300 px-1.5 py-0.5 rounded-full">knapp</span>}
+                  {best && <span className="mc-badge mc-badge--new text-[10px]">beste Wahl</span>}
+                  {!x.feasible && <span className="mc-badge mc-badge--assigned text-[10px]">knapp</span>}
                 </div>
-                <div className="text-[11px] text-stone-500">{reasonText(setup, x)}</div>
+                <div className="text-[11px]" style={{ color: "var(--mc-text-muted)" }}>{reasonText(setup, x)}</div>
               </div>
-              <ChevronRight className="w-4 h-4 text-stone-600 shrink-0" />
+              <ChevronRight className="w-4 h-4 shrink-0" style={{ color: "var(--mc-text-muted)" }} />
             </button>
           );
         })}
       </div>
 
       {/* Manuell */}
-      <div className="mt-4 pt-3 border-t border-stone-800">
-        <div className="text-xs text-stone-500 mb-2">Manuell zuweisen (alle Fahrer · mit Konfliktprüfung)</div>
+      <div className="mt-4 pt-3" style={{ borderTop: "1px solid var(--mc-border)" }}>
+        <div className="text-xs mb-2" style={{ color: "var(--mc-text-muted)" }}>Manuell zuweisen (alle Fahrer · mit Konfliktprüfung)</div>
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-1.5 max-h-40 overflow-y-auto">
           {setup.drivers.map((d) => {
             const ev = evaluateInsertion(setup, dyn, d, ride);
@@ -3804,25 +3809,26 @@ function AssignModal({ setup, dyn, ride, onClose, onAssign }) {
             };
             return (
               <button key={d.id} onClick={assignManual} disabled={assigning}
-                className={`text-xs rounded-lg px-2 py-1.5 text-left border disabled:opacity-50 ${!ev.eligible ? "bg-red-500/5 border-red-500/30" : !ev.feasible ? "bg-orange-500/5 border-orange-500/30" : "bg-stone-900 border-stone-800 hover:border-stone-600"}`}>
-                <div className="text-stone-200 truncate">{d.firstName} {d.lastName[0]}.</div>
+                className="mc-ride-card text-xs px-2 py-1.5 text-left disabled:opacity-50"
+                style={!ev.eligible ? { borderColor: "var(--mc-st-problem)" } : !ev.feasible ? { borderColor: "var(--mc-st-assigned)" } : undefined}>
+                <div className="truncate" style={{ color: "var(--mc-text)" }}>{d.firstName} {d.lastName[0]}.</div>
                 <div className="flex items-center gap-1">
-                  <span className="text-stone-500 font-mono text-[10px]">{d.vehicleType === "Van" ? "Van" : "Car"}</span>
-                  {!ev.eligible ? <span className="text-[9px] text-red-400">zu klein</span>
-                    : ev.overlap ? <span className="text-[9px] text-orange-400">Überschneidung</span>
-                      : !ev.feasible ? <span className="text-[9px] text-orange-400">knapp</span> : null}
+                  <span className="text-[10px]" style={{ color: "var(--mc-text-muted)", fontFamily: "var(--mc-font-mono)" }}>{d.vehicleType === "Van" ? "Van" : "Car"}</span>
+                  {!ev.eligible ? <span className="text-[9px]" style={{ color: "var(--mc-st-problem)" }}>zu klein</span>
+                    : ev.overlap ? <span className="text-[9px]" style={{ color: "var(--mc-st-assigned)" }}>Überschneidung</span>
+                      : !ev.feasible ? <span className="text-[9px]" style={{ color: "var(--mc-st-assigned)" }}>knapp</span> : null}
                 </div>
               </button>
             );
           })}
         </div>
         {ride.assignedDriverId && (
-          <button onClick={() => doAssign(null)} disabled={assigning} className="mt-3 text-xs text-red-400 hover:text-red-300 disabled:opacity-40 flex items-center gap-1"><X className="w-3.5 h-3.5" />Zuteilung entfernen</button>
+          <button onClick={() => doAssign(null)} disabled={assigning} className="mt-3 text-xs hover:opacity-80 disabled:opacity-40 flex items-center gap-1" style={{ color: "var(--mc-st-problem)" }}><X className="w-3.5 h-3.5" />Zuteilung entfernen</button>
         )}
       </div>
 
       {assignErr && (
-        <div className="mt-4 text-sm text-red-300 bg-red-500/10 border border-red-500/25 rounded-lg px-3 py-2">{assignErr}</div>
+        <div className="mt-4 text-sm px-3 py-2" style={{ color: "var(--mc-st-problem)", background: "var(--mc-st-problem-soft)", border: "1px solid var(--mc-st-problem)", borderRadius: "var(--mc-r)" }}>{assignErr}</div>
       )}
     </Modal>
   );
@@ -4351,24 +4357,26 @@ function WhatsAppModal({ ride, setup, onClose, onCopied }) {
   const [copied, setCopied] = useState(null);
   const doCopy = async (which, txt) => { const ok = await copyText(txt); if (ok) { setCopied(which); onCopied?.(which === "driver" ? "Fahrer-Text" : "Artist-Text"); setTimeout(() => setCopied(null), 1800); } };
   const Block = ({ id, title, txt }) => (
-    <div className="rounded-xl border border-stone-800 bg-stone-950 p-3">
+    <div className="p-3" style={{ background: "var(--mc-inset)", border: "1px solid var(--mc-border)", borderRadius: "var(--mc-r)" }}>
       <div className="flex items-center justify-between mb-2">
-        <span className="text-xs font-medium text-stone-300">{title}</span>
-        <button onClick={() => doCopy(id, txt)} className="text-xs bg-emerald-600 hover:bg-emerald-500 text-white px-2.5 py-1 rounded-lg flex items-center gap-1.5">
+        <span className="mc-eyebrow">{title}</span>
+        <button onClick={() => doCopy(id, txt)}
+          className="mc-btn-primary text-xs px-2.5 py-1 flex items-center gap-1.5"
+          style={copied === id ? { background: "var(--mc-st-done-soft)", color: "var(--mc-st-done)" } : undefined}>
           {copied === id ? <><Check className="w-3.5 h-3.5" />kopiert</> : <><Copy className="w-3.5 h-3.5" />Text kopieren</>}
         </button>
       </div>
-      <pre className="text-xs text-stone-300 whitespace-pre-wrap font-sans leading-relaxed">{txt}</pre>
+      <pre className="text-xs whitespace-pre-wrap font-sans leading-relaxed" style={{ color: "var(--mc-text-secondary)" }}>{txt}</pre>
     </div>
   );
   return (
-    <Modal onClose={onClose} title="WhatsApp-Texte" wide>
-      <div className="text-xs text-stone-500 mb-3">{ride.time} · {waLoc(setup, ride.fromId, ride.fromCustom)} → {waLoc(setup, ride.toId, ride.toCustom)}{ride.djName && <> · <span className="text-orange-300 font-medium">{ride.djName}</span></>}</div>
+    <Modal onClose={onClose} title="WhatsApp-Texte" wide mc>
+      <div className="text-xs mb-3" style={{ color: "var(--mc-text-muted)" }}>{ride.time} · {waLoc(setup, ride.fromId, ride.fromCustom)} → {waLoc(setup, ride.toId, ride.toCustom)}{ride.djName && <> · <span className="font-medium" style={{ color: "var(--mc-st-assigned)" }}>{ride.djName}</span></>}</div>
       <div className="space-y-3">
         <Block id="driver" title="Für den Fahrer (Deutsch)" txt={driverTxt} />
         <Block id="artist" title="Für Artist / Manager (English)" txt={artistTxt} />
       </div>
-      <p className="text-[11px] text-stone-600 mt-3">Texte werden nur kopiert – nichts wird automatisch gesendet.</p>
+      <p className="text-[11px] mt-3" style={{ color: "var(--mc-text-muted)" }}>Texte werden nur kopiert – nichts wird automatisch gesendet.</p>
     </Modal>
   );
 }
@@ -7757,13 +7765,26 @@ function printPlan(setup, dyn) {
 }
 
 /* --------------------------------- Modal --------------------------------- */
-function Modal({ title, children, onClose, wide }) {
+// GETEILTE Modal-Huelle. Haengt transitiv in ALLEN vier Rollen:
+//   MissionControl -> AssignModal / RideForm / WhatsAppModal   (setzen mc)
+//   DriverApp      -> IssueModal                               (setzt mc NICHT)
+//   StageApp       -> StageIssueModal                          (setzt mc NICHT)
+//   GuestApp       -> GuestIssueModal                          (setzt mc NICHT)
+// Session 27a, Variante B: EINE Huelle mit Schalter statt eines zweiten McModal.
+// Ohne mc rendert die Funktion zeichenidentisch wie vor 27a - die Classic-Zweige
+// der Ternaeroperatoren ergeben exakt die alten className-Strings, und
+// style={undefined} gibt React nicht aus. Belegt per Render-Test (IssueModal
+// vorher/nachher, 2452 Zeichen). Wer hier etwas aendert, aendert den Fahrer-,
+// Stage- und Gast-Dialog mit.
+function Modal({ title, children, onClose, wide, mc }) {
   return (
     <div className="fixed inset-0 z-40 flex items-start justify-center bg-black/60 backdrop-blur-sm p-4 overflow-y-auto" onClick={onClose}>
-      <div className={`bg-stone-900 border border-stone-800 rounded-2xl w-full ${wide ? "max-w-2xl" : "max-w-md"} my-8`} onClick={(e) => e.stopPropagation()}>
-        <div className="flex items-center justify-between px-5 py-3.5 border-b border-stone-800">
-          <h2 className="font-medium text-stone-100">{title}</h2>
-          <button onClick={onClose} className="text-stone-500 hover:text-stone-300"><X className="w-5 h-5" /></button>
+      <div className={`${mc ? "mc-panel" : "bg-stone-900 border border-stone-800 rounded-2xl"} w-full ${wide ? "max-w-2xl" : "max-w-md"} my-8`} onClick={(e) => e.stopPropagation()}>
+        <div className={`flex items-center justify-between px-5 py-3.5${mc ? "" : " border-b border-stone-800"}`}
+          style={mc ? { borderBottom: "1px solid var(--mc-border)" } : undefined}>
+          <h2 className={mc ? "text-[15px] font-semibold" : "font-medium text-stone-100"}
+            style={mc ? { color: "var(--mc-text)" } : undefined}>{title}</h2>
+          <button onClick={onClose} className={mc ? "mc-iconbtn" : "text-stone-500 hover:text-stone-300"}><X className="w-5 h-5" /></button>
         </div>
         <div className="p-5">{children}</div>
       </div>
