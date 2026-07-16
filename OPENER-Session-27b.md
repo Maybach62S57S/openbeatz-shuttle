@@ -26,11 +26,11 @@ Wenn irgendein Branch "ahead" von main ist, sag es mir BEVOR du weitermachst.
 
 ## STAND, wie er sein SOLLTE (nachmessen!)
 
-main = 95908d6, 8978 Zeilen (Stand vor 27e).
-Branch fix/session-27e-flug = 951b80a, 9031 Zeilen (FlightTab + LiveGoogleMap).
+main = ea64966, 9031 Zeilen. 27e (FlightTab + LiveGoogleMap) ist per FF-Merge
+drin, gemessen am 16.07. direkt nach dem Merge: kein Branch war ahead von main,
+esbuild gruen, rendertest.mjs auf allen fuenf Sollwerten.
 
-Wenn ich den FF-Merge gemacht habe, ist main = 951b80a, 9031 Zeilen. Wenn
-nicht, sag es mir, dann nimmst du fix/session-27e-flug als Basis.
+Wenn du etwas anderes misst, sag es mir BEVOR du baust.
 
 Classic ist seit Session 19 bis 24 komplett raus. Mission Control ist die
 einzige Leitstellen-Oberflaeche.
