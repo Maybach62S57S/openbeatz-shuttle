@@ -3620,45 +3620,48 @@ function ChatPanel({ setup, dyn, day, updateDyn, by, liftOffset }) {
     <>
       <button onClick={() => setOpen((o) => !o)} title="Chat-Assistent"
         style={{ bottom: `calc(1.25rem + ${liftOffset || "0px"})` }}
-        className="fixed right-5 z-50 w-12 h-12 rounded-full bg-orange-600 hover:bg-orange-500 text-white shadow-lg flex items-center justify-center">
+        className="mc-fab fixed right-5 z-50 w-12 h-12 flex items-center justify-center">
         {open ? <X className="w-5 h-5" /> : <MessageSquare className="w-5 h-5" />}
       </button>
 
       {open && (
         <div style={{ bottom: `calc(5rem + ${liftOffset || "0px"})` }}
-          className="fixed right-5 z-50 w-[22rem] max-w-[calc(100vw-2.5rem)] h-[28rem] max-h-[calc(100vh-8rem)] bg-stone-900 border border-stone-800 rounded-2xl shadow-2xl flex flex-col overflow-hidden">
-          <div className="px-3.5 py-2.5 border-b border-stone-800 flex items-center gap-2">
-            <MessageSquare className="w-4 h-4 text-orange-400" />
-            <span className="text-sm font-medium text-stone-100">Chat-Assistent</span>
-            <span className="text-[10px] text-stone-500 ml-auto">nur heutiger Tag · Änderungen erst nach Bestätigung</span>
+          className="mc-panel fixed right-5 z-50 w-[22rem] max-w-[calc(100vw-2.5rem)] h-[28rem] max-h-[calc(100vh-8rem)] flex flex-col overflow-hidden">
+          <div className="px-3.5 py-2.5 border-b flex items-center gap-2" style={{ borderColor: "var(--mc-border)" }}>
+            <MessageSquare className="w-4 h-4" style={{ color: "var(--mc-brand)" }} />
+            <span className="text-sm font-medium" style={{ color: "var(--mc-text)" }}>Chat-Assistent</span>
+            <span className="text-[10px] ml-auto" style={{ color: "var(--mc-text-muted)" }}>nur heutiger Tag · Änderungen erst nach Bestätigung</span>
           </div>
 
           <div ref={scrollRef} className="flex-1 overflow-y-auto p-3 space-y-2.5">
             {messages.length === 0 && (
-              <div className="text-xs text-stone-500 text-center py-6">
+              <div className="text-xs text-center py-6" style={{ color: "var(--mc-text-muted)" }}>
                 Frag z. B. „Wer ist gerade frei?" oder „Weise Finn die 14-Uhr-Fahrt zu".
               </div>
             )}
             {messages.map((m, i) => (
               <div key={i} className={m.role === "user" ? "flex justify-end" : "flex justify-start"}>
-                <div className={`max-w-[85%] rounded-xl px-3 py-2 text-sm ${m.role === "user" ? "bg-orange-600 text-white" : "bg-stone-800 text-stone-100"}`}>
+                <div className="max-w-[85%] rounded-xl px-3 py-2 text-sm"
+                  style={m.role === "user"
+                    ? { background: "var(--mc-brand)", color: "var(--mc-brand-on)" }
+                    : { background: "var(--mc-panel-raised)", color: "var(--mc-text)" }}>
                   <div className="whitespace-pre-wrap">{m.text}</div>
                   {m.action && (
-                    <div className="mt-2 pt-2 border-t border-white/15">
-                      <div className="text-xs opacity-90 mb-1.5">{m.action.summary || "Änderung vorschlagen"}</div>
+                    <div className="mt-2 pt-2 border-t" style={{ borderColor: "var(--mc-border-strong)" }}>
+                      <div className="text-xs mb-1.5" style={{ color: "var(--mc-text-secondary)" }}>{m.action.summary || "Änderung vorschlagen"}</div>
                       {!m.resolved && (
                         <div className="flex gap-1.5">
-                          <button onClick={() => confirmAction(i)} className="text-xs bg-emerald-600 hover:bg-emerald-500 text-white px-2.5 py-1 rounded-lg flex items-center gap-1"><Check className="w-3 h-3" />Bestätigen</button>
-                          <button onClick={() => dismissAction(i)} className="text-xs bg-stone-700 hover:bg-stone-600 text-stone-200 px-2.5 py-1 rounded-lg">Verwerfen</button>
+                          <button onClick={() => confirmAction(i)} className="mc-btn-primary text-xs px-2.5 py-1 flex items-center gap-1"><Check className="w-3 h-3" />Bestätigen</button>
+                          <button onClick={() => dismissAction(i)} className="mc-btn-quiet text-xs px-2.5 py-1">Verwerfen</button>
                         </div>
                       )}
-                      {m.resolved === "saving" && <div className="text-xs text-stone-400 flex items-center gap-1"><RefreshCw className="w-3 h-3 animate-spin" />wird gespeichert…</div>}
-                      {m.resolved === "done" && <div className="text-xs text-emerald-300 flex items-center gap-1"><Check className="w-3 h-3" />Übernommen</div>}
-                      {m.resolved === "dismissed" && <div className="text-xs text-stone-400">Verworfen</div>}
+                      {m.resolved === "saving" && <div className="text-xs flex items-center gap-1" style={{ color: "var(--mc-text-secondary)" }}><RefreshCw className="w-3 h-3 animate-spin" />wird gespeichert…</div>}
+                      {m.resolved === "done" && <div className="text-xs flex items-center gap-1" style={{ color: "var(--mc-st-done)" }}><Check className="w-3 h-3" />Übernommen</div>}
+                      {m.resolved === "dismissed" && <div className="text-xs" style={{ color: "var(--mc-text-secondary)" }}>Verworfen</div>}
                       {m.resolved === "error" && (
                         <div className="space-y-1">
-                          <div className="text-xs text-red-300">Fehler, nicht gespeichert: {m.resolveError}</div>
-                          <button onClick={() => confirmAction(i)} className="text-xs bg-stone-700 hover:bg-stone-600 text-stone-200 px-2.5 py-1 rounded-lg flex items-center gap-1"><RefreshCw className="w-3 h-3" />Erneut versuchen</button>
+                          <div className="text-xs" style={{ color: "var(--mc-st-problem)" }}>Fehler, nicht gespeichert: {m.resolveError}</div>
+                          <button onClick={() => confirmAction(i)} className="mc-btn-quiet text-xs px-2.5 py-1 flex items-center gap-1"><RefreshCw className="w-3 h-3" />Erneut versuchen</button>
                         </div>
                       )}
                     </div>
@@ -3666,15 +3669,15 @@ function ChatPanel({ setup, dyn, day, updateDyn, by, liftOffset }) {
                 </div>
               </div>
             ))}
-            {busy && <div className="text-xs text-stone-500 flex items-center gap-1.5"><RefreshCw className="w-3 h-3 animate-spin" />denkt nach…</div>}
-            {err && <div className="text-xs text-orange-300">{err}</div>}
+            {busy && <div className="text-xs flex items-center gap-1.5" style={{ color: "var(--mc-text-muted)" }}><RefreshCw className="w-3 h-3 animate-spin" />denkt nach…</div>}
+            {err && <div className="text-xs" style={{ color: "var(--mc-st-assigned)" }}>{err}</div>}
           </div>
 
-          <div className="p-2.5 border-t border-stone-800 flex gap-1.5">
+          <div className="p-2.5 border-t flex gap-1.5" style={{ borderColor: "var(--mc-border)" }}>
             <input value={input} onChange={(e) => setInput(e.target.value)} onKeyDown={(e) => e.key === "Enter" && send()}
               placeholder="Frage stellen…" disabled={busy}
-              className="flex-1 bg-stone-950 border border-stone-800 rounded-lg px-2.5 py-2 text-sm text-stone-200 placeholder-stone-600 focus:outline-none focus:border-orange-500" />
-            <button onClick={send} disabled={busy || !input.trim()} className="shrink-0 bg-orange-600 hover:bg-orange-500 disabled:opacity-40 text-white px-3 rounded-lg"><ArrowRight className="w-4 h-4" /></button>
+              className="mc-input flex-1 px-2.5 py-2 text-sm" />
+            <button onClick={send} disabled={busy || !input.trim()} className="mc-btn-primary shrink-0 disabled:opacity-40 px-3"><ArrowRight className="w-4 h-4" /></button>
           </div>
         </div>
       )}
@@ -8735,6 +8738,27 @@ function MissionStyles() {
         transition: background var(--mc-dur) var(--mc-ease);
       }
       .mc-btn-assign:hover { background: color-mix(in srgb, var(--mc-st-new) 22%, transparent); }
+
+      /* Chat-FAB (rund, Marke). Eigene Klasse statt .mc-btn-primary, weil die
+         den Radius auf var(--mc-r) setzt und damit rounded-full plattmachen
+         wuerde. Session 27b-2. */
+      .mc-fab {
+        background: var(--mc-brand); color: var(--mc-brand-on);
+        border-radius: var(--mc-r-pill);
+        box-shadow: var(--mc-shadow);
+        transition: background var(--mc-dur) var(--mc-ease);
+      }
+      .mc-fab:hover { background: var(--mc-brand-hover); }
+
+      /* Zurueckhaltender Zweit-Knopf neben einer Hauptaktion ("Verwerfen").
+         Basis ist --mc-hover, damit er sich auch auf --mc-panel-raised noch
+         absetzt. Session 27b-2. */
+      .mc-btn-quiet {
+        background: var(--mc-hover); color: var(--mc-text-secondary);
+        border-radius: var(--mc-r);
+        transition: background var(--mc-dur) var(--mc-ease), color var(--mc-dur) var(--mc-ease);
+      }
+      .mc-btn-quiet:hover { background: var(--mc-border); color: var(--mc-text); }
 
       /* LiveIndicator (ruhiger Puls, kein Gaming) */
       @keyframes mc-pulse-ring {
