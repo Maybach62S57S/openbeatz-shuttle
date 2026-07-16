@@ -19,8 +19,8 @@ Wenn irgendein Branch "ahead" von main ist, sag es mir BEVOR du weitermachst.
 
 ## STAND, wie er sein SOLLTE (nachmessen!)
 
-Session 27b Scheibe 1a+1b liegt auf `fix/session-27b-settings` (Commits
-`a4fc182` und `9cecaa2`). **Wenn ich schon FF-gemergt habe, ist es auf main.**
+Session 27b Scheibe 1a+1b liegt auf `fix/session-27b-settings` (drei Commits,
+Code: `a4fc182` und `9cecaa2`, dazu ein Doku-Commit `16b48df`).
 Zeilenzahl ist der verlaessliche Messwert, nicht der Hash:
 
     src/ShuttleLeitstelle.jsx = 9074 Zeilen
@@ -28,6 +28,19 @@ Zeilenzahl ist der verlaessliche Messwert, nicht der Hash:
 
 Wenn du 9074 Zeilen misst und 9cecaa2 in der Historie steht, ist der Stand
 richtig. Wenn nicht, sag es mir BEVOR du baust.
+
+### ⚠ WOVON DU ABZWEIGST, haengt davon ab, ob ich schon gemergt habe. MISS ES.
+
+    git rev-list --left-right --count main...origin/fix/session-27b-settings
+
+- **Rechts = 0** -> ich habe FF-gemergt, 27b ist auf main. Dann von `main`
+  abzweigen.
+- **Rechts > 0** -> ich habe NICHT gemergt, 27b liegt nur auf dem Branch. Dann
+  **von `origin/fix/session-27b-settings` abzweigen, NICHT von main.** Sonst
+  baust du Scheibe 2 auf einem Stand ohne Scheibe 1 und gabelst die Historie.
+  Genau daran ist am 16.07. schon einmal eine Session verloren gegangen.
+
+Sag mir in beiden Faellen, was du gemessen hast, bevor du den Branch anlegst.
 
 Classic ist seit Session 19 bis 24 komplett raus. Mission Control ist die
 einzige Leitstellen-Oberflaeche.
@@ -160,11 +173,12 @@ nicht einer.
 
 ## ABLAUF
 
-Branch: `fix/session-27b-scheibe2` von main. Nach meinem OK FF-Merge auf main.
-Commit ueber /tmp/msg.txt (Umlaute). Sprache Deutsch, informell, keine
-Gedankenstriche, korrekte Umlaute. **Warn mich RECHTZEITIG, wenn der Chat zu
-lang wird, nicht erst wenn es knapp ist.** In 27b war nach zwei Scheiben Schluss,
-das war die richtige Groesse.
+Branch: `fix/session-27b-scheibe2`, abgezweigt von dem Stand, den du oben
+gemessen hast (main ODER fix/session-27b-settings, siehe Schritt 0). Nach
+meinem OK FF-Merge. Commit ueber /tmp/msg.txt (Umlaute). Sprache Deutsch,
+informell, keine Gedankenstriche, korrekte Umlaute. **Warn mich RECHTZEITIG,
+wenn der Chat zu lang wird, nicht erst wenn es knapp ist.** In 27b war nach
+zwei Scheiben Schluss, das war die richtige Groesse.
 
 Zum Schluss: Diff-Beleg, Regressionsrisiken, konkrete manuelle Testfaelle,
 UEBERGABE-Session-18.md fortschreiben, Opener fuer die naechste Session.
