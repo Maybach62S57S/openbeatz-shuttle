@@ -4468,29 +4468,31 @@ function DriverPhones({ setup, updateSetup }) {
   };
   return (
     <div>
-      <h3 className="font-medium text-stone-200 mb-1 flex items-center gap-2"><Radio className="w-4 h-4" />Fahrer-Telefonnummern, Kennzeichen &amp; PIN</h3>
-      <p className="text-xs text-stone-500 mb-3">Telefonnummer für Anruf-Buttons in der Leitstelle. Kennzeichen optional — erscheint nur, wenn gepflegt, im Gast-/Artist-Link. Eigener PIN optional — leer lassen, um den Standard-PIN (unten bei „Zugangs-PINs") zu nutzen. Alles bleibt im System (im Deployment in der DB, nicht im Code).</p>
+      <SectionHeader icon={Radio} title="Fahrer-Telefonnummern, Kennzeichen & PIN" className="mb-3"
+        subtitle={<>Telefonnummer für Anruf-Buttons in der Leitstelle. Kennzeichen optional — erscheint nur, wenn gepflegt, im Gast-/Artist-Link. Eigener PIN optional — leer lassen, um den Standard-PIN (unten bei „Zugangs-PINs") zu nutzen. Alles bleibt im System (im Deployment in der DB, nicht im Code).</>} />
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-4 gap-y-1.5 max-h-72 overflow-y-auto pr-1">
         {setup.drivers.map((d) => (
           <div key={d.id} className="flex items-center gap-1.5 text-sm flex-wrap">
-            <span className={`text-[10px] font-mono px-1.5 py-0.5 rounded shrink-0 w-12 text-center ${d.vehicleType === "Van" ? "bg-orange-500/20 text-orange-300" : "bg-sky-500/20 text-sky-300"}`}>{d.vehicleType === "Van" ? "Van" : "Car"}</span>
-            <span className="text-stone-400 w-20 truncate shrink-0">{d.firstName} {d.lastName[0]}.</span>
-            <input type="tel" className="flex-1 min-w-0 bg-stone-950 border border-stone-800 rounded px-2 py-1 text-sm text-stone-200 placeholder-stone-600 focus:outline-none focus:border-orange-500"
+            {/* Session 27b: Van = Amber, Car = Blau (Farbregel seit 27e, identisch
+                zu AssignModal Z. 3827). Vorher war Van orange = Markenfarbe. */}
+            <span className="text-[10px] px-1.5 py-0.5 rounded shrink-0 w-12 text-center" style={{ fontFamily: "var(--mc-font-mono)", color: d.vehicleType === "Van" ? "var(--mc-st-assigned)" : "var(--mc-st-new)", background: d.vehicleType === "Van" ? "var(--mc-st-assigned-soft)" : "var(--mc-st-new-soft)" }}>{d.vehicleType === "Van" ? "Van" : "Car"}</span>
+            <span className="w-20 truncate shrink-0" style={{ color: "var(--mc-text-secondary)" }}>{d.firstName} {d.lastName[0]}.</span>
+            <input type="tel" className="mc-input flex-1 min-w-0 px-2 py-1 text-sm"
               value={phones[d.id] || ""} onChange={(e) => setPhones((p) => ({ ...p, [d.id]: e.target.value }))} placeholder="+49 …" />
-            <input className="w-16 shrink-0 bg-stone-950 border border-stone-800 rounded px-2 py-1 text-sm text-stone-200 placeholder-stone-600 focus:outline-none focus:border-orange-500"
+            <input className="mc-input w-16 shrink-0 px-2 py-1 text-sm"
               value={plates[d.id] || ""} onChange={(e) => setPlates((p) => ({ ...p, [d.id]: e.target.value }))} placeholder="Kennz." />
-            <input className="w-16 shrink-0 bg-stone-950 border border-stone-800 rounded px-2 py-1 text-sm text-stone-200 placeholder-stone-600 focus:outline-none focus:border-orange-500"
+            <input className="mc-input w-16 shrink-0 px-2 py-1 text-sm"
               value={pins[d.id] || ""} onChange={(e) => setPins((p) => ({ ...p, [d.id]: e.target.value.replace(/\D/g, "") }))} placeholder="PIN" inputMode="numeric" />
           </div>
         ))}
       </div>
       <div className="flex items-center gap-2 mt-3">
-        <button onClick={save} disabled={!dirty} className="bg-orange-600 hover:bg-orange-500 disabled:opacity-40 text-white text-sm px-3 py-2 rounded-lg">Speichern</button>
-        {saved && <span className="text-xs text-emerald-400 flex items-center gap-1"><Check className="w-3.5 h-3.5" />gespeichert</span>}
-        {saveError && <span className="text-xs text-red-400">{saveError}</span>}
+        <button onClick={save} disabled={!dirty} className="mc-btn-primary disabled:opacity-40 text-sm px-3 py-2">Speichern</button>
+        {saved && <span className="text-xs flex items-center gap-1" style={{ color: "var(--mc-st-done)" }}><Check className="w-3.5 h-3.5" />gespeichert</span>}
+        {saveError && <span className="text-xs" style={{ color: "var(--mc-st-problem)" }}>{saveError}</span>}
       </div>
       {oddPhones.length > 0 && (
-        <div className="text-xs text-amber-300 mt-2">{oddPhones.length} Nummer(n) sehen ungewöhnlich aus ({oddPhones.slice(0, 4).join(", ")}{oddPhones.length > 4 ? " …" : ""}), bitte prüfen. Speichern geht trotzdem.</div>
+        <div className="text-xs mt-2" style={{ color: "var(--mc-st-assigned)" }}>{oddPhones.length} Nummer(n) sehen ungewöhnlich aus ({oddPhones.slice(0, 4).join(", ")}{oddPhones.length > 4 ? " …" : ""}), bitte prüfen. Speichern geht trotzdem.</div>
       )}
     </div>
   );
@@ -4518,23 +4520,23 @@ function DispatcherUsers({ setup, updateSetup }) {
   };
   return (
     <div>
-      <h3 className="font-medium text-stone-200 mb-1 flex items-center gap-2"><Users className="w-4 h-4" />Leitstellen-Nutzer</h3>
-      <p className="text-xs text-stone-500 mb-3">Wer sich hier anmeldet, erscheint namentlich statt anonym „Leitstelle" im Änderungsprotokoll. Eigener PIN optional — leer lassen, um den Standard-PIN (unten bei „Zugangs-PINs") zu nutzen.</p>
+      <SectionHeader icon={Users} title="Leitstellen-Nutzer" className="mb-3"
+        subtitle={<>Wer sich hier anmeldet, erscheint namentlich statt anonym „Leitstelle" im Änderungsprotokoll. Eigener PIN optional — leer lassen, um den Standard-PIN (unten bei „Zugangs-PINs") zu nutzen.</>} />
       <div className="space-y-1.5">
         {(setup.dispatchers || []).map((p) => (
           <div key={p.id} className="flex items-center gap-2 text-sm">
-            <input className="flex-1 bg-stone-950 border border-stone-800 rounded px-2 py-1.5 text-sm text-stone-200 focus:outline-none focus:border-orange-500"
+            <input className="mc-input flex-1 px-2 py-1.5 text-sm"
               value={names[p.id] ?? p.name} onChange={(e) => setNames((n) => ({ ...n, [p.id]: e.target.value }))} />
-            <input className="w-20 shrink-0 bg-stone-950 border border-stone-800 rounded px-2 py-1.5 text-sm text-stone-200 placeholder-stone-600 focus:outline-none focus:border-orange-500"
+            <input className="mc-input w-20 shrink-0 px-2 py-1.5 text-sm"
               value={pins[p.id] || ""} onChange={(e) => setPins((n) => ({ ...n, [p.id]: e.target.value.replace(/\D/g, "") }))} placeholder="PIN" inputMode="numeric" />
           </div>
         ))}
       </div>
       <div className="flex items-center gap-2 mt-3">
-        <button onClick={save} disabled={!dirty} className="bg-orange-600 hover:bg-orange-500 disabled:opacity-40 text-white text-sm px-3 py-2 rounded-lg">Speichern</button>
-        <button onClick={addOne} className="text-sm bg-stone-800 hover:bg-stone-700 text-stone-200 px-3 py-2 rounded-lg flex items-center gap-1.5"><Plus className="w-3.5 h-3.5" />Person hinzufügen</button>
-        {saved && <span className="text-xs text-emerald-400 flex items-center gap-1"><Check className="w-3.5 h-3.5" />gespeichert</span>}
-        {saveError && <span className="text-xs text-red-400">{saveError}</span>}
+        <button onClick={save} disabled={!dirty} className="mc-btn-primary disabled:opacity-40 text-sm px-3 py-2">Speichern</button>
+        <button onClick={addOne} className="mc-btn-quiet text-sm px-3 py-2 flex items-center gap-1.5"><Plus className="w-3.5 h-3.5" />Person hinzufügen</button>
+        {saved && <span className="text-xs flex items-center gap-1" style={{ color: "var(--mc-st-done)" }}><Check className="w-3.5 h-3.5" />gespeichert</span>}
+        {saveError && <span className="text-xs" style={{ color: "var(--mc-st-problem)" }}>{saveError}</span>}
       </div>
     </div>
   );
@@ -4555,20 +4557,20 @@ function AccessPinsSection({ setup, updateSetup }) {
   };
   return (
     <div>
-      <h3 className="font-medium text-stone-200 mb-1 flex items-center gap-2"><Radio className="w-4 h-4" />Zugangs-PINs</h3>
-      <p className="text-xs text-stone-500 mb-3">Standard-PIN gilt für jeden Fahrer/Leitstellen-Nutzer ohne eigenen PIN (oben pflegbar). Stage-Manager-PIN eigenständig, leer = nutzt ebenfalls den Standard-PIN.</p>
+      <SectionHeader icon={Radio} title="Zugangs-PINs" className="mb-3"
+        subtitle="Standard-PIN gilt für jeden Fahrer/Leitstellen-Nutzer ohne eigenen PIN (oben pflegbar). Stage-Manager-PIN eigenständig, leer = nutzt ebenfalls den Standard-PIN." />
       <div className="space-y-2 max-w-xs">
-        <Field label="Standard-PIN (Fallback)">
-          <input className={inp} value={defaultPin} onChange={(e) => setDefaultPin(e.target.value.replace(/\D/g, ""))} placeholder="z. B. 1234" inputMode="numeric" />
+        <Field mc label="Standard-PIN (Fallback)">
+          <input className={mcInp} value={defaultPin} onChange={(e) => setDefaultPin(e.target.value.replace(/\D/g, ""))} placeholder="z. B. 1234" inputMode="numeric" />
         </Field>
-        <Field label="Stage-Manager-PIN">
-          <input className={inp} value={stagePin} onChange={(e) => setStagePin(e.target.value.replace(/\D/g, ""))} placeholder="leer = Standard-PIN" inputMode="numeric" />
+        <Field mc label="Stage-Manager-PIN">
+          <input className={mcInp} value={stagePin} onChange={(e) => setStagePin(e.target.value.replace(/\D/g, ""))} placeholder="leer = Standard-PIN" inputMode="numeric" />
         </Field>
       </div>
       <div className="flex items-center gap-2 mt-3">
-        <button onClick={save} disabled={!dirty} className="bg-orange-600 hover:bg-orange-500 disabled:opacity-40 text-white text-sm px-3 py-2 rounded-lg">Speichern</button>
-        {saved && <span className="text-xs text-emerald-400 flex items-center gap-1"><Check className="w-3.5 h-3.5" />gespeichert</span>}
-        {saveError && <span className="text-xs text-red-400">{saveError}</span>}
+        <button onClick={save} disabled={!dirty} className="mc-btn-primary disabled:opacity-40 text-sm px-3 py-2">Speichern</button>
+        {saved && <span className="text-xs flex items-center gap-1" style={{ color: "var(--mc-st-done)" }}><Check className="w-3.5 h-3.5" />gespeichert</span>}
+        {saveError && <span className="text-xs" style={{ color: "var(--mc-st-problem)" }}>{saveError}</span>}
       </div>
     </div>
   );
@@ -4711,18 +4713,16 @@ function PushSettingsSection({ setup, updateSetup }) {
   };
   return (
     <div>
-      <h3 className="font-medium text-stone-200 mb-1 flex items-center gap-2"><Radio className="w-4 h-4" />Echte Push-Benachrichtigungen</h3>
-      <p className="text-xs text-stone-500 mb-3">
-        Damit Fahrer auch bei gesperrtem Handy eine Benachrichtigung bekommen (nicht nur solange die App offen ist), braucht es nach dem Deploy ein VAPID-Schlüsselpaar. Öffentlichen Schlüssel hier eintragen, den privaten als Umgebungsvariable auf dem Server (siehe BACKEND-README) — nie hier im Frontend.
-      </p>
-      <Field label="VAPID Public Key">
+      <SectionHeader icon={Radio} title="Echte Push-Benachrichtigungen" className="mb-3"
+        subtitle="Damit Fahrer auch bei gesperrtem Handy eine Benachrichtigung bekommen (nicht nur solange die App offen ist), braucht es nach dem Deploy ein VAPID-Schlüsselpaar. Öffentlichen Schlüssel hier eintragen, den privaten als Umgebungsvariable auf dem Server (siehe BACKEND-README) — nie hier im Frontend." />
+      <Field mc label="VAPID Public Key">
         <div className="flex gap-2">
-          <input className={inp} value={key} onChange={(e) => setKey(e.target.value)} placeholder="z. B. BIed3…" />
-          <button onClick={save} disabled={key === (setup.config.vapidPublicKey || "")} className="shrink-0 bg-orange-600 hover:bg-orange-500 disabled:opacity-40 text-white text-sm px-3 rounded-lg">Speichern</button>
+          <input className={mcInp} value={key} onChange={(e) => setKey(e.target.value)} placeholder="z. B. BIed3…" />
+          <button onClick={save} disabled={key === (setup.config.vapidPublicKey || "")} className="mc-btn-primary shrink-0 disabled:opacity-40 text-sm px-3">Speichern</button>
         </div>
       </Field>
-      {saved && <span className="text-xs text-emerald-400 flex items-center gap-1 mt-1.5"><Check className="w-3.5 h-3.5" />gespeichert</span>}
-      {!setup.config.vapidPublicKey && <p className="text-[11px] text-stone-600 mt-2">Solange kein Key hinterlegt ist, bleibt es beim Vordergrund-Hinweis (Toast/Vibration bei offener App) — funktioniert schon jetzt, ganz ohne Einrichtung.</p>}
+      {saved && <span className="text-xs flex items-center gap-1 mt-1.5" style={{ color: "var(--mc-st-done)" }}><Check className="w-3.5 h-3.5" />gespeichert</span>}
+      {!setup.config.vapidPublicKey && <p className="text-[11px] mt-2" style={{ color: "var(--mc-text-muted)" }}>Solange kein Key hinterlegt ist, bleibt es beim Vordergrund-Hinweis (Toast/Vibration bei offener App) — funktioniert schon jetzt, ganz ohne Einrichtung.</p>}
     </div>
   );
 }
