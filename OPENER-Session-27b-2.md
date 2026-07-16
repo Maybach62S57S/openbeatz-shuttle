@@ -174,7 +174,7 @@ nicht einer.
 
 ## ABLAUF
 
-Branch: `fix/session-27b-scheibe2`, abgezweigt von dem Stand, den du oben
+Branch: `fix/session-27b-scheibe2` von `main` (Scheibe 1 ist gemergt, siehe
 Schritt 0, trotzdem selbst nachmessen). Nach
 meinem OK FF-Merge. Commit ueber /tmp/msg.txt (Umlaute). Sprache Deutsch,
 informell, keine Gedankenstriche, korrekte Umlaute. **Warn mich RECHTZEITIG,
