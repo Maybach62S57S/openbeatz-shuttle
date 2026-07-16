@@ -3788,13 +3788,13 @@ function AssignModal({ setup, dyn, ride, onClose, onAssign }) {
           return (
             <button key={x.driver.id} onClick={() => doAssign(x.driver.id)} disabled={assigning}
               className="mc-ride-card w-full text-left px-3 py-2.5 flex items-center gap-3 disabled:opacity-50"
-              style={best ? { borderColor: "var(--mc-st-new)" } : !x.feasible ? { borderColor: "var(--mc-st-assigned)" } : undefined}>
+              style={best ? { borderColor: "var(--mc-brand)" } : !x.feasible ? { borderColor: "var(--mc-st-assigned)" } : undefined}>
               <span className="w-8 h-8 flex items-center justify-center text-xs shrink-0"
                 style={{ borderRadius: "var(--mc-r-sm)", fontFamily: "var(--mc-font-mono)", background: x.driver.vehicleType === "Van" ? "var(--mc-st-assigned-soft)" : "var(--mc-st-new-soft)", color: x.driver.vehicleType === "Van" ? "var(--mc-st-assigned)" : "var(--mc-st-new)" }}>{x.driver.vehicleType === "Van" ? "Van" : "Car"}</span>
               <div className="min-w-0 flex-1">
                 <div className="text-sm flex items-center gap-2" style={{ color: "var(--mc-text)" }}>
                   {x.driver.firstName} {x.driver.lastName}
-                  {best && <span className="mc-badge mc-badge--new text-[10px]">beste Wahl</span>}
+                  {best && <span className="mc-badge mc-badge--brand text-[10px]">beste Wahl</span>}
                   {!x.feasible && <span className="mc-badge mc-badge--assigned text-[10px]">knapp</span>}
                 </div>
                 <div className="text-[11px]" style={{ color: "var(--mc-text-muted)" }}>{reasonText(setup, x)}</div>
@@ -8571,6 +8571,13 @@ function MissionStyles() {
         --mc-st-done: #34d399;      --mc-st-done-soft: rgba(52,211,153,0.30);
         --mc-st-problem: #f26d6d;   --mc-st-problem-soft: rgba(242,109,109,0.30);
         --mc-st-idle: #7c8797;      --mc-st-idle-soft: rgba(124,135,151,0.30);
+        /* Markenfarbe (Session 27a-2). BEWUSST ein anderer Ton als
+           --mc-st-assigned (#f5a524): Orange = Marke, Hauptaktion, Fokus,
+           beste Wahl. Amber = Status "zugeteilt" und Warnungen ("knapp").
+           Die beiden duerfen nie zusammenfallen, sonst heisst Orange in einer
+           Liste wieder vier Dinge gleichzeitig (das war das Classic-Problem). */
+        --mc-brand: #ea580c;        --mc-brand-soft: rgba(249,115,22,0.16);
+        --mc-brand-hover: #f97316;  --mc-brand-on: #ffffff;
         /* Kraeftige Fuellung, NUR fuer die Timeline-Balken. Bewusst getrennt von
            -soft: dort steht die Akzentfarbe als TEXT drauf (Badges), deshalb ist
            -soft bei 0.31 gedeckelt. Auf den Balken steht weisser Text, der traegt 0.45. */
@@ -8596,7 +8603,7 @@ function MissionStyles() {
         /* Mikroanimationen (Keyframes, Slice 9): schnell 160 / normal 240 / langsam 380 ms */
         --mc-anim-fast: 160ms; --mc-anim: 240ms; --mc-anim-slow: 380ms;
         /* Fokus */
-        --mc-focus: 0 0 0 2px var(--mc-bg), 0 0 0 4px rgba(75,144,246,0.55);
+        --mc-focus: 0 0 0 2px var(--mc-bg), 0 0 0 4px rgba(249,115,22,0.55);
         /* Disabled */
         --mc-disabled-opacity: 0.45;
         /* Chat-FAB-Lift: auf schmal ueber die untere Mobil-Leiste heben (Slice 5.3),
@@ -8645,6 +8652,7 @@ function MissionStyles() {
       .mc-badge--done     { color: var(--mc-st-done);     background: var(--mc-st-done-soft); }
       .mc-badge--problem  { color: var(--mc-st-problem);  background: var(--mc-st-problem-soft); }
       .mc-badge--idle     { color: var(--mc-st-idle);     background: var(--mc-st-idle-soft); }
+      .mc-badge--brand    { color: var(--mc-brand-on);    background: var(--mc-brand); }
 
       /* MetricCard */
       .mc-metric {
@@ -8688,15 +8696,19 @@ function MissionStyles() {
         border-radius: var(--mc-r);
       }
       .mc-input::placeholder { color: var(--mc-text-muted); }
-      .mc-input:focus { outline: none; border-color: var(--mc-st-new); box-shadow: 0 0 0 3px var(--mc-st-new-soft); }
+      .mc-input:focus { outline: none; border-color: var(--mc-brand); box-shadow: 0 0 0 3px var(--mc-brand-soft); }
 
-      /* Primaerer Button (neue Fahrt) */
+      /* Primaerer Button (Speichern, Neue Fahrt, Verschieben, Kopieren).
+         Session 27a-2: Markenorange statt Weiss. Die Klasse haengt auch am
+         "Neue Fahrt"-Knopf der Shell und am "Verschieben" der Timeline - das
+         ist Absicht, sonst waere der Knopf weiss und der Dialog dahinter
+         orange. Deren Code ist unveraendert, nur diese Regel. */
       .mc-btn-primary {
-        background: var(--mc-text); color: var(--mc-bg);
+        background: var(--mc-brand); color: var(--mc-brand-on);
         border-radius: var(--mc-r); font-weight: 500;
-        transition: opacity var(--mc-dur) var(--mc-ease);
+        transition: background var(--mc-dur) var(--mc-ease);
       }
-      .mc-btn-primary:hover { opacity: 0.88; }
+      .mc-btn-primary:hover { background: var(--mc-brand-hover); }
 
       /* Zuteilen-Button (unbesetzte Fahrt) - blauer Akzent */
       .mc-btn-assign {
