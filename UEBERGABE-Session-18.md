@@ -2346,3 +2346,152 @@ geloescht. Festival 23. bis 27.07.
 - `ChatPanel` (3579) nach Bedarf.
 - **Inhalt, nicht Design:** `RideHistory` zeigt `e.by` roh (`"dispo:1"`) statt
   ueber `byLabel(setup, e.by)`. Braucht `setup` als Prop. Nach dem Festival.
+
+---
+
+# SESSION 27d: ERLEDIGT (16.07.), Branch `fix/session-27d-inseln` = `ef15db5`
+
+**Basis war `ae82417` (= `fix/session-27a-modals`), NICHT `main`.** 27a war beim
+Start dieser Session nicht gemergt: `main` stand auf `28f005b` (8883 Zeilen, nur
+Doku), `merge-base` war genau `main`, also ist 27a weiter ein sauberer
+Fast-Forward. Der Opener hatte diesen Fall vorgesehen. **Offen: FF-Merge von
+27a UND 27d auf main.** Reihenfolge: 27a zuerst, 27d sitzt darauf.
+
+`TimelineView`, `BoardMiniMap`, `NoGpsSharingPanel`, `DriverRow` sind auf
+MC-Design. 8924 -> 8934 Zeilen, Diff 54/44 in einer Datei.
+
+## Erreichbarkeit frisch gemessen (nicht der alten Tabelle geglaubt)
+
+| Ziel | von MissionControl | von Fahrer/Stage/Gast |
+|---|---|---|
+| `TimelineView` (6440) | ja | **nein** |
+| `BoardMiniMap` (6888) | ja | **nein** |
+| `NoGpsSharingPanel` (7106) | ja | **nein** |
+| `DriverRow` (3702) | ja | **nein** |
+
+Die TABU-markierten Kinder (`toMin`, `sortMin`, `pad`, `effDur`, `fmtDur`,
+`driverDay`, `dayNowMin`, Lucide-Icons) sind reine Logik bzw. Icons, also
+nichts, was ein Design-Umbau anfasst. Kein Schalter noetig, keine Signatur
+geaendert.
+
+## ⚠ ZWEI GRAPH-FALLEN, die nur der Quelltext aufloest
+
+1. **`Row` in `TimelineView` (6471) ist eine LOKALE Komponente**, die die
+   Top-Level-`Row` shadowt. `rg.mjs` kennt nur Top-Level-Namen und meldet
+   deshalb faelschlich eine Kante `TimelineView -> Row` auf die geteilte Row
+   (die an `MissionOverviewTab`/`MissionTimelinePage` haengt). **Der Umbau der
+   lokalen Row ist folgenlos.** Wer den Graph liest: bei jedem Treffer
+   nachsehen, ob der Name lokal neu gebunden wird.
+2. **`Gauge` ist ein Icon, keine Komponente.** Taucht als "Kind" auf, weil der
+   Graph Identifier sammelt.
+
+## Bewusst NICHT angefasst (Grenze zu 27c)
+
+- `SchematicMap`/`MissionSchematicMap` samt `MapNode`, `MapTooltip`,
+  `DriverMarker`, `OpenRideMarker`, `RoutePath`: die Karte IN der BoardMiniMap.
+  Nur die Huelle drumherum ist jetzt MC.
+- **`MapIcon` ist TABU** (haengt an `GuestRideCard`). Nur die `className` an der
+  Aufrufstelle in BoardMiniMap wurde geaendert, `MapIcon` selbst nicht.
+- `STATUS_STYLE` (an sieben Stellen geteilt, u. a. Kartenmarker): die Legende
+  liest weiter `v.fill`.
+- `Gauge`/`Row` (Top-Level): geteilt mit `AssignModal`, `MissionDriversTab`,
+  `MissionOverviewTab`, `MissionTimelinePage`. Stehen nicht im 27d-Auftrag.
+
+## Umsetzung, Muster identisch zu 27a
+
+- **Layout/Groesse bleibt Tailwind, nur Farbe/Flaeche wird MC-Token.** Damit
+  verschiebt sich nichts im Layout.
+- Van/Car-Chip in `DriverRow` und `NoGpsSharingPanel` nutzt jetzt exakt das
+  Muster aus `AssignModal` (`--mc-st-assigned-soft` / `--mc-st-new-soft`).
+- **`TimelineView` faerbt Balken jetzt ueber `mcRideStatusKey(status, hasDriver)`
+  + `var(--mc-st-${k}-fill)`/`var(--mc-st-${k})`, also identisch zur grossen
+  `MissionTimelinePage`.** Die alte eigene Tailwind-Farbtabelle (`barColor`) ist
+  weg. Reine Farbzuordnung, keine Statuslogik angefasst.
+- **Sichtbare Semantik-Verschiebung, bewusst:** Balken ohne Fahrer waren orange
+  (Warnung), sind jetzt blau = `new`, wie ueberall sonst in MC. Ein
+  `warn`-Sonderzweig waere falsch gewesen: eine erledigte Fahrt ohne Fahrer
+  waere damit blau statt gruen. **Die Warnung sitzt weiter am Label links**
+  (`--mc-st-assigned`, orange) und an der Position ganz oben.
+- Kein inline `background` auf `.mc-ride-card` (haette den `:hover` totgelegt).
+- **Kein neues CSS in `MissionStyles`** (per Pruefsumme belegt).
+
+## Belege (reproduzierbar)
+
+- `node pruefe.mjs /tmp/vorher.jsx src/ShuttleLeitstelle.jsx`: **GEAENDERT 4**
+  (genau die vier Ziele), NEU 0, ENTFERNT 0, **283 von 287 byte-identisch**.
+  `DriverApp`, `StageApp`, `GuestApp`, `IssueModal`, `StageIssueModal`,
+  `GuestIssueModal`, `MissionStyles`, `inp`, `Field`, `SettingsTab`, `LocSelect`
+  unveraendert. var-Check: **keine undefinierte `var(--mc-*)`**, alle dynamischen
+  `--mc-st-${key}-fill` definiert.
+- `node rendertest.mjs src/ShuttleLeitstelle.jsx`: **App-Root 25053**,
+  IssueModal 2452, StageIssueModal 2413, GuestIssueModal 2895, Field ohne mc 101.
+  Alle fuenf identisch zu vorher.
+- `node smoke27d.mjs src/ShuttleLeitstelle.jsx` (**neu, liegt im Repo**): sieben
+  Renderpfade laufen echt, **Classic-Farbreste 0**. Abgedeckt: TimelineView voll
+  (inkl. Konflikt-Ueberschneidung und Zeile ohne Fahrer) und leer, BoardMiniMap
+  live und sim/Regler, NoGpsSharingPanel, DriverRow unterwegs/frei sowie ueber
+  und unter `softHoursMin`.
+- **Hinweis:** `rendertest.mjs`/`smoke.mjs` schreiben nach `/home/claude/repo`.
+  Liegt das Repo woanders: `ln -sfn <repo> /home/claude/repo`.
+
+## ⚠ TOGGLE-FALLE: was der Render-Test NICHT gesehen hat
+
+- **`BoardMiniMap`: der Auswahl-Block.** `selected` startet auf `null`, der
+  `sel`-Button (jetzt `.mc-ride-card`) rendert im Test nie. Per Quelltext
+  belegt (0 Classic-Farbklassen im Block), **aber ein Mensch muss ihn ansehen**:
+  auf der Live-Karte einen Fahrer antippen.
+- `hovered` -> `MapTooltip` gehoert zu `SchematicMap`, nicht angefasst.
+
+## Regressionsrisiken
+
+1. **Nur Optik.** Keine Handler, keine Props, keine Signatur, keine Feldlogik,
+   keine Datenschicht. Schlimmster Fall ist "sieht komisch aus".
+2. **`.mc-*`-Klassen greifen nur unter `.mc-scope`.** Alle vier haengen unter
+   `MissionControl` (Wurzel 7841 traegt `.mc-scope`), belegt ueber den
+   Rendergraph. Wuerde einer der vier je ausserhalb gerendert, waere er ungestylt.
+3. **`.mc-panel` bringt eine Mount-Animation mit** (`mc-panel-in`). BoardMiniMap,
+   NoGpsSharingPanel und TimelineView faden beim Tab-Wechsel kurz ein. Bei
+   `prefers-reduced-motion` ist es aus.
+4. `DriverRow` hat jetzt den Hover-Lift von `.mc-ride-card` (1px). In einer
+   Liste mit 20 Fahrern ist das sichtbar. Falls es Jordan stoert: `mc-ride-card`
+   -> `mc-panel` an einer Stelle, sonst nichts.
+5. Balken ohne Fahrer sind blau statt orange, siehe oben. Absicht.
+
+## Testfaelle 27d (Leitstelle, Desktop, MC)
+
+1. [ ] Fahrerliste rechts: Punkt blau = unterwegs, gruen = frei. Van-Chip
+       orange, Car-Chip blau. Ueber der Soll-Fahrzeit wird die Zeit orange.
+       Telefon-Icon reagiert auf Hover und waehlt.
+2. [ ] Timeline unter der Karte: Balkenfarben wie auf der grossen Timeline-Seite
+       (unterwegs violett, erledigt gruen, zugewiesen orange, neu blau).
+3. [ ] **Zwei Fahrten desselben Fahrers ueberlappen lassen -> roter Ring.**
+4. [ ] Zeile "ohne Fahrer" ganz oben: Label orange, Balken blau. Antippen
+       oeffnet die Fahrt.
+5. [ ] **Live-Karte: einen Fahrer antippen** -> die Zeile darunter erscheint als
+       Karte mit Hover. **Das hat kein Test je gesehen.**
+6. [ ] Karte an einem Tag, der nicht heute ist: Zeitregler ist orange, die Zeit
+       links steht im Monospace-Font. Heute stattdessen: pulsender Punkt + "live".
+7. [ ] Panel "Kein Live-Standort" (Fahrer mit Fahrt, aber ohne frisches GPS):
+       oranger Rahmen, Chips wie in der Fahrerliste.
+8. [ ] **Fahrer-App, Stage, Gast-Link: unveraendert.** Sollte der Render-Test
+       schon beweisen, einmal draufschauen kostet nichts.
+
+## Rueckweg
+
+`git reset --hard ae82417` (Stand nach 27a) oder Tag
+`stabil-vor-mc-design-2026-07-16` = `676b02b` (vor allem Design). Sonst:
+Vercel -> altes Deployment -> Promote to Production.
+
+## Noch offen nach 27d
+
+- **FF-Merge 27a -> main, dann 27d -> main.**
+- **27b: `SettingsTab` (7263), 301 Zeilen.** `Field`/`inp`-Schalter liegt seit
+  27a bereit: `mc` setzen, `inp` -> `mcInp`. Lohnt vor dem Festival kaum.
+- **27c: `FlightTab`, `MapTab`, `LiveGoogleMap`.** Achtung: `MapTab` rendert
+  `TimelineView` und `NoGpsSharingPanel`, die sind seit 27d MC. Der Rahmen von
+  `MapTab` ist noch Classic, dadurch sitzen jetzt MC-Panels in einem
+  Classic-Rahmen. **Wer 27c macht, faengt beim Rahmen an.** Weiter tabu bleiben
+  `MapIcon` (Gast!) und `STATUS_STYLE`.
+- `ChatPanel` (3579) nach Bedarf.
+- **Inhalt, nicht Design:** `RideHistory` zeigt `e.by` roh (`"dispo:1"`) statt
+  ueber `byLabel(setup, e.by)`. Braucht `setup` als Prop. Nach dem Festival.
