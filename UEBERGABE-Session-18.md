@@ -2714,3 +2714,133 @@ Ein Render-Test sieht davon fast nichts, das muss ein Mensch am Geraet ansehen.
 `git reset --hard db64c9a` (Stand nach 27d) oder `ae82417` (nach 27a) oder Tag
 `stabil-vor-mc-design-2026-07-16` = `676b02b` (vor allem Design). Sonst:
 Vercel -> altes Deployment -> Promote to Production.
+
+---
+
+## Ready-to-paste Opener: Session 27e (Flug + Google-Karte, Rest von 27c)
+
+```
+Erst PROJEKT-ANWEISUNGEN.md lesen, dann Repo holen. Repo:
+Maybach62S57S/openbeatz-shuttle. PAT setze ich hier ein: <HIER DEIN PAT>
+Nach dem Klonen: git config (user.name/email), npm ci, Baseline-esbuild gruen:
+./node_modules/.bin/esbuild src/ShuttleLeitstelle.jsx --bundle=false --format=esm --outfile=/tmp/x.js
+Dann: ln -sfn <repo-pfad> /home/claude/repo (rendertest.mjs/smoke*.mjs
+schreiben dorthin, sonst laufen sie nicht).
+
+STAND, WICHTIG: es haengt eine KETTE, nichts davon ist auf main.
+main -> 27a (ae82417) -> 27d (db64c9a) -> 27c (6d5bac6, Branch
+fix/session-27c-karte). Basis fuer dich ist 6d5bac6, ausser ich sage was
+anderes. Falls ich inzwischen gemergt habe: main = <HIER main NACH den Merges>.
+Classic ist seit Session 19 bis 24 komplett raus, Mission Control ist die
+einzige Leitstellen-Oberflaeche.
+
+Auf MC-Design sind: RideForm, AssignModal, WhatsAppModal, RideHistory (27a),
+TimelineView, BoardMiniMap, NoGpsSharingPanel, DriverRow (27d),
+MapTab, MapFilters, MapLegend, DriverDetailsPanel (27c).
+Dazu Modal und Field mit optionaler mc-Prop, Konstante mcInp.
+
+RUECKWEG: Tag stabil-vor-mc-design-2026-07-16 = Branch backup/vor-mc-design
+= 676b02b (Stand VOR allem Design). Sonst: Vercel -> altes Deployment ->
+Promote to Production.
+
+Danach UEBERGABE-Session-18.md lesen, KOMPLETT, vor allem "SESSION 27a: DIE
+FALLE", "SESSION 27a: ERLEDIGT", "SESSION 27d: ERLEDIGT", "SESSION 27c:
+TEILWEISE ERLEDIGT" und diesen Opener. Die Datei waechst nach UNTEN an.
+Anker auf 6d5bac6, per grep gegenpruefen.
+
+AUFTRAG 27e: FlightTab (5375) und LiveGoogleMap (6971) auf MC-Design.
+
+FANG MIT DER ANALYSE AN, NICHT MIT CODE. FlightTab ist der heikelste Rest,
+nicht der einfachste: flightStyle und FLIGHT_STATUS sind TABU, die haengen
+auch im Fahrer-Pfad. Das ist dieselbe Lage wie Modal/Field/inp in 27a. Leg mir
+die Optionen mit Beweislast vor (optionaler mc-Schalter bei der Funktion /
+zweite Konstante daneben wie mcInp / gar nicht anfassen), dann entscheide ich.
+KEIN zweiter Fork, wir haben sechs Sessions lang Forks rausgeworfen.
+
+LiveGoogleMap ist klein (127 Zeilen, 3 Classic-Farbklassen) und haengt nur an
+MapTab. Achtung: rendert nur nach Umschalten auf "Google Maps" und braucht die
+geladene Google-API. Ein Render-Test sieht davon fast nichts, sag mir was ich
+am Geraet anschauen muss.
+
+REGELN, aus 27a, 27d und 27c teuer gelernt:
+- Erreichbarkeit IMMER transitiv messen (rg.mjs), KONSTANTEN mitsammeln.
+- rg.mjs kennt nur Top-Level-Namen: bei jedem Treffer im Quelltext nachsehen,
+  ob der Name LOKAL neu gebunden wird (Row in TimelineView shadowt die
+  Top-Level-Row) und ob es ueberhaupt eine Komponente ist (Gauge ist ein Icon).
+- BAUSTEIN-EBENE UND RENDERPFAD-EBENE SIND ZWEI ZAHLEN. In 27c hatte MapTab
+  selbst 0 Classic-Farbklassen und rendert trotzdem 27, weil die Kinder
+  Classic waren. Nur die zweite Zahl sehe ich. Immer den ganzen Pfad smoken.
+  Wenn dabei Inseln auffallen, die nicht im Auftrag stehen: sag es mir, bevor
+  du baust, ich entscheide dann.
+- Alles, was auch von DriverApp/StageApp/GuestApp erreichbar ist, ist TABU.
+  Brauchst du es: optionale mc-Prop wie bei Modal/Field, plus Render-Test
+  vorher/nachher, ZEICHENIDENTISCH. Ohne den Beleg nicht auf main.
+- NUR className/Style. KEINE Handler, KEINE Feldlogik, KEINE Props ausser einem
+  reinen Design-Schalter. Layout/Groesse bleibt Tailwind, nur Farbe/Flaeche
+  wird MC-Token. Dann verschiebt sich nichts.
+- UEBERSETZ 1:1, erfinde keine neue Optik. Farbige Zustaende bleiben farbig
+  (Live gruen, Simulation orange, Anrufen gruen, aktiver Filter orange).
+- KEIN neues CSS in MissionStyles. Vorhandene Klassen: .mc-panel, .mc-input,
+  .mc-btn-primary, .mc-btn-assign, .mc-badge, .mc-eyebrow, .mc-iconbtn,
+  .mc-modal-fade, .mc-ride-card, .mc-metric, .mc-live-dot, .mc-tl-block.
+- Inline background: die Regel ist NICHT "nie", sondern "nie auf einer Klasse,
+  deren :hover den background aendert". .mc-ride-card -> tabu (hover aendert
+  background). .mc-btn-primary -> geht (hover ist opacity).
+- Gibt es fuer eine Sache schon ein MC-Muster, kopier das statt neu zu erfinden
+  (Van/Car-Chip aus AssignModal, Balkenfarbe aus MissionTimelinePage ueber
+  mcRideStatusKey + var(--mc-st-${k}-fill), Segmentumschalter aus MapTab).
+- Enterprise dark, ruhig, nachtschichttauglich. Kein Gaming, kein Cyberpunk,
+  kein Neon, keine uebertriebenen Animationen.
+- SettingsTab NICHT anfassen, das ist 27b. STATUS_STYLE und MapIcon bleiben
+  tabu. Die Karte selbst (SchematicMap und Marker) hat 0 Classic-Farben, war
+  nie das Problem, nicht anfassen.
+- Weiter tabu: die Datenschicht, das dyn_data/RPC-Thema, der Fallschirm,
+  Stage bleibt read-only. Fahrer/Stage/Gast auf MC-Design ist NICHT Thema,
+  eigenes Projekt nach dem Festival.
+
+BELEGE, die ich sehen will. Die Skripte liegen im Repo, benutz die:
+- pruefe.mjs: genau die umgebauten Bausteine geaendert, ALLES andere
+  byte-identisch, insbesondere DriverApp, StageApp, GuestApp, IssueModal,
+  StageIssueModal, GuestIssueModal, MissionStyles, inp, Field, SettingsTab,
+  MapIcon, STATUS_STYLE, flightStyle, FLIGHT_STATUS.
+- rendertest.mjs, Sollwerte konstant: App-Root 25053, IssueModal 2452,
+  StageIssueModal 2413, GuestIssueModal 2895, Field ohne mc 101.
+- smoke27c.mjs / smoke27d.mjs als Vorlage fuer einen eigenen 27e-Smoke: jeder
+  umgebaute Pfad muss echt rendern und Classic-Farbreste 0 zeigen. Deck BEIDE
+  Zustaende ab, wo es welche gibt, und rendere alles, was hinter einer Auswahl
+  sitzt, direkt (so wie smoke27c es mit DriverDetailsPanel macht).
+- rg.mjs: transitiver Rendergraph inkl. Konstanten.
+- Jede var(--mc-*) einzeln gegen MissionStyles (macht pruefe.mjs mit).
+  --mc-st-new-soft steht auf einer GETEILTEN Zeile, zeilenweiser Grep findet
+  sie nicht.
+- TOGGLE-FALLE: ein Render-Test sieht nur den STARTZUSTAND. Alles hinter
+  Toggle/Tab/Akkordeon/Auswahl rendert im Test nicht und ist NICHT belegt.
+  Dann per Quelltext pruefen und mir sagen, was ein Mensch anschauen muss.
+- esbuild ist kein Beweis (Session 23, 24, 27a je mit Gegenprobe belegt).
+- git diff --stat luegt bei aehnlichen Bloecken, --patience nutzen.
+
+Branch: fix/session-27e-flug von der genannten Basis. Nach meinem OK FF-Merge.
+Commit ueber /tmp/msg.txt, nach JEDER fertigen Scheibe committen und pushen,
+damit ein Chat-Absturz nichts kostet. Sprache Deutsch, informell, keine
+Gedankenstriche, korrekte Umlaute. Warn mich rechtzeitig, wenn der Chat zu
+lang wird.
+
+Zum Schluss: Diff-Beleg, Regressionsrisiken, konkrete manuelle Testfaelle,
+Uebergabe fortschreiben, Opener fuer die naechste Session.
+
+ZEITFENSTER: bis Freitagabend 17.07. darf gebaut werden. Ab Samstag 18.07. ist
+Ruhe, dann teste ich mit mehreren Fahrern. Was am Festival laufen soll, muss
+VOR dem Test drin sein. Ab 21.07. wird nichts mehr geloescht.
+Festival 23. bis 27.07.
+```
+
+### Noch offen nach 27c
+
+- **FF-Merges, Reihenfolge zwingend: 27a -> 27d -> 27c.**
+- **27e: `FlightTab` + `LiveGoogleMap`** (Opener oben).
+- **27b: `SettingsTab` (7263), 301 Zeilen.** `Field`/`inp`-Schalter liegt seit
+  27a bereit: `mc` setzen, `inp` -> `mcInp`. Wird einmal eingerichtet und nie
+  wieder angefasst, lohnt vor dem Festival kaum.
+- `ChatPanel` (3579) nach Bedarf.
+- **Inhalt, nicht Design:** `RideHistory` zeigt `e.by` roh (`"dispo:1"`) statt
+  ueber `byLabel(setup, e.by)`. Braucht `setup` als Prop. Nach dem Festival.
