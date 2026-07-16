@@ -52,11 +52,27 @@ for (const r of roles) for (const x of reach(r)) tabu.add(x);
 const mc = reach("MissionControl");
 
 const targets = ["RideForm", "AssignModal", "WhatsAppModal", "Modal", "Field", "inp", "LocSelect", "RideHistory", "SettingsTab",
-                 "IssueModal", "StageIssueModal", "GuestIssueModal", "MissionStyles"];
+                 "IssueModal", "StageIssueModal", "GuestIssueModal", "MissionStyles",
+                 // Session 27b: SettingsTab und seine sieben Unterbausteine
+                 "DriverPhones", "DispatcherUsers", "AccessPinsSection", "GuestLinksSection",
+                 "PushSettingsSection", "AuditLogSection", "ReportSection"];
 console.log("Komponente".padEnd(20), "| von MissionControl | von Fahrer/Stage/Gast");
 console.log("-".repeat(66));
 for (const t of targets)
   console.log(t.padEnd(20), "|", (mc.has(t) ? "ja " : "nein").padEnd(18), "|", tabu.has(t) ? "JA -> TABU" : "nein");
+
+// Pro Ziel: was haengt transitiv darunter und ist gleichzeitig TABU?
+// (Das ist die Liste, die man beim Umbauen NICHT anfassen darf.)
+const nur = process.argv[3] ? process.argv.slice(3) : null;
+if (nur) {
+  console.log("\nTabu-Kinder je Ziel (transitiv, inkl. Konstanten):");
+  console.log("-".repeat(66));
+  for (const t of nur) {
+    const kinder = reach(t);
+    const treffer = [...kinder].filter((k) => tabu.has(k)).sort();
+    console.log(t.padEnd(20), "->", treffer.length ? treffer.join(", ") : "(keine)");
+  }
+}
 
 console.log("\n--- Kinder von RideForm ---");
 console.log([...(edges.get("RideForm") || [])].sort().join(", "));

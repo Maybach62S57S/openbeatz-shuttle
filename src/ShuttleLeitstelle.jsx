@@ -7330,6 +7330,13 @@ function MapTab({ setup, dyn, day, onEdit, SchematicComponent = SchematicMap, gl
 }
 
 /* ------------------------------ Einstellungen ---------------------------- */
+// Session 27b: Upload-Icon um 180 Grad gedreht = Export/Download. SectionHeader
+// rendert das Icon selbst und reicht KEINE Klasse durch (gleiche Grenze wie
+// IconButton, siehe FlightTab 27e), <Upload className="rotate-180" /> kaeme dort
+// also nie an. Deshalb dieser duenne Wrapper. Rein Darstellung, kein Handler.
+function ExportIcon({ className = "", ...rest }) {
+  return <Upload className={`${className} rotate-180`} {...rest} />;
+}
 function SettingsTab({ setup, dyn, day, updateSetup, updateDyn, onPreviewGuest }) {
   const fileRef = useRef();
   const [wb, setWb] = useState(null);         // geladene Arbeitsmappe (Punkt 15)
@@ -7433,20 +7440,20 @@ function SettingsTab({ setup, dyn, day, updateSetup, updateDyn, onPreviewGuest }
   return (
     <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 max-w-5xl 2xl:max-w-6xl">
       {/* Import */}
-      <section className="bg-stone-900 border border-stone-800 rounded-xl p-4">
-        <h3 className="font-medium text-stone-200 mb-1 flex items-center gap-2"><Upload className="w-4 h-4" />Pickup-Liste importieren</h3>
-        <p className="text-xs text-stone-500 mb-3">Excel im Format der Vorjahresliste. Deutsche und englische Spaltennamen (Datum/Date, Uhrzeit/Zeit/Time, Von/From, Nach/Ziel/To, Treffpunkt/Meeting Point …) und Datumsformate werden automatisch erkannt. Verarbeitung passiert lokal im Browser.</p>
-        <label className="flex items-center gap-2 text-sm text-stone-300 mb-3">
-          <input type="checkbox" checked={matchDrivers} onChange={(e) => { setMatchDrivers(e.target.checked); if (wb) parseSheet(wb, sheet); }} className="accent-orange-500 w-4 h-4" />
+      <section className="mc-panel p-4">
+        <SectionHeader icon={Upload} title="Pickup-Liste importieren" className="mb-3"
+          subtitle="Excel im Format der Vorjahresliste. Deutsche und englische Spaltennamen (Datum/Date, Uhrzeit/Zeit/Time, Von/From, Nach/Ziel/To, Treffpunkt/Meeting Point …) und Datumsformate werden automatisch erkannt. Verarbeitung passiert lokal im Browser." />
+        <label className="flex items-center gap-2 text-sm mb-3" style={{ color: "var(--mc-text-secondary)" }}>
+          <input type="checkbox" checked={matchDrivers} onChange={(e) => { setMatchDrivers(e.target.checked); if (wb) parseSheet(wb, sheet); }} className="w-4 h-4" style={{ accentColor: "var(--mc-brand)" }} />
           Fahrer aus der Liste automatisch übernehmen (per Name)
         </label>
-        <button onClick={() => fileRef.current?.click()} className="bg-stone-800 hover:bg-stone-700 text-sm px-3 py-2 rounded-lg flex items-center gap-2"><Upload className="w-4 h-4" />Datei wählen</button>
+        <button onClick={() => fileRef.current?.click()} className="mc-btn-quiet text-sm px-3 py-2 flex items-center gap-2"><Upload className="w-4 h-4" />Datei wählen</button>
         <input ref={fileRef} type="file" accept=".xlsx,.xls" className="hidden" onChange={onFile} />
 
         {wb && wb.SheetNames.length > 1 && (
           <div className="mt-3">
-            <span className="text-xs text-stone-400 mr-2">Tabellenblatt:</span>
-            <select className={inp + " inline-block w-auto"} value={sheet} onChange={(e) => onSheet(e.target.value)}>
+            <span className="text-xs mr-2" style={{ color: "var(--mc-text-secondary)" }}>Tabellenblatt:</span>
+            <select className={mcInp + " inline-block w-auto"} value={sheet} onChange={(e) => onSheet(e.target.value)}>
               {wb.SheetNames.map((n) => <option key={n} value={n}>{n}</option>)}
             </select>
           </div>
@@ -7454,12 +7461,12 @@ function SettingsTab({ setup, dyn, day, updateSetup, updateDyn, onPreviewGuest }
 
         {imp && (
           <div className="mt-3">
-            <div className="text-sm text-stone-300 mb-1">{imp.rides.length} neue Fahrten · {[...new Set(imp.rides.map((r) => r.dayKey))].filter(Boolean).length} Tage{imp.matched > 0 ? ` · ${imp.matched} Fahrer zugeordnet` : ""}</div>
+            <div className="text-sm mb-1" style={{ color: "var(--mc-text)" }}>{imp.rides.length} neue Fahrten · {[...new Set(imp.rides.map((r) => r.dayKey))].filter(Boolean).length} Tage{imp.matched > 0 ? ` · ${imp.matched} Fahrer zugeordnet` : ""}</div>
             {(imp.dupExisting > 0 || imp.dupInFile > 0) && (
-              <div className="text-xs text-orange-400 mb-1">{imp.dupExisting} bereits vorhanden übersprungen{imp.dupInFile > 0 ? `, ${imp.dupInFile} Doppelte in der Datei` : ""}</div>
+              <div className="text-xs mb-1" style={{ color: "var(--mc-text-muted)" }}>{imp.dupExisting} bereits vorhanden übersprungen{imp.dupInFile > 0 ? `, ${imp.dupInFile} Doppelte in der Datei` : ""}</div>
             )}
             {(imp.noName > 0 || (imp.offDates && imp.offDates.length > 0)) && (
-              <div className="text-xs text-amber-300 bg-amber-500/10 border border-amber-500/25 rounded-lg px-2.5 py-1.5 mb-2">
+              <div className="mc-note mc-note--warn text-xs mb-2">
                 <div className="font-medium mb-0.5">Werden importiert, bitte prüfen:</div>
                 {imp.noName > 0 && <div>{imp.noName} Fahrt(en) ohne Namen (Name später ergänzen)</div>}
                 {imp.offDates && imp.offDates.length > 0 && (
@@ -7468,28 +7475,28 @@ function SettingsTab({ setup, dyn, day, updateSetup, updateDyn, onPreviewGuest }
               </div>
             )}
             {imp.errors.filter((e) => e.reason).length > 0 && (
-              <div className="text-xs text-red-300 bg-red-500/10 border border-red-500/25 rounded-lg px-2.5 py-1.5 mb-2 max-h-28 overflow-y-auto">
+              <div className="mc-note mc-note--error text-xs mb-2 max-h-28 overflow-y-auto">
                 <div className="font-medium mb-0.5">{imp.errors.filter((e) => e.reason).length} Zeile(n) nicht importierbar:</div>
                 {imp.errors.filter((e) => e.reason).slice(0, 12).map((e, i) => <div key={i}>Zeile {e.row}: {e.reason}{e.artist ? ` (${e.artist})` : ""}</div>)}
               </div>
             )}
-            <div className="max-h-40 overflow-y-auto text-xs text-stone-500 space-y-0.5 mb-3">
+            <div className="max-h-40 overflow-y-auto text-xs space-y-0.5 mb-3" style={{ color: "var(--mc-text-muted)" }}>
               {imp.rides.slice(0, 8).map((r, i) => <div key={i}>{fmtDate(r.dayKey)} {r.time} · {r.djName || "?"} · {r.passengerCount}P{r.assignedDriverId ? " · ✓ Fahrer" : ""}</div>)}
               {imp.rides.length > 8 && <div>… +{imp.rides.length - 8} weitere</div>}
             </div>
             <div className="flex gap-2">
               <button onClick={doImport} disabled={imp.rides.length === 0 || importing}
-                className="bg-orange-600 hover:bg-orange-500 disabled:opacity-40 text-white text-sm px-3 py-2 rounded-lg">{importing ? "Importiere…" : `${imp.rides.length} importieren`}</button>
-              <button onClick={() => { setImp(null); setWb(null); }} disabled={importing} className="text-stone-400 disabled:opacity-40 text-sm px-3 py-2">Verwerfen</button>
+                className="mc-btn-primary text-sm px-3 py-2 disabled:opacity-40">{importing ? "Importiere…" : `${imp.rides.length} importieren`}</button>
+              <button onClick={() => { setImp(null); setWb(null); }} disabled={importing} className="mc-btn-quiet disabled:opacity-40 text-sm px-3 py-2">Verwerfen</button>
             </div>
           </div>
         )}
       </section>
 
       {/* Festival-Tage */}
-      <section className="bg-stone-900 border border-stone-800 rounded-xl p-4">
-        <h3 className="font-medium text-stone-200 mb-1 flex items-center gap-2"><Clock className="w-4 h-4" />Festival-Tage</h3>
-        <p className="text-xs text-stone-500 mb-3">Fahrten von 00–06 Uhr zählen zur Nacht des Vortags. Tag hinzufügen über das leere Feld unten.</p>
+      <section className="mc-panel p-4">
+        <SectionHeader icon={Clock} title="Festival-Tage" className="mb-3"
+          subtitle="Fahrten von 00–06 Uhr zählen zur Nacht des Vortags. Tag hinzufügen über das leere Feld unten." />
         <div className="space-y-2">
           {/* Leere/ungueltige Eintraege werden nicht angezeigt: sie erzeugen ohnehin
               keinen Tag (dayTabs filtert per Boolean), wuerden hier aber als
@@ -7498,21 +7505,21 @@ function SettingsTab({ setup, dyn, day, updateSetup, updateDyn, onPreviewGuest }
               Sortieren beim Schreiben nicht auf den falschen Eintrag zeigt. */}
           {(setup.config.festivalDates || []).filter(Boolean).map((d) => (
             <div key={d} className="flex items-center gap-2">
-              <span className="text-xs text-stone-500 w-10 shrink-0">{fmtDate(d)}</span>
-              <input type="date" className={inp} value={d} autoComplete="off"
+              <span className="text-xs w-10 shrink-0" style={{ color: "var(--mc-text-muted)" }}>{fmtDate(d)}</span>
+              <input type="date" className={mcInp} value={d} autoComplete="off"
                 onChange={(e) => updateSetup((s) => {
                   const arr = (s.config.festivalDates || []).map((x) => (x === d ? e.target.value : x));
                   s.config.festivalDates = [...new Set(arr.filter(Boolean))].sort(); return s;
                 })} />
               <button onClick={() => updateSetup((s) => {
                 s.config.festivalDates = (s.config.festivalDates || []).filter(Boolean).filter((x) => x !== d); return s;
-              })} className="text-stone-600 hover:text-red-400 p-1 shrink-0"><X className="w-4 h-4" /></button>
+              })} title="Tag entfernen" aria-label="Tag entfernen" className="mc-iconbtn shrink-0"><X className="w-4 h-4" /></button>
             </div>
           ))}
           {/* Eigener State statt konstantem value="": nur so setzt React das Feld
               nach dem Hinzufuegen wirklich zurueck. autoComplete="off" verhindert,
               dass der Browser beim Neuladen einen alten Wert wieder einsetzt. */}
-          <input type="date" className={inp} value={newFestDate} autoComplete="off"
+          <input type="date" className={mcInp} value={newFestDate} autoComplete="off"
             onChange={async (e) => {
               const v = e.target.value;
               setNewFestDate(v);
@@ -7526,24 +7533,24 @@ function SettingsTab({ setup, dyn, day, updateSetup, updateDyn, onPreviewGuest }
       </section>
 
       {/* Fahrzeit-Matrix */}
-      <section className="bg-stone-900 border border-stone-800 rounded-xl p-4 lg:col-span-2">
-        <h3 className="font-medium text-stone-200 mb-1 flex items-center gap-2"><Route className="w-4 h-4" />Fahrzeit-Matrix (Minuten / km)</h3>
-        <p className="text-xs text-stone-500 mb-3">Schätzwerte – bitte prüfen und an eure Erfahrung anpassen. Format je Feld: <span className="font-mono">Minuten/km</span>.</p>
+      <section className="mc-panel p-4 lg:col-span-2">
+        <SectionHeader icon={Route} title="Fahrzeit-Matrix (Minuten / km)" className="mb-3"
+          subtitle={<>Schätzwerte – bitte prüfen und an eure Erfahrung anpassen. Format je Feld: <span style={{ fontFamily: "var(--mc-font-mono)" }}>Minuten/km</span>.</>} />
         <div className="overflow-x-auto">
           <table className="text-sm">
             <thead>
-              <tr><th className="p-2"></th>{locs.map((l) => <th key={l.id} className="p-2 text-stone-400 font-medium text-xs">{l.short}</th>)}</tr>
+              <tr><th className="p-2"></th>{locs.map((l) => <th key={l.id} className="p-2 font-medium text-xs" style={{ color: "var(--mc-text-secondary)" }}>{l.short}</th>)}</tr>
             </thead>
             <tbody>
               {locs.map((a, ai) => (
                 <tr key={a.id}>
-                  <td className="p-2 text-stone-400 text-xs font-medium">{a.short}</td>
+                  <td className="p-2 text-xs font-medium" style={{ color: "var(--mc-text-secondary)" }}>{a.short}</td>
                   {locs.map((b, bi) => (
                     <td key={b.id} className="p-1">
-                      {ai === bi ? <span className="text-stone-700">—</span> : ai < bi ? (
+                      {ai === bi ? <span style={{ color: "var(--mc-border-strong)" }}>—</span> : ai < bi ? (
                         <input defaultValue={matrixCell(a.id, b.id)} onBlur={(e) => setMatrix(a.id, b.id, e.target.value)}
-                          className="w-20 bg-stone-950 border border-stone-800 rounded px-2 py-1 text-center font-mono text-xs focus:outline-none focus:border-orange-500" placeholder="min/km" />
-                      ) : <span className="text-stone-700 text-xs">↑</span>}
+                          className="mc-input w-20 px-2 py-1 text-center text-xs" style={{ fontFamily: "var(--mc-font-mono)" }} placeholder="min/km" />
+                      ) : <span className="text-xs" style={{ color: "var(--mc-border-strong)" }}>↑</span>}
                     </td>
                   ))}
                 </tr>
@@ -7554,78 +7561,82 @@ function SettingsTab({ setup, dyn, day, updateSetup, updateDyn, onPreviewGuest }
       </section>
 
       {/* Fahrer/Fahrzeuge Übersicht */}
-      <section className="bg-stone-900 border border-stone-800 rounded-xl p-4 lg:col-span-2">
-        <h3 className="font-medium text-stone-200 mb-3 flex items-center gap-2"><Users className="w-4 h-4" />Fahrer & Fahrzeuge ({setup.drivers.length})</h3>
+      <section className="mc-panel p-4 lg:col-span-2">
+        <SectionHeader icon={Users} title={`Fahrer & Fahrzeuge (${setup.drivers.length})`} className="mb-3" />
         <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-1.5">
           {setup.drivers.map((d) => (
-            <div key={d.id} className="bg-stone-950 border border-stone-800 rounded-lg px-3 py-2">
-              <div className="text-sm text-stone-200 truncate">{d.firstName} {d.lastName}</div>
+            <div key={d.id} className="px-3 py-2" style={{ background: "var(--mc-inset)", border: "1px solid var(--mc-border)", borderRadius: "var(--mc-r)" }}>
+              <div className="text-sm truncate" style={{ color: "var(--mc-text)" }}>{d.firstName} {d.lastName}</div>
               <div className="flex items-center gap-1.5 mt-0.5">
-                <span className={`text-[10px] font-mono px-1 rounded ${d.vehicleType === "Van" ? "bg-orange-500/20 text-orange-300" : "bg-sky-500/20 text-sky-300"}`}>{d.vehicleType === "Van" ? "Van" : "Car"}</span>
-                <span className="text-[10px] text-stone-500">{d.vehicleType === "Van" ? "Van · 7" : "Car · 4"}</span>
+                {/* Session 27b: Van = Amber, Car = Blau (Farbregel seit 27e, gilt auch
+                    in AssignModal, DriverDetailsPanel und auf der Google-Karte).
+                    Vorher war Van orange, das ist die Markenfarbe und darf keinen
+                    Fahrzeugtyp bedeuten. */}
+                <span className="text-[10px] px-1 rounded" style={{ fontFamily: "var(--mc-font-mono)", color: d.vehicleType === "Van" ? "var(--mc-st-assigned)" : "var(--mc-st-new)", background: d.vehicleType === "Van" ? "var(--mc-st-assigned-soft)" : "var(--mc-st-new-soft)" }}>{d.vehicleType === "Van" ? "Van" : "Car"}</span>
+                <span className="text-[10px]" style={{ color: "var(--mc-text-muted)" }}>{d.vehicleType === "Van" ? "Van · 7" : "Car · 4"}</span>
               </div>
             </div>
           ))}
         </div>
-        <p className="text-xs text-stone-600 mt-3">Van: Finn, Björn, Amar, Patrick, Mustafa, Lukas · übrige fahren Car. Feste Zuordnung.</p>
+        <p className="text-xs mt-3" style={{ color: "var(--mc-text-muted)" }}>Van: Finn, Björn, Amar, Patrick, Mustafa, Lukas · übrige fahren Car. Feste Zuordnung.</p>
       </section>
 
       {/* Fahrer-Telefonnummern */}
-      <section className="bg-stone-900 border border-stone-800 rounded-xl p-4 lg:col-span-2">
+      <section className="mc-panel p-4 lg:col-span-2">
         <DriverPhones setup={setup} updateSetup={updateSetup} />
       </section>
 
       {/* Leitstellen-Nutzer */}
-      <section className="bg-stone-900 border border-stone-800 rounded-xl p-4 lg:col-span-2">
+      <section className="mc-panel p-4 lg:col-span-2">
         <DispatcherUsers setup={setup} updateSetup={updateSetup} />
       </section>
 
       {/* Zugangs-PINs */}
-      <section className="bg-stone-900 border border-stone-800 rounded-xl p-4 lg:col-span-2">
+      <section className="mc-panel p-4 lg:col-span-2">
         <AccessPinsSection setup={setup} updateSetup={updateSetup} />
       </section>
 
       {/* Gast-/Artist-Links */}
-      <section className="bg-stone-900 border border-stone-800 rounded-xl p-4 lg:col-span-2">
+      <section className="mc-panel p-4 lg:col-span-2">
         <GuestLinksSection setup={setup} dyn={dyn} updateSetup={updateSetup} onPreviewGuest={onPreviewGuest} />
       </section>
 
       {/* Push-Benachrichtigungen */}
-      <section className="bg-stone-900 border border-stone-800 rounded-xl p-4 lg:col-span-2">
+      <section className="mc-panel p-4 lg:col-span-2">
         <PushSettingsSection setup={setup} updateSetup={updateSetup} />
       </section>
 
       {/* Tagesabschluss (Punkt 10) */}
-      <section className="bg-stone-900 border border-stone-800 rounded-xl p-4 lg:col-span-2">
+      <section className="mc-panel p-4 lg:col-span-2">
         <ReportSection setup={setup} dyn={dyn} day={day} />
       </section>
 
       {/* Änderungsprotokoll (Punkt 9, global) */}
-      <section className="bg-stone-900 border border-stone-800 rounded-xl p-4 lg:col-span-2">
+      <section className="mc-panel p-4 lg:col-span-2">
         <AuditLogSection setup={setup} dyn={dyn} />
       </section>
 
       {/* Export & Backup (Punkt 16) */}
-      <section className="bg-stone-900 border border-stone-800 rounded-xl p-4 lg:col-span-2">
-        <h3 className="font-medium text-stone-200 mb-1 flex items-center gap-2"><Upload className="w-4 h-4 rotate-180" />Export &amp; Backup</h3>
-        <p className="text-xs text-stone-500 mb-3">Aktuelle Fahrten als Excel/CSV sichern, Fahrerplan exportieren oder Tagesplan drucken.</p>
+      <section className="mc-panel p-4 lg:col-span-2">
+        <SectionHeader icon={ExportIcon} title="Export & Backup" className="mb-3"
+          subtitle="Aktuelle Fahrten als Excel/CSV sichern, Fahrerplan exportieren oder Tagesplan drucken." />
         <div className="flex flex-wrap gap-2">
-          <button onClick={() => exportRows(setup, dyn, "byTime", "xlsx")} className="bg-stone-800 hover:bg-stone-700 text-sm px-3 py-2 rounded-lg flex items-center gap-2"><Upload className="w-4 h-4 rotate-180" />Excel (alle Fahrten)</button>
-          <button onClick={() => exportRows(setup, dyn, "byTime", "csv")} className="bg-stone-800 hover:bg-stone-700 text-sm px-3 py-2 rounded-lg">CSV</button>
-          <button onClick={() => exportRows(setup, dyn, "byDriver", "xlsx")} className="bg-stone-800 hover:bg-stone-700 text-sm px-3 py-2 rounded-lg">Fahrerplan (Excel)</button>
-          <button onClick={() => printPlan(setup, dyn)} className="bg-stone-800 hover:bg-stone-700 text-sm px-3 py-2 rounded-lg">Tagesplan drucken</button>
+          <button onClick={() => exportRows(setup, dyn, "byTime", "xlsx")} className="mc-btn-quiet text-sm px-3 py-2 flex items-center gap-2"><Upload className="w-4 h-4 rotate-180" />Excel (alle Fahrten)</button>
+          <button onClick={() => exportRows(setup, dyn, "byTime", "csv")} className="mc-btn-quiet text-sm px-3 py-2">CSV</button>
+          <button onClick={() => exportRows(setup, dyn, "byDriver", "xlsx")} className="mc-btn-quiet text-sm px-3 py-2">Fahrerplan (Excel)</button>
+          <button onClick={() => printPlan(setup, dyn)} className="mc-btn-quiet text-sm px-3 py-2">Tagesplan drucken</button>
         </div>
       </section>
 
       {/* Beispiel & Live-Start */}
-      <section className="bg-stone-900 border border-stone-800 rounded-xl p-4 lg:col-span-2">
-        <h3 className="font-medium text-stone-200 mb-1 flex items-center gap-2"><Play className="w-4 h-4" />Beispiel & Live-Start</h3>
-        <p className="text-xs text-stone-500 mb-3">Zum Ausprobieren die Beispieldaten laden. Vor dem echten Einsatz alle Fahrten löschen und eure eigene Pickup-Liste importieren oder Fahrten manuell anlegen.</p>
+      <section className="mc-panel p-4 lg:col-span-2">
+        <SectionHeader icon={Play} title="Beispiel & Live-Start" className="mb-3"
+          subtitle="Zum Ausprobieren die Beispieldaten laden. Vor dem echten Einsatz alle Fahrten löschen und eure eigene Pickup-Liste importieren oder Fahrten manuell anlegen." />
         <div className="flex flex-wrap gap-2">
           <button onClick={() => updateDyn((d) => { d.rides = seedExampleRides(setup); d.driverState = {}; return d; })}
-            className="bg-stone-800 hover:bg-stone-700 text-sm px-3 py-2 rounded-lg flex items-center gap-2"><RefreshCw className="w-4 h-4" />Beispieldaten neu laden</button>
+            className="mc-btn-quiet text-sm px-3 py-2 flex items-center gap-2"><RefreshCw className="w-4 h-4" />Beispieldaten neu laden</button>
           <button onClick={() => { if (window.confirm("Wirklich alle Fahrten löschen? Für den echten Einsatz gedacht.")) updateDyn((d) => { d.rides = []; d.driverState = {}; return d; }); }}
-            className="bg-red-500/15 hover:bg-red-500/25 text-red-300 text-sm px-3 py-2 rounded-lg flex items-center gap-2"><Ban className="w-4 h-4" />Alle Fahrten löschen</button>
+            className="mc-btn-danger text-sm px-3 py-2 flex items-center gap-2"><Ban className="w-4 h-4" />Alle Fahrten löschen</button>
         </div>
       </section>
     </div>
@@ -8812,6 +8823,38 @@ function MissionStyles() {
         transition: background var(--mc-dur) var(--mc-ease), color var(--mc-dur) var(--mc-ease);
       }
       .mc-btn-quiet:hover { background: var(--mc-border); color: var(--mc-text); }
+
+      /* Hinweisbox (Import-Zusammenfassung, Warnungen). Session 27b.
+         BEWUSST NICHT --mc-st-*-soft: das steht auf 30 Prozent und ist als
+         Badge-Fuellung gedacht. Flaechig ueber mehrere Zeilen ist 30 Prozent
+         zu laut (genau der Rueckbau aus 27a-3 am Flug-Block). Hier 12 Prozent
+         Flaeche, 28 Prozent Rahmen: die Box traegt die Bedeutung ueber Farbe,
+         schreit aber nicht. Text steht in der vollen Statusfarbe. */
+      .mc-note {
+        border-radius: var(--mc-r); padding: 6px 10px;
+        border: 1px solid transparent;
+      }
+      .mc-note--warn {
+        color: var(--mc-st-assigned);
+        background: color-mix(in srgb, var(--mc-st-assigned) 12%, transparent);
+        border-color: color-mix(in srgb, var(--mc-st-assigned) 28%, transparent);
+      }
+      .mc-note--error {
+        color: var(--mc-st-problem);
+        background: color-mix(in srgb, var(--mc-st-problem) 12%, transparent);
+        border-color: color-mix(in srgb, var(--mc-st-problem) 28%, transparent);
+      }
+
+      /* Destruktiver Knopf ("Alle Fahrten loeschen"). Gleiche Zurueckhaltung wie
+         .mc-note: die Farbe warnt, die Flaeche bleibt ruhig. Session 27b. */
+      .mc-btn-danger {
+        color: var(--mc-st-problem);
+        background: color-mix(in srgb, var(--mc-st-problem) 12%, transparent);
+        border: 1px solid color-mix(in srgb, var(--mc-st-problem) 28%, transparent);
+        border-radius: var(--mc-r);
+        transition: background var(--mc-dur) var(--mc-ease);
+      }
+      .mc-btn-danger:hover { background: color-mix(in srgb, var(--mc-st-problem) 22%, transparent); }
 
       /* LiveIndicator (ruhiger Puls, kein Gaming) */
       @keyframes mc-pulse-ring {
