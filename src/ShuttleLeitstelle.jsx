@@ -6616,12 +6616,12 @@ function MapTooltip({ pos, setup, nodes }) {
 // Legende (Punkt: Farben/Zähler + geschätzt/GPS-Hinweis).
 function MapLegend({ counts }) {
   return (
-    <div className="flex flex-wrap gap-x-4 gap-y-1.5 px-2 pt-2 text-xs text-stone-400">
+    <div className="flex flex-wrap gap-x-4 gap-y-1.5 px-2 pt-2 text-xs" style={{ color: "var(--mc-text-secondary)" }}>
       {Object.entries(STATUS_STYLE).map(([k, v]) => (
         <span key={k} className="flex items-center gap-1.5"><span className="w-2.5 h-2.5 rounded-full" style={{ background: v.fill }} />{v.label} ({counts[k] || 0})</span>
       ))}
-      <span className="flex items-center gap-1.5 text-stone-500"><span className="w-2.5 h-2.5 rounded-full border border-stone-500" style={{ borderStyle: "dashed" }} />geschätzt</span>
-      <span className="flex items-center gap-1.5 text-stone-500"><span className="w-2.5 h-2.5 rotate-45 border border-stone-500" />offene Fahrt</span>
+      <span className="flex items-center gap-1.5" style={{ color: "var(--mc-text-muted)" }}><span className="w-2.5 h-2.5 rounded-full border" style={{ borderStyle: "dashed", borderColor: "var(--mc-text-muted)" }} />geschätzt</span>
+      <span className="flex items-center gap-1.5" style={{ color: "var(--mc-text-muted)" }}><span className="w-2.5 h-2.5 rotate-45 border" style={{ borderColor: "var(--mc-text-muted)" }} />offene Fahrt</span>
     </div>
   );
 }
@@ -6633,7 +6633,10 @@ function MapFilters({ value, onChange, counts }) {
     <div className="flex flex-wrap gap-1">
       {MAP_FILTERS.map(([k, l]) => (
         <button key={k} onClick={() => onChange(k)}
-          className={`text-xs px-2.5 py-1 rounded-lg border ${value === k ? "bg-orange-600 border-orange-500 text-white" : "bg-stone-900 border-stone-800 text-stone-400 hover:text-stone-200"}`}>
+          className="text-xs px-2.5 py-1 border"
+          style={{ borderRadius: "var(--mc-r)", ...(value === k
+            ? { background: "var(--mc-st-assigned)", borderColor: "var(--mc-st-assigned)", color: "#ffffff" }
+            : { background: "var(--mc-panel)", borderColor: "var(--mc-border)", color: "var(--mc-text-secondary)" }) }}>
           {l}{k !== "all" && counts[k] ? ` ${counts[k]}` : ""}
         </button>
       ))}
@@ -6650,42 +6653,42 @@ function DriverDetailsPanel({ pos, setup, nodes, onClose }) {
     : nn(pos.nodeId);
   const srcLabel = { gps: "GPS", manual: "manuell gesetzt", estimated: "geschätzt" }[pos.positionSource];
   return (
-    <div className="bg-stone-900 border border-orange-500/40 rounded-xl p-3">
+    <div className="mc-panel p-3" style={{ borderColor: "var(--mc-st-assigned)" }}>
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-2">
-          <span className={`text-xs font-mono px-1.5 py-0.5 rounded ${pos.driver.vehicleType === "Van" ? "bg-orange-500/20 text-orange-300" : "bg-sky-500/20 text-sky-300"}`}>{pos.driver.vehicleType === "Van" ? "Van" : "Car"}</span>
-          <span className="text-sm text-stone-100 font-medium">{pos.driver.firstName} {pos.driver.lastName}</span>
+          <span className="text-xs px-1.5 py-0.5" style={{ borderRadius: "var(--mc-r-sm)", fontFamily: "var(--mc-font-mono)", background: pos.driver.vehicleType === "Van" ? "var(--mc-st-assigned-soft)" : "var(--mc-st-new-soft)", color: pos.driver.vehicleType === "Van" ? "var(--mc-st-assigned)" : "var(--mc-st-new)" }}>{pos.driver.vehicleType === "Van" ? "Van" : "Car"}</span>
+          <span className="text-sm font-medium" style={{ color: "var(--mc-text)" }}>{pos.driver.firstName} {pos.driver.lastName}</span>
         </div>
-        <button onClick={onClose} className="text-stone-500 hover:text-stone-300"><X className="w-4 h-4" /></button>
+        <button onClick={onClose} className="mc-iconbtn w-7 h-7"><X className="w-4 h-4" /></button>
       </div>
 
       <div className="flex items-center gap-1.5 mt-2">
         <span className="w-2 h-2 rounded-full" style={{ background: stl.fill }} />
-        <span className="text-xs text-stone-300">{stl.label}</span>
-        {pos.problem && <span className="text-[10px] bg-red-500/20 text-red-300 px-1.5 py-0.5 rounded">Problem</span>}
-        {pos.lateMin > 0 && <span className="text-[10px] bg-red-500/20 text-red-300 px-1.5 py-0.5 rounded">+{pos.lateMin} min</span>}
+        <span className="text-xs" style={{ color: "var(--mc-text-secondary)" }}>{stl.label}</span>
+        {pos.problem && <span className="mc-badge mc-badge--problem text-[10px]">Problem</span>}
+        {pos.lateMin > 0 && <span className="mc-badge mc-badge--problem text-[10px]">+{pos.lateMin} min</span>}
       </div>
 
       <dl className="mt-3 space-y-1.5 text-xs">
-        <div className="flex justify-between gap-2"><dt className="text-stone-500">Position</dt><dd className="text-stone-200 text-right">{posText}</dd></div>
-        <div className="flex justify-between gap-2"><dt className="text-stone-500">Quelle</dt><dd className="text-stone-300">{srcLabel}{pos.uncertain ? " · unsicher" : ""}{pos.positionSource === "gps" && pos.gps?.at ? ` · ${fmtAgo(pos.gps.at)}` : ""}</dd></div>
+        <div className="flex justify-between gap-2"><dt style={{ color: "var(--mc-text-muted)" }}>Position</dt><dd className="text-right" style={{ color: "var(--mc-text)" }}>{posText}</dd></div>
+        <div className="flex justify-between gap-2"><dt style={{ color: "var(--mc-text-muted)" }}>Quelle</dt><dd style={{ color: "var(--mc-text-secondary)" }}>{srcLabel}{pos.uncertain ? " · unsicher" : ""}{pos.positionSource === "gps" && pos.gps?.at ? ` · ${fmtAgo(pos.gps.at)}` : ""}</dd></div>
         {pos.ride && (
-          <div className="flex justify-between gap-2"><dt className="text-stone-500">Aktuelle Fahrt</dt><dd className="text-stone-200 text-right">{pos.ride.djName || "—"} · {pos.ride.time}{pos.ride.zone ? ` · ${pos.ride.zone}` : ""}</dd></div>
+          <div className="flex justify-between gap-2"><dt style={{ color: "var(--mc-text-muted)" }}>Aktuelle Fahrt</dt><dd className="text-right" style={{ color: "var(--mc-text)" }}>{pos.ride.djName || "—"} · {pos.ride.time}{pos.ride.zone ? ` · ${pos.ride.zone}` : ""}</dd></div>
         )}
         {pos.etaMin != null && (
-          <div className="flex justify-between gap-2"><dt className="text-stone-500">ETA Ziel</dt><dd className="text-stone-200">{pos.etaMin} min{pos.uncertain ? " (unsicher)" : ""}</dd></div>
+          <div className="flex justify-between gap-2"><dt style={{ color: "var(--mc-text-muted)" }}>ETA Ziel</dt><dd style={{ color: "var(--mc-text)" }}>{pos.etaMin} min{pos.uncertain ? " (unsicher)" : ""}</dd></div>
         )}
         {pos.nextRide && (
-          <div className="flex justify-between gap-2"><dt className="text-stone-500">Nächster Auftrag</dt><dd className="text-stone-200 text-right">{pos.nextRide.time} · {nodes[resolveNode(nodes, pos.nextRide.fromId, pos.nextRide.fromId === "festival" ? pos.nextRide.zone : null, pos.nextRide.fromCustom)]?.short || "?"} → {nodes[resolveNode(nodes, pos.nextRide.toId, pos.nextRide.zone, pos.nextRide.toCustom)]?.short || "?"}</dd></div>
+          <div className="flex justify-between gap-2"><dt style={{ color: "var(--mc-text-muted)" }}>Nächster Auftrag</dt><dd className="text-right" style={{ color: "var(--mc-text)" }}>{pos.nextRide.time} · {nodes[resolveNode(nodes, pos.nextRide.fromId, pos.nextRide.fromId === "festival" ? pos.nextRide.zone : null, pos.nextRide.fromCustom)]?.short || "?"} → {nodes[resolveNode(nodes, pos.nextRide.toId, pos.nextRide.zone, pos.nextRide.toCustom)]?.short || "?"}</dd></div>
         )}
         {pos.lastChange && (
-          <div className="flex justify-between gap-2"><dt className="text-stone-500">Letzte Änderung</dt><dd className="text-stone-300">{STATUS_LABEL[pos.lastChange.status] || pos.lastChange.status} · {fmtClock(pos.lastChange.at)}</dd></div>
+          <div className="flex justify-between gap-2"><dt style={{ color: "var(--mc-text-muted)" }}>Letzte Änderung</dt><dd style={{ color: "var(--mc-text-secondary)" }}>{STATUS_LABEL[pos.lastChange.status] || pos.lastChange.status} · {fmtClock(pos.lastChange.at)}</dd></div>
         )}
       </dl>
 
       {pos.driver.phone
-        ? <a href={`tel:${pos.driver.phone}`} className="mt-3 w-full inline-flex items-center justify-center gap-2 bg-emerald-600 hover:bg-emerald-500 text-white text-sm py-2 rounded-lg"><Navigation className="w-4 h-4" />Anrufen</a>
-        : <div className="mt-3 text-[11px] text-stone-600">Keine Telefonnummer hinterlegt.</div>}
+        ? <a href={`tel:${pos.driver.phone}`} className="mc-btn-primary mt-3 w-full inline-flex items-center justify-center gap-2 text-sm py-2" style={{ background: "var(--mc-st-done)", color: "#ffffff" }}><Navigation className="w-4 h-4" />Anrufen</a>
+        : <div className="mt-3 text-[11px]" style={{ color: "var(--mc-text-muted)" }}>Keine Telefonnummer hinterlegt.</div>}
     </div>
   );
 }
