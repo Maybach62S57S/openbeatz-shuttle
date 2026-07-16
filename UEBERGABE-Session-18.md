@@ -2310,7 +2310,9 @@ REGELN, aus 27a teuer gelernt:
   und legt den :hover tot. In 27a ueber borderColor geloest.
 - Enterprise dark, ruhig, nachtschichttauglich. Kein Gaming, kein Cyberpunk,
   kein Neon, keine uebertriebenen Animationen.
-- Die restlichen Komponenten NICHT anfassen, das sind 27b/27c.
+- Die restlichen Komponenten NICHT anfassen, das sind 27b/27c. Die kommen
+  aber, ich ziehe das Design bis zum Ende durch (Entscheidung 16.07.).
+  Also: Muster sauber halten, der naechste Chat kopiert es.
 - Weiter tabu: die Datenschicht, das dyn_data/RPC-Thema, der Fallschirm,
   Stage bleibt read-only. Fahrer/Stage/Gast auf MC-Design ist NICHT Thema,
   eigenes Projekt nach dem Festival.
@@ -2446,9 +2448,43 @@ Fahrer/Stage/Gast/Login zeichenidentisch ueber alle Commits.
 
 **998 Zeilen, 9 Komponenten, alle null MC-Tokens.**
 
-**Empfehlung:** 27d ist Pflicht (sitzt mitten in den MC-Seiten). ChatPanel und
-27c sind Zugabe. **SettingsTab nach dem Festival** - ein Tab, den Jordan einmal
-einrichtet und nie wieder anfasst, 301 Zeilen sind das vor dem Festival nicht
-wert. Ein Classic-SettingsTab liest sich als "noch nicht dran", nicht als
-"kaputt". **Halb umgebaut ist schlechter als beide Endzustaende** - das ist das
-eigentliche Risiko am Zeitplan.
+## JORDANS ENTSCHEIDUNG 16.07.: ALLES, bis zum Ende
+
+Ich hatte empfohlen, `SettingsTab` nach dem Festival zu schieben. **Jordan hat
+das kassiert:** "nichts Halbes und nichts Ganzes" will er nicht, er will ein
+sauberes Design und zieht es durch. **Damit ist 27b drin, nicht vertagt.**
+Diese Empfehlung ist hinfaellig, nicht wieder aufwaermen.
+
+**Reihenfolge (nach Sichtbarkeit und Risiko sortiert):**
+
+1. **27d** (176) - die Inseln mitten in den MC-Seiten. Hoechste Sichtbarkeit.
+2. **27c** (416) - FlightTab, MapTab, LiveGoogleMap.
+3. **27b + ChatPanel** (406) - der Rest.
+
+Je ein frischer Chat. Alles muss **vor Samstag 18.07.** rein, weil Jordan dann
+mit mehreren Fahrern testet und der getestete Stand der Festival-Stand ist.
+
+## WO DAS RISIKO WIRKLICH SITZT (nicht in den Zeilenzahlen)
+
+Bis 27a war alles harmlos: Dialoge ohne Eigenleben. Ab jetzt nicht mehr.
+
+- **`TimelineView` (27d) hat Drag-and-Drop** mit Bestaetigungs-Popover,
+  Ruecknahme-Hinweis und Jetzt-Linie. Da haengt Inline-`style` an
+  `left`/`width`/`opacity` und **traegt echte Positionslogik, kein Design.**
+  Wer dort `style` anfasst, muss vorher wissen, ob der Wert berechnet ist.
+  `.mc-tl-block` hat ausserdem eine Animation, die auf die Drag-Opacity (0.25)
+  Ruecksicht nimmt (siehe Kommentar bei `mc-entry-in`).
+- **`MapTab` / `LiveGoogleMap` (27c)** rendern eine echte Google-Karte.
+  Ein `render`-Test sieht davon nichts. Nur der Rahmen ist Classic, die Karte
+  drin ist schon MC (`SchematicComponent={MissionSchematicMap}`).
+- **`SettingsTab` (27b) haengt an `Field`/`inp`.** Der Schalter ist seit 27a
+  da: `mc` setzen, `inp` durch `mcInp` ersetzen. Handwerklich leicht, aber
+  301 Zeilen und **jede Menge Schreibwege** (PINs, Orte, Matrix, Zonen,
+  Gast-Tokens). NUR className, sonst nichts.
+- **Alles drei hat Zustaende hinter Toggles/Tabs**, die ein Render-Test NICHT
+  sieht (die 27a-Falle). Dort zusaetzlich per Quelltext pruefen und Jordan
+  sagen, was ein Mensch anschauen muss.
+
+**Halb umgebaut ist schlechter als beide Endzustaende.** Deshalb wird es
+durchgezogen. Aber: wenn eine Scheibe nicht sauber belegbar ist, lieber DIESE
+Scheibe zurueckhalten als sie ungeprueft mitnehmen.
