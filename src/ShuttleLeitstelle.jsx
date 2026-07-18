@@ -8045,7 +8045,7 @@ function MissionControl({ setup, dyn, session, updateDyn, updateSetup, onLogout,
       )}
 
       {/* ---- Obere Statusleiste ---- */}
-      <header className="sticky top-0 z-20 backdrop-blur" style={{ background: "color-mix(in srgb, var(--mc-bg) 92%, transparent)", borderBottom: "1px solid var(--mc-border)" }}>
+      <header className="sticky top-0 z-20 backdrop-blur" style={{ background: "color-mix(in srgb, var(--mc-bg) 92%, transparent)", borderBottom: "1px solid var(--mc-border)", paddingTop: "env(safe-area-inset-top)" }}>
         <div className="px-4 py-2.5 flex items-center gap-3">
           <div className="flex items-center gap-2.5 shrink-0">
             <span className="ob-pulse inline-block w-2 h-2 rounded-full bg-orange-500 shrink-0" />
