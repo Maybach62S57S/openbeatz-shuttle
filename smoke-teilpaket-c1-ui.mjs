@@ -86,9 +86,18 @@ catch (e) { gCrash = true; console.log("   Render-Fehler (garbage):", e.message)
 ok(!gCrash, "46. kein Absturz bei ungueltiger Datei (TIMETABLE_RAW = null)");
 
 // ---- 47-50: Read-only (statische Analyse des TimetableTab-Koerpers) ----
+// Koerper depth-korrekt bis zur schliessenden Klammer der Funktion abgrenzen
+// (nicht bis zur naechsten Funktion - sonst wuerden nachfolgend eingefuegte
+// Nachbarfunktionen faelschlich mitgemessen, z. B. die C2-Matching-Schicht).
 const s = rawSrc.indexOf("function TimetableTab()");
-const e = rawSrc.indexOf("function MissionDriversTab");
-const body = rawSrc.slice(s, e);
+let body = "";
+{
+  const j = rawSrc.indexOf("{", s); let depth = 0, m = j;
+  for (; m < rawSrc.length; m++) {
+    if (rawSrc[m] === "{") depth++;
+    else if (rawSrc[m] === "}") { depth--; if (depth === 0) { body = rawSrc.slice(s, m + 1); break; } }
+  }
+}
 const forbidden = ["updateDyn", "updateSetup", "sset(", "sget(", "supabase", ".insert(", ".update(", ".delete(", "localStorage.setItem", "window.storage", "advanceStatus", "assignRide", "reportIssue"];
 const hits = forbidden.filter((tok) => body.includes(tok));
 ok(hits.length === 0, "47-50. TimetableTab enthaelt KEINEN Schreibvorgang (updateDyn/Supabase/Storage/Zuweisung) - Treffer: " + (hits.join(", ") || "keine"));

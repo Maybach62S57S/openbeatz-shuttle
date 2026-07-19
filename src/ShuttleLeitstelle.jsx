@@ -4150,6 +4150,8 @@ function AssignModal({ setup, dyn, ride, onClose, onAssign }) {
   const pickupRedirected = opLoc.appliedRules.length > 0
     && opLoc.operationalFrom.operationalLocation !== opLoc.requestedFrom.normalizedLocation;
   const current = setup.drivers.find((d) => d.id === ride.assignedDriverId);
+  // Teilpaket C2: einmalig normalisierte Timetable-Eintraege (rein lesend).
+  const ttMatchEntries = useMemo(() => normalizeTimetableEntries(TIMETABLE_RAW), []);
   const [assigning, setAssigning] = useState(false); // Doppelklick-Schutz + Ladezustand
   const [assignErr, setAssignErr] = useState("");     // sichtbare Meldung, falls die Zuteilung nicht gespeichert wird
 
@@ -4210,6 +4212,8 @@ function AssignModal({ setup, dyn, ride, onClose, onAssign }) {
             <AlertTriangle className="w-3.5 h-3.5" />Zielort nicht erkannt – Fahrzeit unbekannt, bitte manuell prüfen.
           </div>
         )}
+        {/* Teilpaket C2: rein lesende Timetable-Zuordnung (nur Anzeige, nichts gespeichert). */}
+        <TimetableMatchInfo ride={ride} entries={ttMatchEntries} />
       </div>
 
       {current && (
@@ -4384,6 +4388,15 @@ function RideForm({ setup, ride, onClose, onSave, onDelete }) {
   };
 
   const toIsFestival = f.toId === "festival";
+  // Teilpaket C2: rein lesende Timetable-Zuordnung. Live aus dem Formular-State
+  // abgeleitete Ride-Ansicht (aktualisiert sich beim Tippen von Artist/Datum/
+  // Richtung). Nur Anzeige, keine Speicherung des Ergebnisses am Ride.
+  const ttEntries = useMemo(() => normalizeTimetableEntries(TIMETABLE_RAW), []);
+  const ttMatchRide = useMemo(() => ({
+    djName: f.djName, date: f.date, time: f.time,
+    fromId: f.fromId, toId: f.toId,
+    dayKey: festDayKey(f.date, f.time),
+  }), [f.djName, f.date, f.time, f.fromId, f.toId]);
   const dur = travel(setup.matrix, f.fromId, f.toId);        // aus Matrix (null = unbekannt)
   const durKnown = dur != null;
   // Vor-Festival-Sicherheitsphase: keine stille 1 mehr. pax ist entweder eine
@@ -4498,6 +4511,7 @@ function RideForm({ setup, ride, onClose, onSave, onDelete }) {
           </Field>
         )}
         <Field label="DJ / Artist" mc><input className={mcInp} value={f.djName} onChange={(e) => set("djName", e.target.value)} placeholder="z. B. Alok" /></Field>
+        <div className="col-span-2"><TimetableMatchInfo ride={ttMatchRide} entries={ttEntries} /></div>
         <Field label="Personen" mc><input type="number" min="1" max="8" className={mcInp} value={f.passengerCount} onChange={(e) => set("passengerCount", e.target.value)} /></Field>
         <Field label="Flugnummer" mc><input className={mcInp} value={f.flightNo} onChange={(e) => set("flightNo", e.target.value)} placeholder="z. B. KL1845" /></Field>
         {(f.fromId === "airport" || f.flightNo) && (
@@ -5225,6 +5239,456 @@ function TimetableTab() {
         ))
       )}
     </div>
+  );
+}
+
+
+/* ============================================================================
+   Teilpaket C2: sicheres Artist-Matching zwischen Fahrten und Timetable
+   ----------------------------------------------------------------------------
+   REIN LESEND. Keinerlei Schreibvorgang (kein updateDyn, kein Supabase, kein
+   Storage, keine Aenderung an ride/timetable/Status/Zeit). Berechnet nur
+   moegliche Timetable-Zuordnungen und macht sie nachvollziehbar sichtbar.
+
+   Bewusst NICHT enthalten (spaetere Teilpakete): farbliche/kritische Zeit-
+   warnungen, automatische Zeit-/Status-/Fahrer-Aenderungen, Fuzzy-Matching,
+   Levenshtein, phonetische Aehnlichkeit, Tippfehlerkorrektur.
+
+   Kanonisches Ride-Artist-Feld: ride.djName (einzige Quelle laut Datenanalyse;
+   passengers=Begleitnamen, notes=Freitext, type=Fahrttyp -> kein Fallback).
+   Betriebstag ausschliesslich ueber den bestehenden Helfer festDayKey.
+   Wiederverwendet aus C1: normalizeTimetableEntries (liefert artist, startAt,
+   endAt, dayKey via festDayKey, durationMin, valid) sowie ttHash/toMin/sortMin.
+   ========================================================================== */
+
+/* Reine Normalisierung NUR fuer Vergleiche. Der sichtbare Originalname wird
+ * NIEMALS veraendert. Setzt kein Fuzzy/Aehnlichkeit ein: gleicht nur Schreib-
+ * weise an (Gross/Klein, Diakritika, ss/ß, dekorative Sonderzeichen). Zwei
+ * verschiedene Kuenstler werden dadurch nicht gleichgesetzt. */
+function normalizeArtistName(value) {
+  let s = String(value == null ? "" : value);
+  // typografische Apostrophe/Anfuehrungen auf ASCII vereinheitlichen (dann entfernt)
+  s = s.replace(/[\u2018\u2019\u02BC\u2032]/g, "'").replace(/[\u201C\u201D]/g, '"');
+  s = s.toLowerCase();
+  // ß -> ss VOR der Diakritika-Entfernung (NFKD zerlegt ß nicht)
+  s = s.replace(/\u00df/g, "ss").replace(/\u1e9e/g, "ss");
+  // Deutsche Umlaute AUSGESCHRIEBEN transliterieren (ä->ae, ö->oe, ü->ue), damit
+  // die Umlaut-Form UND die ausgeschriebene Form identisch normalisieren
+  // ("Gestört" == "Gestoert"). Muss VOR der Diakritika-Entfernung passieren,
+  // sonst wuerde ö sonst nur zu "o" (Diakritika weg) statt "oe".
+  s = s.replace(/\u00e4/g, "ae").replace(/\u00f6/g, "oe").replace(/\u00fc/g, "ue");
+  // uebrige Diakritika entfernen (é->e, á->a ...); Umlaute sind schon ersetzt.
+  s = s.normalize("NFKD").replace(/[\u0300-\u036f]/g, "");
+  // & in einheitliches Wort ueberfuehren, damit "W&W" == "W and W" == "W & W"
+  s = s.replace(/&/g, " and ");
+  // dekorative Sonderzeichen, Binde-/Unterstriche, Punkte, Kommas, Apostrophe
+  // zu Leerzeichen. Buchstaben/Ziffern bleiben.
+  s = s.replace(/[^a-z0-9]+/g, " ");
+  return s.replace(/\s+/g, " ").trim();
+}
+
+/* Explizite Artist-Alias-Konfiguration.
+ * Struktur: { "<kanonisch-normalisiert>": ["<alias-normalisiert>", ...] }.
+ * NUR aus realen Fahrt-/Timetable-Daten belegte oder fachlich bestaetigte
+ * Aliase eintragen - keine erfundenen. Die Datenanalyse (C2, Abschnitt 1)
+ * ergab KEINE aus den vorhandenen Daten belegbare Alias-Regel (die grossen
+ * Ride-Headliner stehen nicht im Timetable), deshalb ist die Tabelle bewusst
+ * leer. Sie bleibt zentral erweiterbar, sobald bestaetigte Faelle vorliegen.
+ * Regeln muessen deterministisch und eindeutig auf genau einen kanonischen
+ * Artist zeigen; mehrdeutige Aliase (auf >1 Kanon) werden beim Aufbau
+ * verworfen. Aliase gelten NUR fuer das Matching, nie fuer die Anzeige. */
+const ARTIST_ALIASES = {
+  // Beispiel (auskommentiert, NICHT aktiv - nur Formatdoku):
+  // "kanonischer name": ["alternative schreibweise", "bekannte abkuerzung"],
+};
+
+/* Baut aus ARTIST_ALIASES eine flache, deterministische Lookup-Map
+ * alias(normalisiert) -> kanonisch(normalisiert). Mehrdeutige Aliase (zeigen
+ * auf mehr als einen Kanon) werden verworfen (als ungueltig markiert), damit
+ * ein Alias niemals zwischen zwei Kuenstlern raten muss. Reine Funktion. */
+function buildArtistAliasIndex(aliases) {
+  const map = new Map();       // alias -> canon
+  const rejected = new Set();  // alias, der mehrdeutig ist
+  const src = aliases && typeof aliases === "object" ? aliases : {};
+  for (const canonRaw of Object.keys(src)) {
+    const canon = normalizeArtistName(canonRaw);
+    if (!canon) continue;
+    const list = Array.isArray(src[canonRaw]) ? src[canonRaw] : [];
+    for (const aliasRaw of list) {
+      const alias = normalizeArtistName(aliasRaw);
+      if (!alias || alias === canon) continue;
+      if (rejected.has(alias)) continue;
+      if (map.has(alias) && map.get(alias) !== canon) {
+        // mehrdeutig -> beide Richtungen verwerfen
+        map.delete(alias);
+        rejected.add(alias);
+        continue;
+      }
+      map.set(alias, canon);
+    }
+  }
+  return { map, rejected };
+}
+
+/* Kollaborations-Trenner. WICHTIG: "&" ist bewusst NICHT dabei, weil es Teil
+ * eines einzelnen Kuenstlernamens sein kann (z. B. "Harris & Ford",
+ * "2 Engel & Charlie"). Nur eindeutige B2B/Versus-Muster trennen. */
+const TT_COLLAB_RE = /\s+(?:b2b|back\s+to\s+back|vs\.?)\s+/i;
+
+/* Ermittelt aus dem Timetable-Namen die einzelnen Kuenstler eines B2B-/Versus-
+ * Sets. Der Originalname (originalArtistLabel) bleibt IMMER vollstaendig und
+ * unveraendert erhalten. Reine Funktion, keine Nebenwirkung.
+ * Rueckgabe:
+ *   { originalArtistLabel, normalizedArtists:[...], collaborationType, status }
+ * status: "parsed" (eindeutig geteilt) | "unparsed" (nicht eindeutig teilbar). */
+function extractTimetableArtists(entry) {
+  const original = entry && typeof entry.artist === "string" ? entry.artist : "";
+  const base = { originalArtistLabel: original, normalizedArtists: [], collaborationType: null, status: "unparsed" };
+  if (!original.trim()) return base;
+
+  // Kollaborationstyp bestimmen (nur echte Muster).
+  let collaborationType = null;
+  if (/\bb2b\b|\bback\s+to\s+back\b/i.test(original)) collaborationType = "b2b";
+  else if (/\bvs\.?\b/i.test(original)) collaborationType = "vs";
+
+  if (!collaborationType) {
+    // Einzel-Artist: als genau ein normalisierter Name, sauber "parsed".
+    const n = normalizeArtistName(original);
+    return { originalArtistLabel: original, normalizedArtists: n ? [n] : [], collaborationType: null, status: n ? "parsed" : "unparsed" };
+  }
+
+  // B2B/vs.: entlang der eindeutigen Trenner splitten.
+  const parts = original.split(TT_COLLAB_RE).map((p) => normalizeArtistName(p)).filter(Boolean);
+  // Nur akzeptieren, wenn mindestens zwei nichtleere, unterscheidbare Teile
+  // herauskommen. Sonst nicht eindeutig teilbar -> unparsed (kein Raten).
+  const uniq = [...new Set(parts)];
+  if (uniq.length < 2) return { originalArtistLabel: original, normalizedArtists: [], collaborationType, status: "unparsed" };
+  return { originalArtistLabel: original, normalizedArtists: uniq, collaborationType, status: "parsed" };
+}
+
+/* Fahrtrichtung aus den Ride-Endpunkten. Rein aus fromId/toId (die operative
+ * Umleitung Leonardo/HBF -> Sheraton-Pickup aendert nur den Abholpunkt, nicht,
+ * ob es zum/vom Festival geht). "toFestival" = Hinfahrt, "fromFestival" =
+ * Rueckfahrt, sonst "other". Reine Funktion. */
+function rideFestivalDirection(ride) {
+  const from = ride && ride.fromId;
+  const to = ride && ride.toId;
+  if (to === "festival" && from !== "festival") return "toFestival";
+  if (from === "festival" && to !== "festival") return "fromFestival";
+  return "other";
+}
+
+/* Kanonischer Ride-Artist-Eingabewert. Nur ride.djName (Datenanalyse: einzige
+ * verlaessliche Quelle). Kein Erraten aus passengers/notes/type. Reine Funktion. */
+function rideCanonicalArtist(ride) {
+  const raw = ride && typeof ride.djName === "string" ? ride.djName : "";
+  return { original: raw, normalized: normalizeArtistName(raw), present: !!raw.trim() };
+}
+
+/* Baut memo-isierbare Indizes ueber die (bereits aus C1 normalisierten)
+ * Timetable-Eintraege: pro normalisiertem Artist (inkl. B2B-Mitglieder) und
+ * pro Betriebstag. Wiederverwendung der C1-Normalisierung, kein Neuparsen der
+ * Zeiten. Reine Funktion; erwartet die Ausgabe von normalizeTimetableEntries. */
+function buildTimetableMatchIndex(entries) {
+  const list = Array.isArray(entries) ? entries : [];
+  const valid = list.filter((e) => e && e.valid);
+  // artistNorm -> [{ entry, memberOf(null|originalLabel), collaborationType }]
+  const byArtist = new Map();
+  const byDay = new Map();
+  for (const entry of valid) {
+    if (entry.dayKey) {
+      if (!byDay.has(entry.dayKey)) byDay.set(entry.dayKey, []);
+      byDay.get(entry.dayKey).push(entry);
+    }
+    const ex = extractTimetableArtists(entry);
+    if (ex.status !== "parsed") continue;
+    const isCollab = !!ex.collaborationType;
+    for (const nName of ex.normalizedArtists) {
+      if (!byArtist.has(nName)) byArtist.set(nName, []);
+      byArtist.get(nName).push({
+        entry,
+        memberOf: isCollab ? ex.originalArtistLabel : null,
+        collaborationType: ex.collaborationType,
+      });
+    }
+  }
+  return { byArtist, byDay };
+}
+
+/* Zeitliche Auswahl unter mehreren Kandidaten desselben Tages, abhaengig von
+ * der Fahrtrichtung. Erzeugt NIEMALS einen Artist-Match (der ist bereits
+ * erfolgt), nur die Auswahl des plausibelsten Sets. Gibt den ausgewaehlten
+ * Kandidaten zurueck oder null (bei verbleibender Mehrdeutigkeit). Reine
+ * Funktion, ohne Warnung/Farbe. */
+function pickByTime(candidates, direction, ride) {
+  if (!candidates.length) return null;
+  if (candidates.length === 1) return candidates[0];
+
+  const rideMin = ride && ride.time ? sortMin(ride.time) : null;
+  const startMin = (e) => (e.startAt ? sortMin(e.startAt.slice(11)) : null);
+  const endMin = (e) => (e.endAt ? sortMin(e.endAt.slice(11)) : null);
+
+  if (rideMin == null) return null; // ohne Fahrtzeit keine zeitliche Aufloesung
+
+  if (direction === "toFestival") {
+    // relevantestes Set: Beginn nach geplanter Ankunft, sonst zeitlich naechster
+    const withStart = candidates.filter((e) => startMin(e) != null);
+    if (!withStart.length) return null;
+    const after = withStart.filter((e) => startMin(e) >= rideMin);
+    const pool = after.length ? after : withStart;
+    let best = null, bestDist = Infinity;
+    for (const e of pool) {
+      const d = Math.abs(startMin(e) - rideMin);
+      if (d < bestDist) { bestDist = d; best = e; }
+      else if (d === bestDist) { best = null; } // Gleichstand -> nicht eindeutig
+    }
+    return best;
+  }
+
+  if (direction === "fromFestival") {
+    // relevantestes Set: Ende vor/nahe geplanter Rueckfahrt, sonst naechstes
+    const withEnd = candidates.filter((e) => endMin(e) != null);
+    if (!withEnd.length) return null;
+    const before = withEnd.filter((e) => endMin(e) <= rideMin);
+    const pool = before.length ? before : withEnd;
+    let best = null, bestDist = Infinity;
+    for (const e of pool) {
+      const d = Math.abs(endMin(e) - rideMin);
+      if (d < bestDist) { bestDist = d; best = e; }
+      else if (d === bestDist) { best = null; }
+    }
+    return best;
+  }
+
+  // andere Richtungen: keinen zeitlichen Hauptkandidaten erzwingen
+  return null;
+}
+
+/* Zentrale reine Matching-Funktion. Veraendert NICHTS. Reihenfolge streng:
+ *   1) exakter normalisierter Name  -> "exact"
+ *   2) expliziter Alias             -> "alias"
+ *   3) eindeutiges B2B-Mitglied     -> "b2b_member"
+ * Zeit wird NUR danach zur Kandidatenauswahl genutzt (nie zur Match-Erzeugung).
+ * Statuswerte (nur berechnete Rueckgabe): exact | alias | b2b_member |
+ * multiple_candidates | no_match | missing_artist | invalid_artist. */
+function matchRideToTimetable({ ride, timetableEntries, aliases, index, aliasIndex }) {
+  const idx = index || buildTimetableMatchIndex(timetableEntries);
+  const aIdx = aliasIndex || buildArtistAliasIndex(aliases || ARTIST_ALIASES);
+  const direction = rideFestivalDirection(ride);
+  const dayKey = ride && ride.dayKey ? ride.dayKey : (ride && ride.date ? festDayKey(ride.date, ride.time || "12:00") : null);
+  const art = rideCanonicalArtist(ride);
+
+  const diagnosticBase = {
+    rideArtistOriginal: art.original,
+    rideArtistNormalized: art.normalized,
+    festivalDay: dayKey,
+    direction,
+    candidates: [],
+    excluded: [],
+    selected: null,
+  };
+
+  // Fehlender Artist.
+  if (!art.present) {
+    return { ...diagnosticBase, status: "missing_artist", reason: "Kein Artist für Timetable-Zuordnung hinterlegt", matchStage: null };
+  }
+  // Nur-Sonderzeichen / nicht verarbeitbar.
+  if (!art.normalized) {
+    return { ...diagnosticBase, status: "invalid_artist", reason: "Artist-Angabe kann nicht verarbeitet werden", matchStage: null };
+  }
+
+  // Kandidaten-Herkunft bestimmen: exakt -> alias -> b2b_member (erste greifende Stufe gewinnt).
+  let hits = idx.byArtist.get(art.normalized) || [];
+  let matchStage = null;
+  let usedName = art.normalized;
+
+  const exactHits = hits.filter((h) => h.memberOf === null);
+  const b2bHits = hits.filter((h) => h.memberOf !== null);
+
+  if (exactHits.length) {
+    matchStage = "exact";
+    hits = exactHits;
+  } else {
+    // Stufe 2: expliziter Alias -> auf kanonischen Namen umlenken, dann exakt suchen.
+    const canon = aIdx.map.get(art.normalized);
+    if (canon) {
+      const canonHits = (idx.byArtist.get(canon) || []).filter((h) => h.memberOf === null);
+      if (canonHits.length) {
+        matchStage = "alias";
+        usedName = canon;
+        hits = canonHits;
+      }
+    }
+    if (!matchStage && b2bHits.length) {
+      matchStage = "b2b_member";
+      hits = b2bHits;
+    }
+  }
+
+  if (!matchStage || !hits.length) {
+    return { ...diagnosticBase, status: "no_match", reason: "Kein passendes Timetable-Set gefunden", matchStage: null };
+  }
+
+  // Kandidaten (bereits Artist-gematcht). Diagnose je Kandidat.
+  const candidateEntries = hits.map((h) => h.entry);
+
+  // Tag beruecksichtigen: gleicher festDayKey bevorzugt.
+  const excluded = [];
+  let dayScoped = candidateEntries;
+  if (dayKey) {
+    const sameDay = candidateEntries.filter((e) => e.dayKey === dayKey);
+    candidateEntries.forEach((e) => {
+      if (e.dayKey !== dayKey) excluded.push({ id: e.id, reason: `anderer Festival-Tag (${e.dayKey || "?"})` });
+    });
+    if (sameDay.length) dayScoped = sameDay;
+    // Wenn kein Set am gleichen Tag: keine tagesfremde Einzelauswahl erzwingen.
+    else dayScoped = candidateEntries;
+  }
+
+  // Sortierte Kandidatenliste (zeitliche Plausibilitaet, Start, Stage, Artist, ID).
+  const sortedCandidates = dayScoped.slice().sort((a, b) => {
+    const sa = a.startAt || "", sb = b.startAt || "";
+    if (sa !== sb) return sa < sb ? -1 : 1;
+    if (a.stage !== b.stage) return a.stage.localeCompare(b.stage, "de");
+    if (a.artist !== b.artist) return a.artist.localeCompare(b.artist, "de");
+    return (a.sourceIndex || 0) - (b.sourceIndex || 0);
+  });
+
+  const collabLabelFor = (entry) => {
+    const h = hits.find((x) => x.entry === entry);
+    return h ? h.memberOf : null;
+  };
+
+  const result = {
+    ...diagnosticBase,
+    matchStage,
+    matchedNormalized: usedName,
+    candidates: sortedCandidates.map((e) => ({
+      id: e.id, artist: e.artist, stage: e.stage, dayKey: e.dayKey,
+      startAt: e.startAt, endAt: e.endAt,
+      collaborationLabel: collabLabelFor(e),
+    })),
+    excluded,
+  };
+
+  // Eindeutig genau ein Kandidat (nach Tagesfilter).
+  if (sortedCandidates.length === 1) {
+    const e = sortedCandidates[0];
+    return { ...result, status: matchStage, selected: candOut(e, collabLabelFor(e)), reason: reasonFor(matchStage) };
+  }
+
+  // Mehrere gleicher Tag -> zeitliche Auswahlregel versuchen.
+  const sameDaySet = dayKey ? sortedCandidates.filter((e) => e.dayKey === dayKey) : sortedCandidates;
+  if (sameDaySet.length > 1) {
+    const picked = pickByTime(sameDaySet, direction, ride);
+    if (picked) {
+      return { ...result, status: matchStage, selected: candOut(picked, collabLabelFor(picked)), reason: reasonFor(matchStage) + " · zeitlich ausgewählt" };
+    }
+    return { ...result, status: "multiple_candidates", selected: null, reason: "Mehrere plausible Sets gefunden" };
+  }
+
+  // sonst (kein Set am Tag, mehrere tagesfremd) -> keine Einzelauswahl erzwingen.
+  return { ...result, status: "multiple_candidates", selected: null, reason: "Mehrere plausible Sets gefunden" };
+}
+
+function candOut(e, collaborationLabel) {
+  return { id: e.id, artist: e.artist, stage: e.stage, dayKey: e.dayKey, startAt: e.startAt, endAt: e.endAt, collaborationLabel: collaborationLabel || null };
+}
+function reasonFor(stage) {
+  if (stage === "exact") return "Exakter Artist-Name";
+  if (stage === "alias") return "Treffer über Alias";
+  if (stage === "b2b_member") return "Mitglied eines B2B-Sets";
+  return "";
+}
+
+/* ---- C2 UI: neutrale, rein lesende Timetable-Match-Anzeige --------------- *
+ * Nur Leitstellenansicht (eingebunden in RideForm / AssignModal). Keine roten/
+ * gelben/gruenen Zeitwarnungen (kommt erst in C3). Keine Schreibaktion.
+ * ------------------------------------------------------------------------- */
+function ttSetLine(setup, cand) {
+  const day = cand.dayKey ? fmtDate(cand.dayKey) : "";
+  const s = cand.startAt ? cand.startAt.slice(11) : "?";
+  const en = cand.endAt ? cand.endAt.slice(11) : "?";
+  return `${day ? day + " · " : ""}${cand.stage} · ${s}–${en}`;
+}
+
+function TimetableMatchInfo({ ride, entries }) {
+  const match = useMemo(
+    () => matchRideToTimetable({ ride, timetableEntries: entries }),
+    [ride, entries]
+  );
+
+  const wrap = (children) => (
+    <div className="rounded-lg p-3 mt-1 text-xs" style={{ background: "var(--mc-inset)", border: "1px solid var(--mc-border)" }}>
+      <div className="flex items-center gap-1.5 mb-1.5 font-medium" style={{ color: "var(--mc-text-secondary)" }}>
+        <Clock className="w-3.5 h-3.5" />Timetable-Zuordnung
+      </div>
+      {children}
+    </div>
+  );
+
+  if (match.status === "missing_artist") {
+    return wrap(<div style={{ color: "var(--mc-text-muted)" }}>Kein Artist für Timetable-Zuordnung hinterlegt</div>);
+  }
+  if (match.status === "invalid_artist") {
+    return wrap(<div style={{ color: "var(--mc-text-muted)" }}>Artist-Angabe kann nicht verarbeitet werden</div>);
+  }
+  if (match.status === "no_match") {
+    return wrap(<div style={{ color: "var(--mc-text-muted)" }}>Kein passendes Timetable-Set gefunden</div>);
+  }
+
+  if (match.status === "multiple_candidates") {
+    return wrap(
+      <div>
+        <div className="mb-1.5" style={{ color: "var(--mc-st-assigned)" }}>Timetable-Zuordnung prüfen · mehrere plausible Sets</div>
+        <div className="space-y-1">
+          {match.candidates.map((c) => (
+            <div key={c.id} style={{ color: "var(--mc-text)" }}>
+              <span className="font-medium">{c.artist}</span>
+              <span style={{ color: "var(--mc-text-muted)" }}> — {ttSetLine(null, c)}</span>
+            </div>
+          ))}
+        </div>
+        {renderDiagnostics(match)}
+      </div>
+    );
+  }
+
+  // exact / alias / b2b_member mit ausgewaehltem Set (selected)
+  const sel = match.selected;
+  return wrap(
+    <div>
+      <div className="font-semibold mb-0.5" style={{ color: "var(--mc-text)" }}>
+        {sel.collaborationLabel || sel.artist}
+      </div>
+      <div style={{ color: "var(--mc-text-secondary)" }}>{ttSetLine(null, sel)}</div>
+      <div className="mt-1" style={{ color: "var(--mc-text-muted)" }}>
+        {match.matchStage === "exact" && <>Match: Exakter Artist-Name</>}
+        {match.matchStage === "alias" && <>Match über Alias: {match.rideArtistOriginal}</>}
+        {match.matchStage === "b2b_member" && <>Fahrt zugeordnet zu {sel.artist} innerhalb dieses B2B-Sets</>}
+      </div>
+      {renderDiagnostics(match)}
+    </div>
+  );
+}
+
+/* Aufklappbare, technisch nachvollziehbare Diagnose (keine Stacktraces). */
+function renderDiagnostics(match) {
+  return (
+    <details className="mt-2">
+      <summary className="cursor-pointer text-[11px]" style={{ color: "var(--mc-text-muted)" }}>Details</summary>
+      <div className="mt-1 space-y-0.5 text-[11px]" style={{ color: "var(--mc-text-muted)" }}>
+        <div>Ride-Artist: {match.rideArtistOriginal || "—"} (norm.: {match.rideArtistNormalized || "—"})</div>
+        <div>Match-Stufe: {match.matchStage || match.status}</div>
+        <div>Festival-Tag: {match.festivalDay || "—"}</div>
+        <div>Fahrtrichtung: {match.direction}</div>
+        <div>Kandidaten: {match.candidates.length}</div>
+        {match.excluded && match.excluded.length > 0 && (
+          <div>Ausgeschlossen: {match.excluded.map((x) => `${x.id} (${x.reason})`).join(", ")}</div>
+        )}
+        <div>Auswahl: {match.selected ? `${match.selected.artist} · ${match.selected.stage}` : match.reason}</div>
+      </div>
+    </details>
   );
 }
 
