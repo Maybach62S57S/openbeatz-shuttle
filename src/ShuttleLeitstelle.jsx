@@ -7376,6 +7376,450 @@ function buildWaitRideCandidates({ dyn, setup, now, day }) {
   return { byReturn, hub, multiBestDrivers };
 }
 
+/* =========================================================================
+   Teilpaket F (Scheibe F1): Sichere Sammelfahrt-Vorschlaege - reine Logik.
+   REIN LESEND und additiv. Keine Fahrt/kein Fahrer/keine Zuteilung wird
+   veraendert, kein Schreibweg, kein gespeicherter Zustand (Spec 3/4/38).
+   Nutzt ausschliesslich bestehende reine Helfer: rideFestivalDirection
+   (Richtung, Spec 8), c3OperationalNodes + travelMin (operative Orte/Fahrzeit
+   inkl. Leonardo/HBF -> Sheraton-Pickup, Spec 25), c3RideStartAbsMin (mitter-
+   nachtssichere Absolutminute, Spec 19), validPassengerCount (Sitzplatzlogik,
+   Spec 17), evaluateTimetableTiming/matchRideToTimetable (C2/C3-Veto, Spec 20/21/28).
+   F1 unterstuetzt bewusst NUR Paare (maxGroupSize 2); Dreiergruppen sind auf
+   Scheibe F3 verschoben (Spec 7/31: Stabilitaet vor Dreiern). Keine UI hier.
+   ========================================================================= */
+
+// Verbindliche, EINZIGE Schwellenquelle fuer F (Spec 10). Keine zweiten Grenz-
+// werte in anderen Funktionen/Komponenten. minTurnaroundBufferMin aus dem Spec-
+// Entwurf ist bewusst NICHT enthalten: eine Sammelfahrt hat keine Wende.
+const GROUP_RIDE_CONFIG = {
+  maxDepartureDifferenceMin: 20,      // groesserer Abstand -> kein positiver Vorschlag
+  preferredDepartureDifferenceMin: 10, // Info: bevorzugter Bereich
+  maxTotalDetourMin: 25,              // Obergrenze operativer Gesamtumweg
+  minSavedDrivingMin: 15,             // Mindest-Einsparung fuer starke Empfehlung
+  maxGroupSize: 2,                    // F1: nur Paare (F3 -> 3)
+};
+
+// Sichtbare Labels (Spec 12). same_route_direct/already_planned sind bewusst
+// KEINE eigenen Status; "identische Route" laeuft ueber das Flag identicalRoute,
+// das haelt die Statusmaschine und das Ranking eindeutig.
+const GROUP_RIDE_STATUS_LABEL = {
+  group_recommended: "Sammelfahrt sinnvoll",
+  group_possible: "Sammelfahrt möglicherweise sinnvoll",
+  group_not_recommended: "Getrennte Fahrten sinnvoller",
+  group_not_evaluable: "Nicht sicher bewertbar",
+};
+
+// Anzeige-/Sortier-Prioritaet (Spec 30). Kleinere Zahl = weiter oben.
+const GROUP_RIDE_STATUS_ORDER = {
+  group_recommended: 10,
+  group_possible: 20,
+  group_not_recommended: 40,
+  group_not_evaluable: 60,
+};
+
+// Nur diese Status sind operativ als Sammelvorschlag handlungsleitend (Spec 31).
+const GROUP_RIDE_ACTIONABLE = new Set(["group_recommended", "group_possible"]);
+
+// Zone eines Matrix-Knotens (bestehende Zonenzuordnung, Spec 23: keine neue Zone).
+function groupZoneOfNode(node) {
+  if (!node) return "UNKNOWN";
+  return (typeof LOC_ZONE === "object" && LOC_ZONE && LOC_ZONE[node]) ? LOC_ZONE[node] : "UNKNOWN";
+}
+
+// Flotten-Sitzplaetze: hoechste Kapazitaet + kapazitiv passende Fahrzeuge (Spec 17).
+// BEWUSST keine Verfuegbarkeit behauptet - nur "welches Fahrzeug haette ueberhaupt
+// genug Sitze". Reine Funktion.
+function groupFleetSeats(setup, need) {
+  const drivers = (setup && Array.isArray(setup.drivers)) ? setup.drivers : [];
+  let maxSeats = 0;
+  const suitable = [];
+  for (const d of drivers) {
+    const s = (typeof d.seats === "number" && Number.isFinite(d.seats)) ? d.seats : 0;
+    if (s > maxSeats) maxSeats = s;
+    if (need != null && s >= need && d.vehicleId) suitable.push(d.vehicleId);
+  }
+  // Fahrzeuge deduplizieren, stabile Reihenfolge.
+  const seen = new Set();
+  const suitableVehicleIds = suitable.filter((v) => (seen.has(v) ? false : (seen.add(v), true))).sort();
+  return { maxSeats, suitableVehicleIds };
+}
+
+// Operative Endpunkte einer Fahrt: variabler Knoten (nicht-Festival-Seite) und
+// Festival-Seite, plus Absolut-Startminute. Reine Ableitung ueber die bestehende
+// B/C3-Kette. null-Felder = nicht sicher aufloesbar (nie geraten).
+function groupRideEndpoints(ride, setup) {
+  const dir = rideFestivalDirection(ride); // toFestival | fromFestival | other
+  const out = { dir, festivalNode: null, variableNode: null, fromNode: null, toNode: null, startAbs: null, zone: "UNKNOWN" };
+  if (!ride || !setup || !setup.matrix) return out;
+  const nodes = c3OperationalNodes(ride, setup);
+  out.fromNode = nodes.fromNode; out.toNode = nodes.toNode;
+  out.startAbs = c3RideStartAbsMin(ride.date, ride.time);
+  if (dir === "toFestival") { out.festivalNode = nodes.toNode; out.variableNode = nodes.fromNode; }
+  else if (dir === "fromFestival") { out.festivalNode = nodes.fromNode; out.variableNode = nodes.toNode; }
+  out.zone = groupZoneOfNode(out.variableNode);
+  return out;
+}
+
+// Route + Einsparung eines Paars (Spec 24/25/26). Beide Richtungen getrennt ueber
+// travelMin (asymmetrie-sicher). Fehlt EINE benoetigte Kante -> routeReliable=false,
+// KEINE Einsparung (nie 0/geschaetzt). identicalRoute wird gesondert behandelt.
+function groupPairRoute(epA, epB, setup) {
+  const out = {
+    routeReliable: false, separateDrivingMin: null, groupedDrivingMin: null,
+    estimatedDrivingSavedMin: null, detourMin: null, identicalRoute: false,
+    sameOrigin: false, sameDestination: false, sameZone: false,
+  };
+  const m = setup.matrix;
+  const leg = (a, b) => travelMin(m, a, b);
+  out.sameOrigin = !!(epA.fromNode && epB.fromNode && epA.fromNode === epB.fromNode);
+  out.sameDestination = !!(epA.toNode && epB.toNode && epA.toNode === epB.toNode);
+  out.sameZone = epA.zone !== "UNKNOWN" && epA.zone === epB.zone;
+
+  // Gemeinsamer Festival-Knoten und die zwei variablen Knoten.
+  const fest = epA.festivalNode; // == epB.festivalNode (gleiche Richtung, gepr. vom Aufrufer)
+  const vA = epA.variableNode, vB = epB.variableNode;
+  if (!fest || !vA || !vB) return out; // unbekannter Ort -> nicht berechenbar
+
+  if (out.sameOrigin && out.sameDestination) {
+    // Identische Route: eine gemeinsame Fahrt statt zwei identischen.
+    const singleLeg = epA.dir === "toFestival" ? leg(vA, fest) : leg(fest, vA);
+    if (singleLeg == null) return out;
+    out.identicalRoute = true;
+    out.groupedDrivingMin = singleLeg;
+    out.separateDrivingMin = singleLeg * 2;
+    out.estimatedDrivingSavedMin = singleLeg;
+    out.detourMin = 0;
+    out.routeReliable = true;
+    return out;
+  }
+
+  if (epA.dir === "toFestival") {
+    // Zwei Abholorte -> Festival. Reihenfolgen vA->vB->F und vB->vA->F.
+    const dA = leg(vA, fest), dB = leg(vB, fest), ab = leg(vA, vB), ba = leg(vB, vA);
+    if (dA == null || dB == null) return out; // Einzelbein unbekannt -> nicht berechenbar
+    out.separateDrivingMin = dA + dB;
+    const opt1 = (ab != null) ? ab + dB : null; // vA->vB->F
+    const opt2 = (ba != null) ? ba + dA : null; // vB->vA->F
+    const opts = [opt1, opt2].filter((x) => x != null);
+    if (opts.length === 0) return out; // Zwischenbein unbekannt
+    out.groupedDrivingMin = Math.min(...opts);
+    out.estimatedDrivingSavedMin = out.separateDrivingMin - out.groupedDrivingMin;
+    out.detourMin = out.groupedDrivingMin - Math.max(dA, dB);
+    out.routeReliable = true;
+    return out;
+  }
+
+  // fromFestival: Festival -> zwei Ziele. Reihenfolgen F->dA->dB und F->dB->dA.
+  const fA = leg(fest, vA), fB = leg(fest, vB), ab = leg(vA, vB), ba = leg(vB, vA);
+  if (fA == null || fB == null) return out;
+  out.separateDrivingMin = fA + fB;
+  const opt1 = (ab != null) ? fA + ab : null; // F->dA->dB
+  const opt2 = (ba != null) ? fB + ba : null; // F->dB->dA
+  const opts = [opt1, opt2].filter((x) => x != null);
+  if (opts.length === 0) return out;
+  out.groupedDrivingMin = Math.min(...opts);
+  out.estimatedDrivingSavedMin = out.separateDrivingMin - out.groupedDrivingMin;
+  out.detourMin = out.groupedDrivingMin - Math.max(fA, fB);
+  out.routeReliable = true;
+  return out;
+}
+
+// C3-Status einer Fahrt (nur wenn Timetable-Eintraege uebergeben werden). Reine
+// Ableitung; ohne Eintraege oder ohne eindeutiges Set = null (kein Veto, Spec 20).
+function groupRideC3(ride, setup, timetableEntries, now) {
+  if (!Array.isArray(timetableEntries) || timetableEntries.length === 0) return null;
+  const match = matchRideToTimetable({ ride, timetableEntries });
+  const timing = evaluateTimetableTiming({ ride, matchResult: match, setup, now: now || 0 });
+  return timing || null;
+}
+
+// deterministischer sortScore (grob nach Status, dann Route/Einsparung/Umweg).
+// Feinordnung uebernimmt der Comparator. Reine Funktion.
+function finalizeGroupCandidate(c) {
+  const order = GROUP_RIDE_STATUS_ORDER[c.status] != null ? GROUP_RIDE_STATUS_ORDER[c.status] : 99;
+  let s = order * 1000;
+  s += c.routeReliable ? 0 : 200;                 // vollstaendige Route bevorzugt
+  s += (c.driverAssignment === "two_drivers" || c.driverAssignment === "mixed") ? 120 : 0; // keine Fahreraenderung bevorzugt
+  s += c.capacityKnown && c.fitsFleet ? 0 : 150;  // ausreichende Kapazitaet bevorzugt
+  const saved = (c.routeReliable && c.estimatedDrivingSavedMin != null) ? c.estimatedDrivingSavedMin : 0;
+  s -= Math.min(Math.max(saved, 0), 240) / 10;    // hoehere Einsparung -> kleiner (max -24)
+  s += (c.detourMin != null ? Math.min(Math.max(c.detourMin, 0), 60) : 0) / 20; // geringerer Umweg bevorzugt (max +3)
+  c.sortScore = Math.round(s * 100) / 100;
+  return c;
+}
+
+/* Zentrale reine Paar-Bewertung (Spec 11). Veraendert KEINE Eingabe, loest KEINEN
+   Schreibweg aus, ist deterministisch fuer die uebergebenen Daten. Kanonisiert
+   die Paarreihenfolge (frueherer Start zuerst, dann Ride-Id) fuer stabile Ausgabe. */
+function evaluateRidePairForGrouping({ rideA, rideB, drivers, setup, now, timetableEntries }) {
+  const cfg = GROUP_RIDE_CONFIG;
+  const reasons = [];
+  const warnings = [];
+
+  // Kanonische Reihenfolge (stabil, unabhaengig von der Aufrufreihenfolge).
+  const startAbsRaw = (r) => c3RideStartAbsMin(r && r.date, r && r.time);
+  let a = rideA, b = rideB;
+  const sa = startAbsRaw(a), sb = startAbsRaw(b);
+  if (sa != null && sb != null) { if (sb < sa || (sb === sa && String(b.id) < String(a.id))) { const t = a; a = b; b = t; } }
+  else if (String((b && b.id) || "") < String((a && a.id) || "")) { const t = a; a = b; b = t; }
+
+  const rideIds = [a && a.id, b && b.id];
+  const base = {
+    status: "group_not_evaluable", severity: "neutral", label: GROUP_RIDE_STATUS_LABEL.group_not_evaluable,
+    rideIds, direction: null, festDayKey: null,
+    combinedPassengerCount: null, requiredSeatCount: null, capacityKnown: false, fitsFleet: false, suitableVehicleIds: [],
+    departureDifferenceMin: null, proposedDepartureAt: null, departureShift: {},
+    sameOrigin: false, sameDestination: false, sameZone: false, identicalRoute: false,
+    separateDrivingMin: null, groupedDrivingMin: null, estimatedDrivingSavedMin: null, detourMin: null, routeReliable: false,
+    driverAssignment: null, hasDriverConflict: false, conflictRideIds: [],
+    c3: { a: null, b: null },
+    reasons, warnings, sortScore: 0,
+  };
+  const done = (patch) => finalizeGroupCandidate(patch ? { ...base, ...patch } : base);
+
+  if (!a || !b || !a.id || !b.id || a.id === b.id) { reasons.push("invalid_pair"); return done(); }
+
+  // (1) Richtung: gleiche operative Richtung, sonst kein Kandidat (Spec 8).
+  const dirA = rideFestivalDirection(a), dirB = rideFestivalDirection(b);
+  if (dirA === "other" || dirB === "other" || dirA !== dirB) {
+    reasons.push("direction_incompatible");
+    return done({ status: "group_not_recommended", label: GROUP_RIDE_STATUS_LABEL.group_not_recommended });
+  }
+  base.direction = dirA === "toFestival" ? "to_festival" : "from_festival";
+
+  // (2) Status der beteiligten Fahrten (Spec 9): laufend/erledigt/storniert -> raus.
+  const blocked = new Set(["cancelled", "done", "enroute_pickup", "onboard"]);
+  if (blocked.has(a.status) || blocked.has(b.status)) {
+    reasons.push("ride_state_excluded");
+    return done({ status: "group_not_recommended", label: GROUP_RIDE_STATUS_LABEL.group_not_recommended });
+  }
+
+  // (3) Zeit + Betriebstag (Spec 13/19). Ungueltige Zeit -> nicht bewertbar.
+  const absA = c3RideStartAbsMin(a.date, a.time), absB = c3RideStartAbsMin(b.date, b.time);
+  if (absA == null || absB == null) { reasons.push("invalid_datetime"); return done(); }
+  const dayA = a.dayKey || (typeof festDayKey === "function" ? festDayKey(a.date, a.time) : null);
+  const dayB = b.dayKey || (typeof festDayKey === "function" ? festDayKey(b.date, b.time) : null);
+  if (!dayA || !dayB) { reasons.push("unknown_operating_day"); return done(); }
+  base.festDayKey = dayA;
+  if (dayA !== dayB) {
+    reasons.push("different_operating_day");
+    return done({ status: "group_not_recommended", label: GROUP_RIDE_STATUS_LABEL.group_not_recommended });
+  }
+  base.departureDifferenceMin = Math.abs(absA - absB);
+
+  // (4) Fahrerzuweisung aufloesen (Spec 18).
+  const driverList = Array.isArray(drivers) ? drivers : ((setup && setup.drivers) || []);
+  const byId = new Map(driverList.map((d) => [d.id, d]));
+  const resolve = (r) => {
+    const id = r.assignedDriverId || null;
+    if (!id) return { id: null, resolved: null, unresolved: false };
+    const d = byId.get(id) || null;
+    return { id, resolved: d, unresolved: !d };
+  };
+  const drA = resolve(a), drB = resolve(b);
+  if (drA.unresolved || drB.unresolved) { reasons.push("driver_unresolved"); return done(); }
+  let driverAssignment;
+  if (!drA.id && !drB.id) driverAssignment = "both_unassigned";
+  else if (drA.id && drB.id && drA.id === drB.id) driverAssignment = "same_driver";
+  else if ((drA.id && !drB.id) || (!drA.id && drB.id)) driverAssignment = "mixed";
+  else driverAssignment = "two_drivers";
+  base.driverAssignment = driverAssignment;
+
+  // (5) Kapazitaet (Spec 17): nur Sitzplatzlogik, fehlende Personenzahl -> nicht bewertbar.
+  const needA = validPassengerCount(a.passengerCount), needB = validPassengerCount(b.passengerCount);
+  if (needA == null || needB == null) { reasons.push("passenger_count_missing"); return done(); }
+  const combined = needA + needB;
+  base.combinedPassengerCount = combined; base.requiredSeatCount = combined; base.capacityKnown = true;
+  const fleet = groupFleetSeats(setup, combined);
+  base.fitsFleet = fleet.maxSeats >= combined; base.suitableVehicleIds = fleet.suitableVehicleIds;
+
+  // (6) Endpunkte + Route (Spec 24/25/26).
+  const epA = groupRideEndpoints(a, setup), epB = groupRideEndpoints(b, setup);
+  if (!epA.variableNode || !epB.variableNode || !epA.festivalNode || !epB.festivalNode) {
+    reasons.push("unknown_location"); return done();
+  }
+  const route = groupPairRoute(epA, epB, setup);
+  Object.assign(base, {
+    sameOrigin: route.sameOrigin, sameDestination: route.sameDestination, sameZone: route.sameZone,
+    identicalRoute: route.identicalRoute, separateDrivingMin: route.separateDrivingMin,
+    groupedDrivingMin: route.groupedDrivingMin, estimatedDrivingSavedMin: route.routeReliable ? route.estimatedDrivingSavedMin : null,
+    detourMin: route.routeReliable ? route.detourMin : null, routeReliable: route.routeReliable,
+  });
+
+  // (7) C3-Bewertung je Fahrt (nur wenn Timetable uebergeben; sonst kein Veto, Spec 20).
+  const c3A = groupRideC3(a, setup, timetableEntries, now);
+  const c3B = groupRideC3(b, setup, timetableEntries, now);
+  // Echte C3-Felder: to_festival -> status/severity/marginMinutes; from_festival ->
+  // status/severity/minutesRelativeToSetEnd (evaluateTimetableTiming liefert KEIN
+  // setEndAt). Set-Ende laesst sich exakt als depAbs - minutesRelativeToSetEnd ableiten.
+  base.c3 = {
+    a: c3A ? { status: c3A.status, severity: c3A.severity, marginMinutes: c3A.marginMinutes != null ? c3A.marginMinutes : null, minutesRelativeToSetEnd: c3A.minutesRelativeToSetEnd != null ? c3A.minutesRelativeToSetEnd : null } : null,
+    b: c3B ? { status: c3B.status, severity: c3B.severity, marginMinutes: c3B.marginMinutes != null ? c3B.marginMinutes : null, minutesRelativeToSetEnd: c3B.minutesRelativeToSetEnd != null ? c3B.minutesRelativeToSetEnd : null } : null,
+  };
+
+  // ---- Statusleiter ------------------------------------------------------
+  // Harte Ausschluesse zuerst (Spec 15).
+  if (base.departureDifferenceMin > cfg.maxDepartureDifferenceMin) {
+    reasons.push("departure_gap_too_large");
+    return done({ ...base, status: "group_not_recommended", label: GROUP_RIDE_STATUS_LABEL.group_not_recommended, severity: "neutral" });
+  }
+  if (!base.fitsFleet) {
+    reasons.push("capacity_insufficient");
+    return done({ ...base, status: "group_not_recommended", label: GROUP_RIDE_STATUS_LABEL.group_not_recommended, severity: "neutral" });
+  }
+  if (route.routeReliable && route.detourMin > cfg.maxTotalDetourMin) {
+    reasons.push("detour_too_large");
+    return done({ ...base, status: "group_not_recommended", label: GROUP_RIDE_STATUS_LABEL.group_not_recommended, severity: "neutral" });
+  }
+  if (route.routeReliable && route.estimatedDrivingSavedMin != null && route.estimatedDrivingSavedMin <= 0) {
+    reasons.push("no_saving");
+    return done({ ...base, status: "group_not_recommended", label: GROUP_RIDE_STATUS_LABEL.group_not_recommended, severity: "neutral" });
+  }
+
+  // Gemeinsame Abfahrt (unverbindlicher Planungswert) + Verschiebung je Fahrt (Spec 19/27).
+  let proposedAbs;
+  if (base.direction === "from_festival") {
+    // Rueckfahrt: nicht vor spaetestem relevantem Set-Ende (Spec 21). Set-Ende
+    // exakt aus C3: setEndAbs = Ride-Abfahrtsminute - minutesRelativeToSetEnd.
+    // absA/base.c3.a bzw. absB/base.c3.b gehoeren zur jeweils selben (kanonischen) Fahrt.
+    const endAbs = (rideAbs, c3) => (c3 && c3.minutesRelativeToSetEnd != null) ? rideAbs - c3.minutesRelativeToSetEnd : null;
+    const ends = [endAbs(absA, base.c3.a), endAbs(absB, base.c3.b)].filter((x) => x != null);
+    proposedAbs = Math.max(absA, absB, ...(ends.length ? ends : [-Infinity]));
+    if (!isFinite(proposedAbs)) proposedAbs = Math.max(absA, absB);
+  } else {
+    // Hinfahrt: gemeinsame Abfahrt = spaetere der beiden (frueher Geplante wartet).
+    proposedAbs = Math.max(absA, absB);
+  }
+  base.proposedDepartureAt = c3AbsToParts(proposedAbs).iso;
+  base.departureShift = { [a.id]: proposedAbs - absA, [b.id]: proposedAbs - absB };
+  const maxShift = Math.max(base.departureShift[a.id], base.departureShift[b.id]);
+  if (maxShift > cfg.maxDepartureDifferenceMin) {
+    reasons.push("shift_too_large");
+    return done({ ...base, status: "group_not_recommended", label: GROUP_RIDE_STATUS_LABEL.group_not_recommended, severity: "neutral" });
+  }
+
+  // C3-Veto (Spec 28): schlechteste der beiden Fahrten deckelt die Empfehlung.
+  // Deckelung nur nach unten, nie Aufwertung. Richtungsspezifische echte Status:
+  // to_festival: on_time/tight/critical/late; from_festival: return_ok/return_before_set_end.
+  let cap = "group_recommended";
+  const worstBy = (rank) => [c3A, c3B].reduce((w, c) => {
+    if (!c || rank[c.status] == null) return w;
+    return rank[c.status] > (rank[w] || 0) ? c.status : w;
+  }, null);
+  if (base.direction === "to_festival") {
+    const worst = worstBy({ late: 4, critical: 3, tight: 2, on_time: 1, timing_unknown: 0 });
+    if (worst === "late") { reasons.push("c3_late"); cap = "group_not_recommended"; }
+    else if (worst === "critical" || worst === "tight") { warnings.push("c3_buffer_tight"); cap = "group_possible"; }
+  } else {
+    const worst = worstBy({ return_before_set_end: 3, return_ok: 1, timing_unknown: 0 });
+    if (worst === "return_before_set_end") { warnings.push("c3_return_before_set_end"); cap = "group_possible"; }
+    // Erfordert die gemeinsame Abfahrt eine echte Verschiebung -> transparent (Spec 27).
+    if (maxShift > 0) warnings.push("common_departure_shift");
+  }
+
+  // Route-/Einsparungslage deckelt ebenfalls (Spec 14): ohne verlaessliche Route
+  // oder unter Mindest-Einsparung nie starke Empfehlung.
+  if (!route.routeReliable) { reasons.push("route_incomplete"); if (cap === "group_recommended") cap = "group_possible"; }
+  else if (route.estimatedDrivingSavedMin != null && route.estimatedDrivingSavedMin < cfg.minSavedDrivingMin) {
+    reasons.push("saving_below_threshold"); if (cap === "group_recommended") cap = "group_possible";
+  }
+
+  // Fahrerzuweisung deckelt (Spec 18): gemischte/zwei Fahrer nie starke Empfehlung.
+  if (driverAssignment === "mixed") { warnings.push("driver_assignment_review"); if (cap === "group_recommended") cap = "group_possible"; }
+  else if (driverAssignment === "two_drivers") { warnings.push("two_driver_assignments"); if (cap === "group_recommended") cap = "group_possible"; }
+
+  // Endstatus + Severity.
+  const status = cap;
+  let severity;
+  if (status === "group_recommended") severity = "success";
+  else if (status === "group_possible") severity = "info";
+  else severity = "neutral";
+  if (status === "group_recommended") reasons.push(base.identicalRoute ? "identical_route" : "grouping_beneficial");
+
+  return done({ ...base, status, severity, label: GROUP_RIDE_STATUS_LABEL[status] });
+}
+
+// Deterministischer Comparator (Spec 30). Reine Funktion, mutiert nichts.
+function groupCandidateCompare(x, y) {
+  if (x.sortScore !== y.sortScore) return x.sortScore - y.sortScore;
+  const ox = GROUP_RIDE_STATUS_ORDER[x.status] != null ? GROUP_RIDE_STATUS_ORDER[x.status] : 99;
+  const oy = GROUP_RIDE_STATUS_ORDER[y.status] != null ? GROUP_RIDE_STATUS_ORDER[y.status] : 99;
+  if (ox !== oy) return ox - oy;
+  const sx = (x.routeReliable && x.estimatedDrivingSavedMin != null) ? x.estimatedDrivingSavedMin : -1;
+  const sy = (y.routeReliable && y.estimatedDrivingSavedMin != null) ? y.estimatedDrivingSavedMin : -1;
+  if (sx !== sy) return sy - sx; // hoehere Einsparung zuerst
+  const dx = x.detourMin != null ? x.detourMin : 9999, dy = y.detourMin != null ? y.detourMin : 9999;
+  if (dx !== dy) return dx - dy; // geringerer Umweg zuerst
+  if ((x.departureDifferenceMin || 0) !== (y.departureDifferenceMin || 0)) return (x.departureDifferenceMin || 0) - (y.departureDifferenceMin || 0);
+  const kx = (x.rideIds || []).join("|"), ky = (y.rideIds || []).join("|");
+  return kx < ky ? -1 : kx > ky ? 1 : 0; // stabiler Ride-Identifier
+}
+
+// Ranking (Spec 30): sortierte KOPIE (mutiert die Eingabe nicht) + Markierung des
+// Hauptvorschlags je Fahrt, damit eine Fahrt nicht in mehreren gleichwertigen
+// Hauptempfehlungen erscheint. Reine Funktion.
+function rankGroupRideCandidates(cands) {
+  const list = Array.isArray(cands) ? cands.slice() : [];
+  list.sort(groupCandidateCompare);
+  const claimed = new Set();
+  return list.map((c) => {
+    const ids = c.rideIds || [];
+    const actionable = GROUP_RIDE_ACTIONABLE.has(c.status);
+    const overlaps = actionable && ids.some((id) => claimed.has(id));
+    const isPrimary = actionable && !overlaps;
+    if (isPrimary) ids.forEach((id) => claimed.add(id));
+    return { ...c, isPrimary, overlapsPrimary: overlaps };
+  });
+}
+
+/* Kandidatenerzeugung fuer Paare (Spec 36). Vorfilterung nach Betriebstag +
+   Richtung + Status + gueltiger Zeit; danach nur zeitlich benachbarte Paare
+   (Fenster maxDepartureDifferenceMin) vergleichen -> keine Vollkombination.
+   Reine Funktion, mutiert nichts. Liefert gerankte, aktionable Kandidaten +
+   Diagnosezaehler. */
+function buildGroupRidePairCandidates({ rides, drivers, setup, now, timetableEntries }) {
+  const all = Array.isArray(rides) ? rides : [];
+  const blocked = new Set(["cancelled", "done", "enroute_pickup", "onboard"]);
+  // Vorfilter: gueltige, gruppierbare Fahrten mit Richtung + Betriebstag + Startzeit.
+  const usable = [];
+  for (const r of all) {
+    if (!r || !r.id) continue;
+    const dir = rideFestivalDirection(r);
+    if (dir === "other") continue;
+    if (blocked.has(r.status)) continue;
+    const abs = c3RideStartAbsMin(r.date, r.time);
+    if (abs == null) continue;
+    const day = r.dayKey || (typeof festDayKey === "function" ? festDayKey(r.date, r.time) : null);
+    if (!day) continue;
+    usable.push({ ride: r, dir, abs, day });
+  }
+  // Nach (Betriebstag, Richtung) buendeln, je Bucket nach Startzeit sortieren.
+  const buckets = new Map();
+  for (const u of usable) {
+    const key = u.day + "|" + u.dir;
+    if (!buckets.has(key)) buckets.set(key, []);
+    buckets.get(key).push(u);
+  }
+  const cfg = GROUP_RIDE_CONFIG;
+  const cands = [];
+  for (const arr of buckets.values()) {
+    arr.sort((p, q) => p.abs - q.abs || (String(p.ride.id) < String(q.ride.id) ? -1 : 1));
+    for (let i = 0; i < arr.length; i++) {
+      for (let j = i + 1; j < arr.length; j++) {
+        if (arr[j].abs - arr[i].abs > cfg.maxDepartureDifferenceMin) break; // Fenster -> abbrechen
+        const c = evaluateRidePairForGrouping({ rideA: arr[i].ride, rideB: arr[j].ride, drivers, setup, now, timetableEntries });
+        cands.push(c);
+      }
+    }
+  }
+  const ranked = rankGroupRideCandidates(cands);
+  const actionable = ranked.filter((c) => GROUP_RIDE_ACTIONABLE.has(c.status));
+  const counts = { group_recommended: 0, group_possible: 0, group_not_recommended: 0, group_not_evaluable: 0 };
+  ranked.forEach((c) => { counts[c.status] = (counts[c.status] || 0) + 1; });
+  return { ranked, actionable, primaries: ranked.filter((c) => c.isPrimary), counts };
+}
+
 /* ---- Mission-Control-Variante der Rueckfahrten (Session 7; Teilpaket D) --- *
  * Datenableitung und ALLE Schreib-Handler (Anwesenheit) sind VERBATIM aus der
  * bestehenden Ansicht uebernommen (keine Aenderung an Rueckfahrten-/Zeit-/
