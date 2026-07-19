@@ -3742,3 +3742,90 @@ ist. Bewusst in Kauf genommen, sie erscheint nur nach einem Absturz.
    wenn der Sicherheitshinweis aus dem Untertitel raus und in eine eigene
    `.mc-note mc-note--warn` unter den Kopf wandert. **Das waere aber Struktur,
    nicht Farbe, und damit ausserhalb dieses Pakets.** Jordans Entscheidung.
+
+---
+
+# Session vom 19.07.2026: Doku eingeholt, Phase-0-Analyse Vorschlag-Knopf, MC-Migration pausiert
+
+## Stand (gemessen, nicht geschaetzt)
+
+- `src/ShuttleLeitstelle.jsx`: **9076 Zeilen**, in dieser Session **nicht angefasst**.
+- Letzter Code-Commit (JSX/App): **57fbf32** (Safe-Area-Abstand Leitstellen-Kopfleiste).
+- Danach nur Doku-Commits: abccfd3 (CLAUDE.md ins Repo), fa2fb95 (Opener 29 ins Repo),
+  plus der Abschluss-Commit dieser Session (Analyse + diese Uebergabe).
+- main war bei Sessionstart bereits einen Commit ueber dem Opener-29-Stand (026935a):
+  der Safe-Area-Fix 57fbf32 kam dazwischen dazu. Opener-Zahl war also veraltet, wie erwartet.
+
+## Was in dieser Session fertig wurde
+
+1. **CLAUDE.md und OPENER-Session-29.md ins Repo geholt** (lagen nur lokal in ~/Downloads),
+   je ein eigener Commit, gepusht.
+2. **Phase-0-Analyse zur Vorschlag-Knopf-Spezifikation** (`SHUTTLE-VORSCHLAG-SPEC_1.md`)
+   vollstaendig durchgefuehrt, rein lesend, kein Code geaendert. Ergebnis in
+   **`PHASE-0-ANALYSE-Vorschlag-Knopf.md`** (Kapitel A bis H plus Risikomatrix).
+   Kernbefunde:
+   - Der Vorschlag-Motor existiert bereits und laeuft live: `suggestDrivers` (Z. 1573),
+     `evaluateInsertion` (Z. 1517), `reasonText` (Z. 1590), `computeDriverStats` (Z. 1480),
+     verdrahtet in AssignModal (Z. 3764) und Rueckfahr-Ansicht (Z. 5732). Rein lesend.
+   - Es gibt eine echte Fahrzeit-Matrix (`setup.matrix` plus `travelMin`, Z. 670).
+     Die Spec nimmt faelschlich an, beides existiere nicht. Neubau waere Duplizierung.
+   - `drivers_openbeatz.json` fehlt komplett auf dem Rechner. Nur die Timetable (229 Sets) ist da.
+   - Sitzcheck nutzt schon `driver.seats`, ABER beim Anlegen wird `seats: Van?7:4` (Z. 464)
+     als Default gesetzt. Reale Werte laut Spec: 5 Vans mit 6, 2 Vans mit 7. Ueberbuchungsrisiko.
+   - Drei Schreibwege setzen `assignedDriverId` (AssignModal onAssign Z. 8447,
+     quickAssign Z. 6162, Chat-Assistent Z. 3567), nicht ein einziger.
+   - Kein ISO/Europe-Berlin, App rechnet ueber lokale "HH:MM"/"YYYY-MM-DD" plus `dateForNightTime`.
+   - **Empfehlung im Bericht: NO-GO fuer Neubau. GO MIT BEDINGUNGEN fuer eine spaetere,
+     kleine Erweiterung des vorhandenen Motors, nach dem Festival, wenn die Fahrerdatei da ist.**
+
+## Verifikations-Pipeline (alles gruen)
+
+- esbuild: gruen.
+- Dupli-Funktions-Grep: leer.
+- rg.mjs Referenz-Cross-Check: ok, Tabu-Kinder korrekt erkannt.
+- kontrast.mjs: alle Werte ok.
+- rendertest.mjs und smoke.mjs: gruen. **Hinweis:** beide Skripte haben den Ausgabepfad
+  `/home/claude/repo/` fest verdrahtet (Z. 14 bzw. Z. 8) und laufen auf diesem Mac nur mit
+  gepatchtem Pfad. Der Patch lief ausserhalb des Repos (Scratchpad), die Repo-Dateien wurden
+  NICHT geaendert. **Offener Punkt fuer spaeter: den Pfad in beiden Skripten portabel machen
+  (os.tmpdir bzw. Repo-relativ), damit die Tests hier ohne Handstand laufen.**
+- smoke.mjs Ergebnis: RideForm/AssignModal/WhatsAppModal alle OK, 0 Classic-Reste.
+
+## MC-Migration: bewusst pausiert bis nach dem Festival
+
+**Entscheidung diese Session (Jordan): die MC-Migration wird ab jetzt bewusst pausiert bis
+nach dem Festival (23. bis 27.07.2026). Sessions 28, 29 und 30 bleiben offen liegen.
+Insbesondere wird KEIN Session 28 (Problem-Banner-Praesentation / MissionControl-Shell)
+mehr gestartet.** Grund: das Refactoring bringt null Funktion, und zwei Tage vor dem
+Fahrertest den Rahmen umzubauen wuerde den Test entwerten. Der einzige Punkt, der am 23.07.
+wirklich zaehlt, ist die Leitstellen-PIN "1234", die Jordan selbst vor dem Festival ersetzt.
+
+## Was noch offen ist (nach dem Festival)
+
+- **Session 29** (urspruenglich geplant): PresenceManager auf MC (30 Treffer, Z. 5055) plus
+  `barColor`-Totholz raus (6 Treffer). NICHT gebaut. Vier Design-Entscheidungen liegen im
+  Opener-29 vor und warten auf Jordans OK.
+- **Session 30**: AuditLogSection (Z. 4753, 20 Treffer) plus ReportSection (Z. 5985, 32 Treffer).
+  Enthaelt eine echte Entscheidung: ReportSection nutzt Orange fuer STATUS (Regelbruch).
+- **Session 28**: MissionControl-Shell (37 Treffer, 3 Bloecke). Hoechstes Risiko. Nach dem Festival.
+- **Vorschlag-Knopf-Feature**: siehe PHASE-0-ANALYSE-Vorschlag-Knopf.md, Kapitel G und H.
+  Vor einer Umsetzung noetig: Fahrerdatei beschaffen, Zeitzonen-Haltung entscheiden,
+  kanonischen Assign-Pfad festlegen, auf dem vorhandenen Motor aufbauen statt neu bauen.
+- **Test-Skripte portabel machen** (siehe oben, /home/claude fest verdrahtet).
+
+## Regressionsrisiken dieser Session
+
+**Null am App-Code.** `src/ShuttleLeitstelle.jsx` wurde nicht angefasst (Zeilenzahl
+unveraendert 9076, Datei nicht im Diff). Aenderungen dieser Session sind ausschliesslich
+neue bzw. hereingeholte Doku-Dateien. Kein funktionaler Regressionspfad.
+
+## Konkrete manuelle Testfaelle
+
+Da kein App-Code geaendert wurde, gibt es keine neuen funktionalen Testfaelle. Zur
+Absicherung, dass die App weiter laeuft (unabhaengig von dieser Session):
+
+1. App starten, Leitstelle oeffnen, eine offene Fahrt anklicken, "Fahrer zuteilen":
+   die Vorschlagsliste erscheint mit Begruendung (Sitze, Anfahrt, passt gut). Bestaetigen
+   teilt zu. Das ist der schon vorhandene Motor, unveraendert.
+2. Kopfleiste auf iOS-Geraet: Logo wird nicht mehr von der Statusleiste ueberlagert
+   (Safe-Area-Fix 57fbf32, kam vor dieser Session).
