@@ -4291,9 +4291,30 @@ noch KEINE Timetable-Warnungen (C3), keine Zeitbewertung, keine Ride-Aenderungen
 # braucht ZWEI Pfade; smoke-teilpaket-b.mjs braucht vorab gebaute tmp-tb-funcs.mjs.
 #
 # Offene, bewusst NICHT gefixte Punkte (nur auf ausdruecklichen Auftrag):
-#   - matchLoc (Z. ~7676/aktuell verschoben) liest nur 4 Hardcode-Orte statt
-#     setup.locations. Betrifft C3 nicht (C3 nutzt die B-Ortsaufloesung).
+#   - matchLoc (aktuell Z. 9404, verschiebt sich mit jeder Aenderung - vor Gebrauch
+#     neu grep-en) liest nur 4 Hardcode-Orte statt setup.locations. Betrifft C3
+#     nicht (C3 nutzt die B-Ortsaufloesung).
 #   - "Jetzt/Als Naechstes"-Filter im Timetable-Tab (verschoben).
 #   - ARTIST_ALIASES leer - erst bei belegtem Alias-Fall nachtragen.
 #   - PIN-Sicherheit: NICHT proaktiv ansprechen.
 #   - Ab 21.07.: keine Loeschungen mehr (Festival 23.-27.07.).
+#   - Leonardo hat KEIN eigenes Ortsobjekt (nur Alias+Matrix-Knoten->sheraton,
+#     kein address/lat/lng). Rueckfahrt Festival->Leonardo navigiert deshalb per
+#     Freitext-Google-Suche zum echten Leonardo (funktioniert). Jordan wollte am
+#     19.07. testweise die Sheraton-Adresse fuers Leonardo-Ortsobjekt uebernehmen
+#     (Variante 1, Rueckfahrt wuerde dann zum Sheraton navigieren) - auf Eis
+#     gelegt ("das stellen wir erstmal zurueck"). NICHT von selbst umsetzen,
+#     nur auf erneuten ausdruecklichen Auftrag. Bei Auftrag: eigene Session mit
+#     Ruecksetzpunkt, da Eingriff in seedLocations/KNOWN_FIXED_IDS/Kartenkoordinaten
+#     (Ripple-Analyse liegt im Chat vom 19.07. vor: Dropdown-Sichtbarkeit,
+#     Pickup-Banner, GPS-Kartenmarker-Ueberlappung mit Sheraton).
+#
+# -------------------------------------------------------------------------
+# NAECHSTER SCHRITT: "Teilpaket D" - NOCH UNSPEZIFIZIERT
+# -------------------------------------------------------------------------
+# Jordan hat am 19.07. einen neuen Chat fuer "Paket D" angekuendigt, aber noch
+# KEINE Spec gegeben. Vor jeder Umsetzung: Spec von Jordan einholen (wie bei
+# A/B/C1/C2/C3). Falls er unsicher ist, was sinnvoll waere, obige offene Punkte
+# als Vorschlaege nennen (matchLoc-Fix, Timetable-Filter, Leonardo-Ortsobjekt).
+# Terminlich beachten: Fahrertest 18.07. ist vorbei: naechster harter Termin ist
+# der Code-Freeze 21.07. (danach keine Loeschungen mehr, Festival 23.-27.07.).
