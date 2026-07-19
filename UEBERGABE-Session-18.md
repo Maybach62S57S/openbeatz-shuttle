@@ -4414,3 +4414,109 @@ noch KEINE Timetable-Warnungen (C3), keine Zeitbewertung, keine Ride-Aenderungen
 # Jordan einholen (wie bei A/B/C/D). Falls unsicher: obige offene Punkte als
 # Vorschlaege nennen. Terminlich: naechster harter Termin ist der Code-Freeze
 # 21.07.
+
+
+<!-- ===================================================================== -->
+# Session E (19.07.2026): Teilpaket E – Sichere Wartefahrt-Vorschläge (ABGESCHLOSSEN)
+
+Rein additiv, rein lesend. Rücksetzpunkt Tag `pre-teilpaket-E` = `2dbd3e5`
+(= `8a4c107` + Testharness-Fix, kein App-Code). Zeilen 11064 → 11469.
+Details im `TEILPAKET-E-BERICHT.md`, Abnahme in `TEILPAKET-E-ABNAHME.md`.
+
+## Was E gebaut hat
+
+Vorschlag „Fahrer wartet am Festival und übernimmt eine unbesetzte Rückfahrt“.
+Kein neuer Ride/Status/DB-Feld, keine Zuteilung, kein Schreibweg, keine
+Benachrichtigung, kein GPS. Nur Anzeige in der Leitstelle; Aktion über die
+vorhandenen Knöpfe „Fahrer zuweisen“ / „Fahrt öffnen“.
+
+Neue reine Funktionen (14 Bausteine): `WAIT_RIDE_CONFIG`, `WAIT_RIDE_STATUS_LABEL`,
+`WAIT_RIDE_STATUS_ORDER`, `WAIT_RIDE_ACTIONABLE`, `waitSeverityColor`,
+`waitSeverityStKey`, `waitInboundArrival`, `resolveWaitComparisonHub`,
+`computeWaitDrivingSaved`, `finalizeWaitCandidate`, `evaluateWaitRideCandidate`,
+`waitCandidateCompare`, `rankWaitCandidates`, `buildWaitRideCandidates`.
+Geändert wurde nur `MissionReturnsTab` (UI-Block + Filter „nur mit Wartevorschlag“).
+
+Status: `wait_recommended` / `wait_possible` / `direct_connection` /
+`return_recommended` / `already_planned` / `not_evaluable`.
+Schwellen: Wendezeit 10 min, sinnvoll ab 15 min, Empfehlungsfenster bis 60 min,
+mögliches Fenster bis 120 min, Mindest-Einsparung 25 min.
+
+Wiederverwendung (kein zweiter Detektor/Motor): Richtung `rideFestivalDirection`;
+Ankunft via `c3OperationalNodes` + `travelMin` (Matrixzeit, nie 0) +
+`c3RideStartAbsMin`/`c3AbsToParts` (absolut, mitternachtssicher); Konflikt/
+Verfügbarkeit via `evaluateInsertion` (unverändert); Rückfahrt-Status via
+`RETURN_STATUS_*`; 60s-Tick der Rückfahrten-Ansicht wiederverwendet.
+
+## Wichtige Design-Entscheidung (wartet auf Jordans GO/NO-GO)
+
+Vergleichs-Hub wird NIE pauschal erfunden. Eine Fahrzeit-Einsparung und damit die
+starke Empfehlung `wait_recommended` entsteht nur, wenn `setup.config.driverHubLocationId`
+explizit auf einen bekannten Matrix-Knoten != festival gesetzt ist. Ohne diese
+Angabe: `comparisonRouteReliable = false`, keine Einsparungsbehauptung, bevorzugt
+`wait_possible`. Produktiv (Feld nicht gesetzt) erscheint `wait_recommended` daher
+praktisch nicht. Umschalten = ein Konfigfeld. Empfehlung: konservativ so lassen,
+bis Jordan entscheidet.
+
+## Verifikation (alle grün)
+
+esbuild grün, keine Duplikate. rendertest 25053/2452/2413/2895/101 konstant.
+kontrast 0 Fehler. pruefe (pre-teilpaket-E vs. Arbeitsstand): 362/363 byte-identisch,
+GEÄNDERT nur `MissionReturnsTab`, 14 NEU, 0 ENTFERNT, DriverApp/StageApp/GuestApp/
+Field/inp/SettingsTab/LocSelect unverändert. smoke-teilpaket-e 152/152.
+gegenprobe-teilpaket-e 8/8 kippen. Regression unverändert: smoke Classic-Reste 0,
+b69/c1-40/c1ui16/c2-65/c2ui14/c3-147/c3ui35/d83/dui35, Springer34/One-Tap14/
+Personenzahl24/Ridelist10.
+
+## Proof-Skripte (committet)
+
+`extract-funcs-teilpaket-e.py` (Verbatim-Extraktor), `smoke-teilpaket-e.mjs`
+(152 Prüfungen), `gegenprobe-teilpaket-e.mjs` (8 Mutationen). Generierte
+`tmp-te-funcs.mjs`/`tmp-tb-funcs.mjs` NICHT committen (Konvention).
+
+<!-- ===================================================================== -->
+# READY-TO-PASTE OPENER für die nächste Session (Stand nach Teilpaket E)
+
+# Rolle: Du übernimmst eine bestehende, sehr disziplinierte Wartungs-Session am
+# OpenBeatz Shuttle-Leitstelle (React-Single-File, src/ShuttleLeitstelle.jsx).
+# Arbeitsweise: informell, deutsch, keine Gedankenstriche, korrekte Umlaute.
+# Prioritäten: 1. Stabilität 2. Datenintegrität 3. Sicherheit 4. Wartbarkeit
+# 5. Performance. Nur minimale, begründete Änderungen, keine Breaking Changes.
+# Bugs außerhalb des Auftrags -> unter "Weitere gefundene Punkte" sammeln, nicht
+# fixen. Nach jeder Änderung: Vollcheck + Build + Regressionsrisiken benennen +
+# konkrete manuelle Testfälle. Commit-Messages mit Umlauten via /tmp/msg.txt +
+# `git commit -F`. git fetch VOR jedem Push.
+#
+# Stand: Teilpaket A/B/C/D/E fertig und gepusht. Zeilenzahl src/ShuttleLeitstelle.jsx
+# = 11469 (nach E-Push per git-Hash bestätigen; Doc-Commit-Hash verschiebt sich).
+#
+# Schritt 0 (Pflicht): Repo klonen (frischen fine-grained PAT bereitstellen, PAT
+# nur in der Push-URL inline, danach scrubben; NICHT `git remote set-url` auf eine
+# PAT-URL), `git log --graph --oneline --all` prüfen, exakte Zeilenzahl + letzten
+# CODE-Commit-Hash messen, npm install, Baseline-Skripte laufen lassen:
+# rendertest (25053/2452/2413/2895/101), kontrast (0 Fehler), pruefe (ZWEI Pfade:
+# Vorher-Stand vs. Arbeitsstand), smoke.mjs (Classic-Reste 0),
+# smoke-teilpaket-b/-c1/-c1-ui/-c2/-c2-ui/-c3/-c3-ui/-d/-d-ui/-e,
+# gegenprobe-teilpaket-e, Springer/One-Tap/Personenzahl/Ridelist. Erst dann Auftrag.
+# Skripte brauchen src/ShuttleLeitstelle.jsx als argv[2]; pruefe.mjs braucht ZWEI
+# Pfade; smoke-teilpaket-b.mjs und smoke-teilpaket-e.mjs brauchen vorab gebaute
+# tmp-tb-funcs.mjs bzw. tmp-te-funcs.mjs (via extract-funcs-*.py).
+#
+# Offene Entscheidung aus Teilpaket E:
+#   - `driverHubLocationId` in der Konfiguration setzen (aktiviert wait_recommended
+#     mit Einsparung) ODER konservativ leer lassen. Jordans GO/NO-GO abwarten.
+#
+# Offene, bewusst NICHT gefixte Punkte (nur auf ausdrücklichen Auftrag):
+#   - matchLoc (verschiebt sich, vor Gebrauch neu grep-en) liest nur 4 Hardcode-
+#     Orte statt setup.locations. Betrifft D/E nicht (zentrale Richtungs-/B-Logik).
+#   - "Jetzt/Als Nächstes"-Filter im Timetable-Tab (verschoben).
+#   - ARTIST_ALIASES leer - erst bei belegtem Alias-Fall nachtragen.
+#   - PIN-Sicherheit: NICHT proaktiv ansprechen.
+#   - Leonardo-Ortsobjekt (Sheraton-Adresse) auf Eis, nur auf erneuten Auftrag,
+#     eigene Session mit Rücksetzpunkt.
+#   - Ab 21.07.: KEINE Löschungen mehr (Festival 23.-27.07.).
+#
+# Nächster Schritt: kein Teilpaket vordefiniert. Vor jeder Umsetzung Spec von
+# Jordan einholen (wie bei A/B/C/D/E). Terminlich: harter Code-Freeze 21.07.,
+# Fahrertest 18.07. Nach dem Festival ggf. Paket 2 (Datei-Modularisierung,
+# Base64-Asset-Extraktion) und zurückgestellte Punkte.

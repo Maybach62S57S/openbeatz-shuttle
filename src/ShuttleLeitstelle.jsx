@@ -7034,6 +7034,348 @@ function returnGroupSort(group, a, b) {
   return (A - B) || tie();
 }
 
+/* =========================================================================
+   Teilpaket E: Sichere Wartefahrt-Vorschlaege (REIN LESEND, additiv)
+   -------------------------------------------------------------------------
+   Idee (Spec 6): eine bestehende Hinfahrt zum Festival + derselbe zugeteilte
+   Fahrer + eine zeitlich passende, noch unbesetzte Rueckfahrt vom Festival =
+   Vorschlag "der Fahrer wartet und uebernimmt die Rueckfahrt". KEIN eigener
+   Ride, KEIN gespeicherter Zustand, KEIN Schreibweg. Alle Funktionen hier sind
+   reine Ableitungen aus vorhandenen Daten und mutieren nichts.
+
+   Wiederverwendung (kein zweiter Detektor/Motor):
+   - Richtung: rideFestivalDirection (zentrale C3-Logik).
+   - Operative Orte/Ankunft: c3OperationalNodes + travelMin + c3RideStartAbsMin
+     (Teilpaket B/C3; Sheraton-Pickup fuer Leonardo/HBF -> Festival, Rueckfahrt
+     behaelt echtes Ziel; Matrixzeit verbindlich, nie 0/geschaetzt).
+   - Konflikt/Verfuegbarkeit: evaluateInsertion (bestehender Motor, unveraendert).
+   - Rueckfahrt-Status: RETURN_STATUS_COMPLETED/-ACTIVE (Teilpaket D).
+
+   Vergleichsroute (Spec 25): ein Fahrer-Hub wird NIE pauschal erfunden. Nur wenn
+   setup.config.driverHubLocationId explizit gesetzt ist, gilt eine Vergleichs-
+   route als verlaesslich. Ohne verlaesslichen Hub: keine Einsparungsbehauptung,
+   und ein starkes "Warten sinnvoll" entsteht dann bevorzugt NICHT (Spec 17/18).
+   ========================================================================= */
+const WAIT_RIDE_CONFIG = {
+  minTurnaroundBufferMin: 10,   // Mindest-Wendezeit Ankunft Hinfahrt -> Abfahrt Rueckfahrt
+  minUsefulWaitMin: 15,         // darunter: direkter Anschluss, keine echte Wartefahrt
+  recommendedWaitMaxMin: 60,    // Obergrenze "Warten sinnvoll"
+  possibleWaitMaxMin: 120,      // Obergrenze "Warten moeglicherweise sinnvoll"
+  conflictBufferMin: 15,        // Info: Puffer um andere Fahrten (Konfliktmotor hat eigene Logik)
+  minCalculatedDrivingSavedMin: 25, // Mindest-Einsparung fuer starkes "Warten sinnvoll"
+};
+
+const WAIT_RIDE_STATUS_LABEL = {
+  wait_recommended: "Warten sinnvoll",
+  wait_possible: "Warten möglicherweise sinnvoll",
+  return_recommended: "Zurückfahren wahrscheinlich sinnvoller",
+  not_evaluable: "Nicht sicher bewertbar",
+  direct_connection: "Direkter Anschluss",
+  already_planned: "Bereits geplant",
+};
+
+// Anzeige-/Sortier-Prioritaet (Spec 29). Kleinere Zahl = weiter oben/wichtiger.
+const WAIT_RIDE_STATUS_ORDER = {
+  wait_recommended: 10,
+  direct_connection: 20,
+  wait_possible: 30,
+  already_planned: 40,
+  return_recommended: 50,
+  not_evaluable: 60,
+};
+
+// Nur diese Status sind operativ als Wartevorschlag "handlungsleitend" (Spec 31).
+const WAIT_RIDE_ACTIONABLE = new Set(["wait_recommended", "wait_possible", "direct_connection"]);
+
+// Severity -> bestehende, WCAG-gepruefte MC-Farbvariable (keine neue Farbe, Spec 33).
+function waitSeverityColor(sev) {
+  if (sev === "success") return "var(--mc-st-done)";      // gruen
+  if (sev === "info") return "var(--mc-st-new)";          // blau (aktiv/informativ)
+  if (sev === "warning") return "var(--mc-st-assigned)";  // amber (kein Alarmrot)
+  return "var(--mc-text-muted)";                          // neutral/muted
+}
+function waitSeverityStKey(sev) {
+  if (sev === "success") return "done";
+  if (sev === "info") return "new";
+  if (sev === "warning") return "assigned";
+  return "idle";
+}
+
+// Operative Ankunft der Hinfahrt am Festival (Spec 13). Nur bestehende B/C3-Logik,
+// nie Schaetzung. Reine Funktion. Gibt Absolutminuten + Diagnose; arrivalAbs=null,
+// wenn nicht sicher berechenbar (fehlende Matrixkante, ungueltige Zeit, kein Ziel Festival).
+function waitInboundArrival(inboundRide, setup) {
+  const out = { arrivalAbs: null, startAbs: null, travelMinutes: null, fromNode: null, toNode: null, reason: null };
+  if (!inboundRide || !setup || !setup.matrix) { out.reason = "no_setup"; return out; }
+  if (rideFestivalDirection(inboundRide) !== "toFestival") { out.reason = "not_inbound"; return out; }
+  const nodes = c3OperationalNodes(inboundRide, setup);
+  out.fromNode = nodes.fromNode; out.toNode = nodes.toNode;
+  if (nodes.toNode !== "festival") { out.reason = "to_not_festival"; return out; }
+  const startAbs = c3RideStartAbsMin(inboundRide.date, inboundRide.time);
+  if (startAbs == null) { out.reason = "invalid_datetime"; return out; }
+  out.startAbs = startAbs;
+  const tm = travelMin(setup.matrix, nodes.fromNode, nodes.toNode); // null = unbekannt (nie 0)
+  if (tm == null) { out.reason = "no_matrix_edge"; return out; }
+  out.travelMinutes = tm;
+  out.arrivalAbs = startAbs + tm;
+  return out;
+}
+
+// Vergleichsort/Hub (Spec 25). Sheraton wird NIE pauschal erfunden. Verlaesslich
+// nur bei explizitem setup.config.driverHubLocationId, der auf einen bekannten
+// Matrix-Knoten != festival zeigt. Reine Funktion.
+function resolveWaitComparisonHub(setup) {
+  const cfg = setup && setup.config ? setup.config : {};
+  const explicit = cfg.driverHubLocationId;
+  if (typeof explicit === "string" && explicit.trim()) {
+    const node = LOC_MATRIX_NODE[explicit.trim()] || null;
+    if (node && node !== "festival") return { node, reliable: true, source: "config_hub", requested: explicit.trim() };
+  }
+  return { node: null, reliable: false, source: null, requested: (typeof explicit === "string" ? explicit : null) };
+}
+
+// Vermeidbare Fahrminuten durch Warten (Spec 26): Festival -> Hub + Hub -> Festival.
+// Beide Richtungen getrennt (asymmetrie-sicher ueber travelMin-Schluesselreihenfolge).
+// Fehlt der Hub in der Matrix (eine Kante null) -> keine Einsparung, reliable=false.
+function computeWaitDrivingSaved(hub, setup) {
+  if (!hub || !hub.reliable || !hub.node || !setup || !setup.matrix) {
+    return { savedMin: null, reliable: false, legOut: null, legBack: null };
+  }
+  const legOut = travelMin(setup.matrix, "festival", hub.node);  // Festival -> Hub
+  const legBack = travelMin(setup.matrix, hub.node, "festival"); // Hub -> Festival
+  if (legOut == null || legBack == null) {
+    return { savedMin: null, reliable: false, legOut, legBack };
+  }
+  return { savedMin: legOut + legBack, reliable: true, legOut, legBack };
+}
+
+// finalize: deterministischer sortScore (grob nach Status, dann konfliktfrei,
+// dann sichere Einsparung, dann kuerzere Wartezeit). Feinordnung uebernimmt der
+// Comparator (waitCandidateCompare). Reine Funktion.
+function finalizeWaitCandidate(c) {
+  const order = WAIT_RIDE_STATUS_ORDER[c.status] != null ? WAIT_RIDE_STATUS_ORDER[c.status] : 99;
+  let s = order * 1000;
+  s += c.hasRideConflict ? 500 : 0;
+  s += c.driverAvailable ? 0 : 250;
+  const saved = (c.comparisonRouteReliable && c.estimatedDrivingSavedMin != null) ? c.estimatedDrivingSavedMin : 0;
+  s -= Math.min(Math.max(saved, 0), 240) / 10; // hoehere Einsparung -> kleiner (max -24)
+  c.sortScore = Math.round(s * 100) / 100;
+  return c;
+}
+
+/* Zentrale reine Bewertungsfunktion (Spec 15). Veraendert KEINE Eingabe, loest
+   KEINEN Schreibweg aus, ist deterministisch fuer die uebergebenen Daten (die
+   Wartezeit-/Ankunftsmathematik ist rein planbasiert und nutzt `now` nicht;
+   der Konfliktmotor evaluateInsertion wird unveraendert wiederverwendet). */
+function evaluateWaitRideCandidate({ inboundRide, returnRide, driver, setup, dyn, now, comparisonHub }) {
+  const cfg = WAIT_RIDE_CONFIG;
+  const reasons = [];
+  const warnings = [];
+  const base = {
+    status: "not_evaluable", severity: "neutral", label: WAIT_RIDE_STATUS_LABEL.not_evaluable,
+    inboundRideId: inboundRide && inboundRide.id ? inboundRide.id : null,
+    returnRideId: returnRide && returnRide.id ? returnRide.id : null,
+    driverId: driver && driver.id ? driver.id : null,
+    inboundDepartureAt: null, inboundArrivalAtFestival: null, returnDepartureAt: null,
+    waitMinutes: null, turnaroundBufferMin: cfg.minTurnaroundBufferMin,
+    estimatedDrivingSavedMin: null, comparisonRouteReliable: false,
+    hasRideConflict: false, conflictRideIds: [],
+    driverAvailable: false, returnRideUnassigned: false,
+    reasons, warnings, sortScore: 0,
+  };
+  const done = (patch) => finalizeWaitCandidate(patch ? { ...base, ...patch } : base);
+
+  // (1) Fahrer der Hinfahrt gueltig und aufloesbar? (Spec 10)
+  const inboundDriverId = inboundRide && inboundRide.assignedDriverId ? inboundRide.assignedDriverId : null;
+  if (!inboundDriverId) { reasons.push("inbound_no_driver"); return done(); }
+  if (!driver || driver.id !== inboundDriverId) { reasons.push("inbound_driver_unresolved"); return done(); }
+
+  // (2) Richtung (Spec 7/9) ueber die zentrale Richtungslogik.
+  if (rideFestivalDirection(inboundRide) !== "toFestival") { reasons.push("inbound_not_to_festival"); return done(); }
+  if (rideFestivalDirection(returnRide) !== "fromFestival") { reasons.push("return_not_from_festival"); return done(); }
+
+  // (3) Ankunft der Hinfahrt (nur operative Matrixzeit, Spec 13).
+  const arr = waitInboundArrival(inboundRide, setup);
+  if (arr.arrivalAbs == null) { reasons.push("arrival_" + (arr.reason || "unknown")); return done(); }
+  base.inboundDepartureAt = c3AbsToParts(arr.startAbs).iso;
+  base.inboundArrivalAtFestival = c3AbsToParts(arr.arrivalAbs).iso;
+
+  // (4) Abfahrt der Rueckfahrt (absolute Minute, Mitternacht-sicher, Spec 14).
+  const retAbs = c3RideStartAbsMin(returnRide.date, returnRide.time);
+  if (retAbs == null) { reasons.push("return_invalid_datetime"); return done(); }
+  base.returnDepartureAt = c3AbsToParts(retAbs).iso;
+
+  // (5) Rueckfahrtstatus (Spec 11/17): storniert/erledigt/laufend -> kein Kandidat.
+  const rst = returnRide.status || "";
+  if (rst === "cancelled") { reasons.push("return_cancelled"); return done(); }
+  if (RETURN_STATUS_COMPLETED.has(rst)) { reasons.push("return_completed"); return done(); }
+  if (RETURN_STATUS_ACTIVE.has(rst)) { reasons.push("return_in_progress"); return done(); }
+
+  // (6) Rueckfahrt-Belegung (Spec 11).
+  const retDriverId = returnRide.assignedDriverId ? returnRide.assignedDriverId : null;
+  base.returnRideUnassigned = !retDriverId;
+  if (retDriverId && retDriverId === driver.id) {
+    reasons.push("same_driver_already_assigned");
+    return done({ status: "already_planned", severity: "muted", label: WAIT_RIDE_STATUS_LABEL.already_planned });
+  }
+  if (retDriverId && retDriverId !== driver.id) {
+    reasons.push("return_assigned_other_driver");
+    return done(); // kein Vorschlag (Aufrufer filtert diesen Fall heraus)
+  }
+
+  // (7) Wartezeit (Spec 12/14).
+  const waitMinutes = retAbs - arr.arrivalAbs;
+  base.waitMinutes = waitMinutes;
+  if (waitMinutes < 0) { reasons.push("return_before_arrival"); return done(); }
+  if (waitMinutes < cfg.minTurnaroundBufferMin) { reasons.push("turnaround_too_short"); return done(); }
+
+  // (8) Konflikt/Verfuegbarkeit ueber den bestehenden Motor (Spec 22/23).
+  const ins = evaluateInsertion(setup, dyn, driver, returnRide);
+  const conflictIds = [];
+  if (ins.overlap && ins.stats && Array.isArray(ins.stats.rides)) {
+    const T = sortMin(returnRide.time), end = T + effDur(setup.config, returnRide);
+    ins.stats.rides.forEach((r) => {
+      if (r.id === returnRide.id || r.status === "cancelled") return;
+      const s = sortMin(r.time), e = s + effDur(setup.config, r);
+      if (T < e && end > s) conflictIds.push(r.id);
+    });
+  }
+  if (ins.lateToPickup > 0 && ins.prev) conflictIds.push(ins.prev.id);
+  if (ins.lateToNext > 0 && ins.next) conflictIds.push(ins.next.id);
+  const hasRideConflict = !!(ins.overlap || ins.lateToPickup > 0 || ins.lateToNext > 0);
+  base.hasRideConflict = hasRideConflict;
+  base.conflictRideIds = [...new Set(conflictIds)];
+  base.driverAvailable = !!ins.available;
+  if (hasRideConflict) reasons.push("ride_conflict");
+  if (!ins.available) { reasons.push("driver_not_available"); if (ins.availabilityReason) warnings.push(ins.availabilityReason); }
+
+  // (9) Vergleichsroute / vermeidbare Fahrzeit (Spec 25/26).
+  const hub = comparisonHub || resolveWaitComparisonHub(setup);
+  const saved = computeWaitDrivingSaved(hub, setup);
+  base.comparisonRouteReliable = !!saved.reliable;
+  base.estimatedDrivingSavedMin = saved.reliable ? saved.savedMin : null;
+
+  const conflictBlocks = hasRideConflict || !ins.available;
+
+  // (10) Statuszuordnung (Spec 16-21).
+  // direkter Anschluss: [minTurnaround, minUseful)
+  if (waitMinutes < cfg.minUsefulWaitMin) {
+    if (conflictBlocks) { reasons.push("direct_but_conflict"); return done({ status: "return_recommended", severity: "neutral", label: WAIT_RIDE_STATUS_LABEL.return_recommended }); }
+    reasons.push("direct_connection");
+    return done({ status: "direct_connection", severity: "info", label: WAIT_RIDE_STATUS_LABEL.direct_connection });
+  }
+  // zu lange Wartezeit: > possibleWaitMax -> zurueckfahren (Spec 12/19)
+  if (waitMinutes > cfg.possibleWaitMaxMin) {
+    reasons.push("wait_too_long");
+    return done({ status: "return_recommended", severity: "neutral", label: WAIT_RIDE_STATUS_LABEL.return_recommended });
+  }
+  // Konflikt/nicht verfuegbar im Wartefenster -> Warteoption ausgeschlossen (Spec 19)
+  if (conflictBlocks) {
+    return done({ status: "return_recommended", severity: "neutral", label: WAIT_RIDE_STATUS_LABEL.return_recommended });
+  }
+  // Verlaessliche Route zeigt zu geringe Einsparung -> zurueckfahren (Spec 19)
+  if (saved.reliable && saved.savedMin < cfg.minCalculatedDrivingSavedMin) {
+    reasons.push("reliable_savings_below_threshold");
+    return done({ status: "return_recommended", severity: "neutral", label: WAIT_RIDE_STATUS_LABEL.return_recommended });
+  }
+  // Empfohlenes Fenster [minUseful, recommendedMax]
+  if (waitMinutes <= cfg.recommendedWaitMaxMin) {
+    if (saved.reliable && saved.savedMin >= cfg.minCalculatedDrivingSavedMin) {
+      reasons.push("wait_recommended_with_savings");
+      return done({ status: "wait_recommended", severity: "success", label: WAIT_RIDE_STATUS_LABEL.wait_recommended });
+    }
+    // keine verlaessliche Vergleichsroute -> bevorzugt wait_possible (Spec 17/18)
+    reasons.push("wait_no_reliable_comparison");
+    warnings.push("Keine sichere Vergleichsroute zum Fahrerstützpunkt verfügbar.");
+    return done({ status: "wait_possible", severity: "warning", label: WAIT_RIDE_STATUS_LABEL.wait_possible });
+  }
+  // Moegliches Fenster (recommendedMax, possibleMax] -> wait_possible (Spec 18)
+  reasons.push("wait_in_possible_window");
+  return done({ status: "wait_possible", severity: "warning", label: WAIT_RIDE_STATUS_LABEL.wait_possible });
+}
+
+// Deterministischer Comparator (Spec 29). Reine Funktion, mutiert nichts.
+function waitCandidateCompare(a, b) {
+  const oa = WAIT_RIDE_STATUS_ORDER[a.status] != null ? WAIT_RIDE_STATUS_ORDER[a.status] : 99;
+  const ob = WAIT_RIDE_STATUS_ORDER[b.status] != null ? WAIT_RIDE_STATUS_ORDER[b.status] : 99;
+  if (oa !== ob) return oa - ob;                                   // 1. Status-Prioritaet
+  const ca = a.hasRideConflict ? 1 : 0, cb = b.hasRideConflict ? 1 : 0;
+  if (ca !== cb) return ca - cb;                                   // 2. konfliktfrei zuerst
+  const va = a.driverAvailable ? 0 : 1, vb = b.driverAvailable ? 0 : 1;
+  if (va !== vb) return va - vb;                                   // 3. verfuegbar zuerst
+  const sa = (a.comparisonRouteReliable && a.estimatedDrivingSavedMin != null) ? a.estimatedDrivingSavedMin : -1;
+  const sb = (b.comparisonRouteReliable && b.estimatedDrivingSavedMin != null) ? b.estimatedDrivingSavedMin : -1;
+  if (sa !== sb) return sb - sa;                                   // 4. hoehere sichere Einsparung zuerst
+  const wa = a.waitMinutes == null ? Infinity : a.waitMinutes;
+  const wb = b.waitMinutes == null ? Infinity : b.waitMinutes;
+  if (wa !== wb) return wa - wb;                                   // 5. kuerzere Wartezeit zuerst
+  const da = a.returnDepartureAt || "", db2 = b.returnDepartureAt || "";
+  if (da !== db2) return da < db2 ? -1 : 1;                        // 6. fruehere Rueckfahrt zuerst
+  const ka = `${a.returnRideId || ""}|${a.inboundRideId || ""}|${a.driverId || ""}`; // 7./8. stabile IDs
+  const kb = `${b.returnRideId || ""}|${b.inboundRideId || ""}|${b.driverId || ""}`;
+  return ka < kb ? -1 : ka > kb ? 1 : 0;
+}
+
+// Rein: sortierte KOPIE, mutiert die Eingabe nicht (Spec 37).
+function rankWaitCandidates(list) {
+  return (Array.isArray(list) ? list.slice() : []).sort(waitCandidateCompare);
+}
+
+/* Kandidaten pro unbesetzter Rueckfahrt (Spec 27/28/36). Vorfilter nach
+   Betriebstag, Richtung, gueltigem Fahrer und Zeitfenster; danach reine
+   Bewertung + deterministisches Ranking. Reine Funktion, mutiert nichts,
+   schreibt nichts. Rueckgabe: Map returnId -> { returnRide, candidates, best }
+   plus Hub und die Menge der Fahrer, die fuer >1 Rueckfahrt beste Option sind. */
+function buildWaitRideCandidates({ dyn, setup, now, day }) {
+  const rides = (dyn && Array.isArray(dyn.rides)) ? dyn.rides : [];
+  const drivers = (setup && Array.isArray(setup.drivers)) ? setup.drivers : [];
+  const driverById = new Map(drivers.map((d) => [d.id, d]));
+  const hub = resolveWaitComparisonHub(setup);
+  const cfg = WAIT_RIDE_CONFIG;
+
+  const dayRides = rides.filter((r) => r && r.dayKey === day && r.status !== "cancelled");
+  const inbounds = dayRides.filter((r) => rideFestivalDirection(r) === "toFestival"
+    && r.assignedDriverId && driverById.has(r.assignedDriverId));
+  const returns = dayRides.filter((r) => rideFestivalDirection(r) === "fromFestival"
+    && !RETURN_STATUS_COMPLETED.has(r.status || "") && !RETURN_STATUS_ACTIVE.has(r.status || ""));
+  const inboundArr = inbounds
+    .map((r) => ({ ride: r, arr: waitInboundArrival(r, setup) }))
+    .filter((x) => x.arr.arrivalAbs != null);
+
+  const byReturn = new Map();
+  for (const ret of returns) {
+    const retDriverId = ret.assignedDriverId || null;
+    const retAbs = c3RideStartAbsMin(ret.date, ret.time);
+    const cands = [];
+    for (const { ride: inb, arr } of inboundArr) {
+      const drvId = inb.assignedDriverId;
+      if (retDriverId && retDriverId !== drvId) continue; // anderem Fahrer zugeteilt: nur derselbe -> already_planned
+      if (retAbs != null && arr.arrivalAbs != null) {
+        const w = retAbs - arr.arrivalAbs;
+        if (w < cfg.minTurnaroundBufferMin || w > cfg.possibleWaitMaxMin) continue; // Zeitfenster (Spec 36)
+      }
+      const driver = driverById.get(drvId) || null;
+      const c = evaluateWaitRideCandidate({ inboundRide: inb, returnRide: ret, driver, setup, dyn, now, comparisonHub: hub });
+      if (c.status === "not_evaluable" && c.reasons.includes("return_assigned_other_driver")) continue;
+      cands.push(c);
+    }
+    if (cands.length === 0) continue;
+    const ranked = rankWaitCandidates(cands);
+    byReturn.set(ret.id, { returnRide: ret, candidates: ranked, best: ranked[0] });
+  }
+
+  // Fahrer, die fuer mehr als eine Rueckfahrt beste (handlungsleitende) Option
+  // sind -> Kennzeichnung "kann nur eine uebernehmen" (Spec 27/28).
+  const bestDriverCount = new Map();
+  for (const { best } of byReturn.values()) {
+    if (best && best.driverId && WAIT_RIDE_ACTIONABLE.has(best.status)) {
+      bestDriverCount.set(best.driverId, (bestDriverCount.get(best.driverId) || 0) + 1);
+    }
+  }
+  const multiBestDrivers = new Set([...bestDriverCount].filter(([, n]) => n > 1).map(([id]) => id));
+  return { byReturn, hub, multiBestDrivers };
+}
+
 /* ---- Mission-Control-Variante der Rueckfahrten (Session 7; Teilpaket D) --- *
  * Datenableitung und ALLE Schreib-Handler (Anwesenheit) sind VERBATIM aus der
  * bestehenden Ansicht uebernommen (keine Aenderung an Rueckfahrten-/Zeit-/
@@ -7046,6 +7388,7 @@ function MissionReturnsTab({ setup, dyn, day, updateDyn, by, onErr, onAssign, on
   const [q, setQ] = useState("");
   const [groupFilter, setGroupFilter] = useState("all"); // all | <gruppe> (Teilpaket D)
   const [onlyNoDriver, setOnlyNoDriver] = useState(false); // Teilpaket D
+  const [onlyWaitSuggestion, setOnlyWaitSuggestion] = useState(false); // Teilpaket E
   const [now, setNow] = useState(Date.now());
   // Teilpaket D: Aktualisierung der operativen Einordnung einmal pro Minute
   // (Spec 19). Rein Re-Render: kein Schreibweg, kein DB-Abruf. Beim Unmount weg.
@@ -7125,6 +7468,23 @@ function MissionReturnsTab({ setup, dyn, day, updateDyn, by, onErr, onAssign, on
   RETURN_GROUPS_IN_ORDER.forEach((g) => { counts[g] = 0; });
   viewModels.forEach((vm) => { counts[vm.op.group] = (counts[vm.op.group] || 0) + 1; });
 
+  // ---- Teilpaket E: Wartefahrt-Vorschlaege (rein lesend, gemeinsames Modell) --
+  // EIN useMemo fuer Zaehler, Filter und Karten (Spec 36). Planbasiert (die
+  // Bewertung nutzt `now` nicht), Abhaengigkeit dennoch auf `now` fuer den
+  // Konfliktmotor (evaluateInsertion), damit die Anzeige mit dem Minuten-Tick
+  // aktuell bleibt. Kein Schreibweg, keine gespeicherten Zustaende.
+  const waitModel = useMemo(() => buildWaitRideCandidates({ dyn, setup, now, day }),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [dyn.rides, day, setup, now]);
+  const waitByReturn = waitModel.byReturn;
+  const waitCounts = { wait_recommended: 0, wait_possible: 0, direct_connection: 0 };
+  waitByReturn.forEach((v) => { if (v.best && waitCounts[v.best.status] != null) waitCounts[v.best.status] += 1; });
+  const waitActionableTotal = waitCounts.wait_recommended + waitCounts.wait_possible + waitCounts.direct_connection;
+  const hasActionableWait = (rideId) => {
+    const w = waitByReturn.get(rideId);
+    return !!(w && w.best && WAIT_RIDE_ACTIONABLE.has(w.best.status));
+  };
+
   // ---- Ansicht-Filter (rein praesentational) ----
   const matchesQ = (r) => {
     if (!q.trim()) return true;
@@ -7133,8 +7493,9 @@ function MissionReturnsTab({ setup, dyn, day, updateDyn, by, onErr, onAssign, on
   };
   const passesFilters = (vm) => matchesQ(vm.ride)
     && (groupFilter === "all" || vm.op.group === groupFilter)
-    && (!onlyNoDriver || !vm.op.driverAssigned);
-  const anyFilter = q.trim().length > 0 || groupFilter !== "all" || onlyNoDriver;
+    && (!onlyNoDriver || !vm.op.driverAssigned)
+    && (!onlyWaitSuggestion || hasActionableWait(vm.ride.id));
+  const anyFilter = q.trim().length > 0 || groupFilter !== "all" || onlyNoDriver || onlyWaitSuggestion;
 
   // Gruppierte, sortierte Darstellung. Leere Gruppen fallen raus (Spec 15/29).
   const grouped = RETURN_GROUPS_IN_ORDER.map((g) => ({
@@ -7200,6 +7561,43 @@ function MissionReturnsTab({ setup, dyn, day, updateDyn, by, onErr, onAssign, on
           ))}
           {r.meetingPoint && <div className="text-xs mt-2 inline-flex items-center gap-1.5" style={{ color: "var(--mc-st-assigned)" }}><MapPin className="w-3.5 h-3.5" />{r.meetingPoint}</div>}
           {issue && <div className="text-xs mt-2 inline-flex items-center gap-1" style={{ color: "var(--mc-st-problem)" }}><AlertTriangle className="w-3.5 h-3.5" />{(r.issues || []).filter(issueOpen).map((i) => i.type).join(", ")}</div>}
+
+          {/* Teilpaket E: Wartefahrt-Vorschlag (nur unbesetzte Rueckfahrt mit
+              handlungsleitender Bewertung). Rein lesend; Aktion nutzt den
+              bestehenden "Fahrer zuweisen"/"Fahrt oeffnen"-Knopf unten. */}
+          {(() => {
+            const w = waitByReturn.get(r.id);
+            if (!w || !w.best || vm.op.driverAssigned || !WAIT_RIDE_ACTIONABLE.has(w.best.status)) return null;
+            const best = w.best;
+            const wdrv = setup.drivers.find((d) => d.id === best.driverId) || null;
+            const inb = (dyn.rides || []).find((x) => x.id === best.inboundRideId) || null;
+            const col = waitSeverityColor(best.severity);
+            const stk = waitSeverityStKey(best.severity);
+            const arrHM = best.inboundArrivalAtFestival ? c3HM(best.inboundArrivalAtFestival) : "—";
+            const multi = waitModel.multiBestDrivers.has(best.driverId);
+            const alt = w.candidates.filter((c) => WAIT_RIDE_ACTIONABLE.has(c.status)).length - 1;
+            return (
+              <div className="mt-2.5 rounded-[var(--mc-r)] p-2.5" style={{ background: `var(--mc-st-${stk}-soft)`, border: `1px solid color-mix(in srgb, ${col} 40%, transparent)` }}>
+                <div className="inline-flex items-center gap-1.5 text-xs font-semibold" style={{ color: col }}>
+                  <Coffee className="w-3.5 h-3.5 shrink-0" />Wartefahrt-Vorschlag · {best.label}
+                </div>
+                <div className="text-xs mt-1" style={{ color: "var(--mc-text-secondary)" }}>
+                  {wdrv ? `${wdrv.firstName}${wdrv.lastName ? " " + wdrv.lastName : ""}` : "Fahrer"} wäre nach Plan um {arrHM} Uhr am Festival · Wartezeit {best.waitMinutes} min
+                </div>
+                {inb && (
+                  <div className="text-xs mt-0.5" style={{ color: "var(--mc-text-muted)" }}>Hinfahrt: {ln(inb.fromId, inb.fromCustom)} → Festival</div>
+                )}
+                {!best.hasRideConflict
+                  ? <div className="text-xs mt-0.5 inline-flex items-center gap-1" style={{ color: "var(--mc-text-muted)" }}><Check className="w-3 h-3" style={{ color: "var(--mc-st-done)" }} />Keine Fahrtkonflikte</div>
+                  : <div className="text-xs mt-0.5 inline-flex items-center gap-1" style={{ color: "var(--mc-st-assigned)" }}><AlertTriangle className="w-3 h-3" />Fahrtkonflikt prüfen</div>}
+                {best.comparisonRouteReliable && best.estimatedDrivingSavedMin != null
+                  ? <div className="text-xs mt-0.5" style={{ color: "var(--mc-text-muted)" }}>Geschätzt {best.estimatedDrivingSavedMin} zusätzliche Fahrminuten vermeidbar.</div>
+                  : (best.warnings && best.warnings.length ? <div className="text-xs mt-0.5" style={{ color: "var(--mc-text-muted)" }}>{best.warnings[0]}</div> : null)}
+                {multi && <div className="text-xs mt-0.5" style={{ color: "var(--mc-text-muted)" }}>Fahrer ist beste Option für mehrere Rückfahrten (nur eine möglich).</div>}
+                {alt > 0 && <div className="text-[11px] mt-0.5" style={{ color: "var(--mc-text-muted)" }}>{alt} weitere{alt === 1 ? "r" : ""} Fahrer möglich.</div>}
+              </div>
+            );
+          })()}
 
           <div className="flex items-center flex-wrap gap-2 mt-3">
             {drv ? (
@@ -7329,6 +7727,13 @@ function MissionReturnsTab({ setup, dyn, day, updateDyn, by, onErr, onAssign, on
           style={onlyNoDriver ? { background: "var(--mc-st-assigned-soft)", color: "var(--mc-st-assigned)", fontWeight: 500, border: "1px solid var(--mc-st-assigned)" } : { color: "var(--mc-text-secondary)", border: "1px solid var(--mc-border)" }}>
           <Navigation className="w-3 h-3" />nur ohne Fahrer
         </button>
+        {/* Teilpaket E: Filter auf Rueckfahrten mit handlungsleitendem Wartevorschlag */}
+        {waitActionableTotal > 0 && (
+          <button onClick={() => setOnlyWaitSuggestion((v) => !v)} className="text-xs px-2.5 py-1 rounded-[var(--mc-r-sm)] inline-flex items-center gap-1 transition-colors"
+            style={onlyWaitSuggestion ? { background: "var(--mc-st-done-soft)", color: "var(--mc-st-done)", fontWeight: 500, border: "1px solid var(--mc-st-done)" } : { color: "var(--mc-text-secondary)", border: "1px solid var(--mc-border)" }}>
+            <Coffee className="w-3 h-3" />nur mit Wartevorschlag {waitActionableTotal}
+          </button>
+        )}
       </div>
 
       {returns.length === 0 && (
@@ -7338,7 +7743,7 @@ function MissionReturnsTab({ setup, dyn, day, updateDyn, by, onErr, onAssign, on
 
       {returns.length > 0 && anyFilter && shownTotal === 0 && (
         <EmptyState icon={Search} title="Keine Rückfahrten entsprechen den aktuellen Filtern."
-          action={<button onClick={() => { setQ(""); setGroupFilter("all"); setOnlyNoDriver(false); }} className="text-xs px-3 py-1.5 rounded-[var(--mc-r)]" style={{ background: "var(--mc-hover)", color: "var(--mc-text)", border: "1px solid var(--mc-border)" }}>Filter zurücksetzen</button>} />
+          action={<button onClick={() => { setQ(""); setGroupFilter("all"); setOnlyNoDriver(false); setOnlyWaitSuggestion(false); }} className="text-xs px-3 py-1.5 rounded-[var(--mc-r)]" style={{ background: "var(--mc-hover)", color: "var(--mc-text)", border: "1px solid var(--mc-border)" }}>Filter zurücksetzen</button>} />
       )}
 
       {returns.length > 0 && !(anyFilter && shownTotal === 0) && (
