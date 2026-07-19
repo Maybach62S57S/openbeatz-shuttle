@@ -490,7 +490,9 @@ const seedLocations = () => [
   { id: "airport", name: "Flughafen Nürnberg", short: "Flughafen", address: "Flughafenstraße 100, 90411 Nürnberg", venue: false, type: "airport", mapX: 812, mapY: 150, labelDx: 0, labelDy: -20, lat: 49.4987, lng: 11.0669 },
   { id: "moevenpick", name: "Mövenpick Hotel Nürnberg-Airport", short: "Mövenpick", address: "Flughafenstraße 100, 90411 Nürnberg", venue: false, type: "hotel", mapX: 858, mapY: 292, labelDx: 22, labelDy: 4, lat: 49.4980, lng: 11.0620 },
   { id: "sheraton", name: "Sheraton Carlton Hotel Nürnberg", short: "Sheraton", address: "Eilgutstraße 13–15, 90443 Nürnberg", venue: false, type: "hotel", mapX: 760, mapY: 486, labelDx: 0, labelDy: 28, lat: 49.4450, lng: 11.0780 },
-  { id: "festival", name: "Open Beatz Festival", short: "Festival", address: "Puschendorfer Straße 2, Höfen, 91074 Herzogenaurach", venue: true, type: "festival", mapX: 366, mapY: 320, labelDx: 0, labelDy: -24, lat: 49.6000, lng: 10.8300 },
+  // Teilpaket B: Festival-Koordinate korrigiert (49.52728/10.83139, Jordans Vorgabe),
+  // Anfahrt VIP-Shuttle ueber Puschendorf (nicht die Besucher-Zufahrt Hoefen).
+  { id: "festival", name: "Open Beatz Festival", short: "Festival", address: "Puschendorfer Straße 2, 91074 Herzogenaurach (VIP-Anfahrt über Puschendorf)", venue: true, type: "festival", mapX: 366, mapY: 320, labelDx: 0, labelDy: -24, lat: 49.52728, lng: 10.83139 },
 ];
 
 const ZONES = ["Caldera", "Zone 3", "Stonelands"];
@@ -513,7 +515,13 @@ const seedMatrix = () => ({
   "airport|festival": { min: 30, km: 26 },
   "moevenpick|sheraton": { min: 18, km: 10 },
   "moevenpick|festival": { min: 30, km: 26 },
-  "sheraton|festival": { min: 33, km: 28 },
+  // Teilpaket B: Stadt->Festival auf 38 min angehoben (weiter suedliche Festival-Koordinate).
+  // Gilt via Nachbar-Mapping auch fuer Leonardo/HBF/Karl August (rechnen wie Sheraton).
+  "sheraton|festival": { min: 38, km: 28 },
+  // Teilpaket B: Flughafen Muenchen (Matrix-Knoten "muc"). MUC->Festival = MUC->Sheraton
+  // = 105 min (Zwischenwert der recherchierten 1h32..1h53, von Jordan bestaetigt).
+  "muc|festival": { min: 105, km: 185 },
+  "muc|sheraton": { min: 105, km: 185 },
 });
 
 const seedConfig = () => ({
@@ -1632,11 +1640,229 @@ function checkDriverAvailability(driver, ride, anfahrtMin) {
   return { restricted: true, ok, reason: ok ? null : `Fahrer erst ab ${af} verfügbar, benötigt ab ${hhmm(neededFrom)}` };
 }
 
+/* =========================================================================
+   Teilpaket B: zusaetzliche Ortszonen, operative Pick-up-Points, sichere
+   Fahrzeitaufloesung. REIN ADDITIV. Der bestehende Vorschlagsmotor
+   (evaluateInsertion/suggestDrivers) und matchLoc bleiben die Grundlage und
+   werden nicht ersetzt. Alle Funktionen hier sind reine Funktionen ohne
+   Nebenwirkung. Ride-Daten werden nie mutiert.
+
+   Zentrale Idee: eine Aufloesungs-Schicht ueber den vorhandenen festen IDs.
+   - Kanonische Orts-IDs (Spec) werden erkannt, ohne die 4 bestehenden IDs
+     (airport/moevenpick/sheraton/festival) oder die Matrix umzubenennen.
+   - Fuer die Fahrzeit wird jede kanonische ID auf einen VORHANDENEN Matrix-
+     Knoten abgebildet (Nachbar-Wiederverwendung), damit keine Fahrzeit
+     erfunden werden muss und Bestandsverhalten byte-identisch bleibt.
+   - Rueckwaertskompatibilitaet: eine bereits bekannte feste ID loest immer
+     auf sich selbst auf (Identitaet), Custom-Freitext bleibt erhalten.
+   ========================================================================= */
+
+// Kanonische Orte und ihre grobe Dispositionszone (Spec Abschnitt 4).
+const LOC_ZONE = {
+  festival: "VENUE",
+  sheraton: "HOTEL_STADT",
+  moevenpick: "HOTEL_STADT",
+  karl_august: "HOTEL_STADT",
+  leonardo: "HOTEL_STADT",
+  airport_nue: "AIRPORT_NUE",
+  gat_nue: "GAT_NUE",
+  hbf_nue: "HBF_NUE",
+  airport_muc: "AIRPORT_MUC",
+};
+const ZONE_LABEL = {
+  VENUE: "Festival", HOTEL_STADT: "Hotel Stadt", AIRPORT_NUE: "Flughafen Nürnberg",
+  GAT_NUE: "GAT Nürnberg", HBF_NUE: "HBF Nürnberg", AIRPORT_MUC: "Flughafen München",
+  UNKNOWN: "unbekannt",
+};
+
+// Abbildung kanonische ID -> VORHANDENER Matrix-Knoten (fuer die Fahrzeit).
+// Nachbar-Wiederverwendung, von Jordan bestaetigt (TEILPAKET-B-ANALYSE.md):
+//   leonardo/hbf_nue/karl_august rechnen wie sheraton (Innenstadt/am Hbf),
+//   gat_nue rechnet wie airport (direkt am Flughafen NUE),
+//   airport_muc ist eigener Knoten "muc" (kein Nachbar, eigener Matrix-Wert).
+// Die 4 Bestands-IDs bilden auf sich selbst ab (Identitaet) -> Bestandsverhalten
+// unveraendert. "muc" ist der neue Matrix-Knoten fuer Muenchen.
+const LOC_MATRIX_NODE = {
+  festival: "festival",
+  sheraton: "sheraton",
+  moevenpick: "moevenpick",
+  airport: "airport",           // Bestands-ID (== airport_nue)
+  airport_nue: "airport",
+  gat_nue: "airport",
+  leonardo: "sheraton",
+  hbf_nue: "sheraton",
+  karl_august: "sheraton",
+  airport_muc: "muc",
+};
+
+// Normalisierung (Spec Abschnitt 6): deterministisch, kein Fuzzy.
+// Kleinschreibung, Umlaute/oe-ae-ue, ss/ß, Zeichensetzung -> Leerzeichen,
+// Mehrfach-Leerzeichen zusammenfassen, trimmen.
+function normLoc(s) {
+  let t = (s == null ? "" : String(s)).toLowerCase();
+  t = t.replace(/ä/g, "ae").replace(/ö/g, "oe").replace(/ü/g, "ue").replace(/ß/g, "ss");
+  // typische Zeichensetzung (Bindestrich, Unterstrich, Punkt, Komma, Slash u.a.)
+  // wird zu Leerzeichen; danach Mehrfach-Leerzeichen -> ein Leerzeichen.
+  t = t.replace(/[\-_.,;:/\\()\[\]{}'"`!?]+/g, " ");
+  t = t.replace(/\s+/g, " ").trim();
+  return t;
+}
+
+// Alias-Konfiguration (Spec Abschnitt 5). Reihenfolge = Prioritaet:
+// SPEZIFISCH VOR ALLGEMEIN. gat_nue steht vor airport_nue, damit "nue gat"
+// nicht vorher schon ueber "nue"/"airport" als airport_nue erkannt wird.
+// Jeder Alias ist bereits in normLoc-Form (lowercase, oe/ae/ue, ohne Satzzeichen).
+const LOC_ALIASES = [
+  { id: "gat_nue", aliases: [
+      "nue gat", "gat nue", "gat nuernberg",
+      "general aviation terminal nuernberg", "general aviation nuernberg",
+      "private jet gat",
+  ] },
+  { id: "hbf_nue", aliases: [
+      "nuernberg hbf", "hbf nuernberg", "nuernberg hauptbahnhof",
+      "hauptbahnhof nuernberg", "nuremberg central station", "nuremberg main station",
+  ] },
+  { id: "airport_nue", aliases: [
+      "airport nuernberg", "flughafen nuernberg", "nuernberg airport",
+      "nuremberg airport", "nue", "airport nue", "flughafen nue",
+  ] },
+  { id: "airport_muc", aliases: [
+      "flughafen muenchen", "muenchen airport", "munich airport", "muc",
+      "flughafen muc", "franz josef strauss flughafen", "franz josef strauss",
+  ] },
+  { id: "sheraton", aliases: [
+      "sheraton", "sheraton carlton", "sheraton carlton nuernberg", "sheraton nuernberg",
+  ] },
+  { id: "moevenpick", aliases: [
+      "moevenpick", "movenpick", "moevenpick hotel", "movenpick hotel", "moevenpick nuernberg",
+  ] },
+  { id: "karl_august", aliases: [
+      "karl august", "hotel karl august", "karl august nuernberg",
+  ] },
+  { id: "leonardo", aliases: [
+      "leonardo", "leonardo hotel", "leonardo royal", "leonardo royal nuernberg",
+      "leonardo royal hotel nuernberg",
+  ] },
+  { id: "festival", aliases: [
+      "open beatz", "open beatz festival", "festival", "venue",
+      "festivalgelaende", "gelaende",
+  ] },
+];
+
+// Bekannte feste Bestands-IDs (Ergebnis von matchLoc). Diese loesen ohne
+// Alias-Suche direkt auf, damit Bestandsverhalten unveraendert bleibt.
+const KNOWN_FIXED_IDS = { airport: "airport_nue", moevenpick: "moevenpick", sheraton: "sheraton", festival: "festival" };
+
+// Reine Ortsaufloesung (Spec Abschnitt 2/3). Gibt IMMER eine strukturierte
+// Antwort. Der urspruengliche Wert (requestedLocation) geht nie verloren.
+// fixedId: optionale bereits bekannte feste ID (ride.fromId/toId); wenn gesetzt
+// und bekannt, hat sie Vorrang vor der Freitext-Erkennung (Spec Abschnitt 10).
+function resolveLocation(text, fixedId) {
+  const requested = text == null ? "" : String(text);
+  // 1) bekannte feste ID gewinnt (Rueckwaertskompatibilitaet)
+  if (fixedId && KNOWN_FIXED_IDS[fixedId]) {
+    const canon = KNOWN_FIXED_IDS[fixedId];
+    return { requestedLocation: requested || canon, normalizedLocation: canon,
+      zone: LOC_ZONE[canon] || "UNKNOWN", operationalLocation: canon,
+      matchedAlias: null, status: "matched" };
+  }
+  // 2) Freitext normalisieren und exakt gegen die Aliase pruefen
+  const n = normLoc(requested);
+  if (n === "") return { requestedLocation: requested, normalizedLocation: null,
+    zone: "UNKNOWN", operationalLocation: null, matchedAlias: null, status: "unknown" };
+  const hits = [];
+  for (const entry of LOC_ALIASES) {
+    for (const a of entry.aliases) {
+      if (n === a) { hits.push({ id: entry.id, alias: a }); break; }
+    }
+  }
+  if (hits.length === 0) {
+    return { requestedLocation: requested, normalizedLocation: null,
+      zone: "UNKNOWN", operationalLocation: null, matchedAlias: null, status: "unknown" };
+  }
+  // Mehrere unterschiedliche Ziel-IDs -> mehrdeutig, keine stille Auswahl.
+  const uniqIds = [...new Set(hits.map((h) => h.id))];
+  if (uniqIds.length > 1) {
+    return { requestedLocation: requested, normalizedLocation: null,
+      zone: "UNKNOWN", operationalLocation: null, matchedAlias: null,
+      status: "ambiguous", matches: uniqIds };
+  }
+  const id = uniqIds[0];
+  return { requestedLocation: requested, normalizedLocation: id,
+    zone: LOC_ZONE[id] || "UNKNOWN", operationalLocation: id,
+    matchedAlias: hits[0].alias, status: "matched" };
+}
+
+// Aufloesung eines Ride-Endpunkts aus (id, custom): feste ID vor Custom-Freitext
+// (Spec Abschnitt 10). __custom bedeutet ausdruecklich Custom -> Freitext nutzen.
+function resolveRideEndpoint(id, custom) {
+  if (id && id !== "__custom" && KNOWN_FIXED_IDS[id]) return resolveLocation(custom, id);
+  return resolveLocation(custom, null);
+}
+
+// Verbindliche richtungsabhaengige Pick-up-Regeln (Spec Abschnitt 7/8).
+// NUR bei Abholung IN RICHTUNG Festival. Nie allein am Ortsnamen, immer
+// from+to. Rueckfahrten (from===festival) bleiben beim echten Ziel.
+const PICKUP_RULES = [
+  { from: "leonardo", to: "festival", operationalFrom: "sheraton", rule: "LEONARDO_PICKUP_AT_SHERATON" },
+  { from: "hbf_nue",  to: "festival", operationalFrom: "sheraton", rule: "HBF_PICKUP_AT_SHERATON" },
+];
+
+// Einzige Quelle der Wahrheit fuer operative Orte (Spec Abschnitt 9).
+function resolveOperationalRideLocations(ride, setup) {
+  const from = resolveRideEndpoint(ride ? ride.fromId : null, ride ? ride.fromCustom : "");
+  const to = resolveRideEndpoint(ride ? ride.toId : null, ride ? ride.toCustom : "");
+  let operationalFrom = { ...from };
+  const operationalTo = { ...to };   // Ziel wird NIE auf Sheraton umgeschrieben
+  const appliedRules = [];
+  for (const r of PICKUP_RULES) {
+    if (from.normalizedLocation === r.from && to.normalizedLocation === r.to) {
+      operationalFrom = { ...from, operationalLocation: r.operationalFrom, operationalRule: r.rule };
+      appliedRules.push(r.rule);
+      break;
+    }
+  }
+  return { requestedFrom: from, requestedTo: to, operationalFrom, operationalTo, appliedRules };
+}
+
+// Sichere Fahrzeitaufloesung (Spec Abschnitt 11). Nutzt die vorhandene
+// setup.matrix ueber die Knoten-Abbildung. Fehlt die Kante -> status "unknown",
+// minutes null. NIE 0, nie geschaetzt.
+function resolveTravelMinutes({ fromLocation, toLocation, setup }) {
+  const a = LOC_MATRIX_NODE[fromLocation] || fromLocation || null;
+  const b = LOC_MATRIX_NODE[toLocation] || toLocation || null;
+  if (!a || !b) return { minutes: null, source: null, from: a, to: b, status: "unknown" };
+  const min = travelMin(setup.matrix, a, b);
+  if (min == null) return { minutes: null, source: null, from: a, to: b, status: "unknown" };
+  return { minutes: min, source: "matrix", from: a, to: b, status: "known" };
+}
+
+// Uebersetzt einen Ride-Endpunkt (id, custom) in den operativen Matrix-Knoten.
+// RUECKWAERTSKOMPATIBEL: bekannte feste ID -> identischer Knoten (Identitaet),
+// damit evaluateInsertion fuer Bestandsfahrten byte-identisch rechnet. Unbekannt
+// -> Rueckgabe der urspruenglichen id (i.d.R. "__custom") -> travelMin gibt null
+// (= "unbekannt"), exakt wie im Bestand.
+function rideEndpointMatrixNode(id, custom, opRule) {
+  if (id && id !== "__custom" && LOC_MATRIX_NODE[id]) return LOC_MATRIX_NODE[id];
+  const r = resolveLocation(custom, (id && KNOWN_FIXED_IDS[id]) ? id : null);
+  if (r.status === "matched") {
+    const canon = opRule || r.operationalLocation;
+    return LOC_MATRIX_NODE[canon] || canon;
+  }
+  return id || null;   // unbekannt/mehrdeutig -> Bestandsverhalten (null-Fahrzeit)
+}
+
 function evaluateInsertion(setup, dyn, driver, ride) {
   const cfg = setup.config;
   const need = validPassengerCount(ride.passengerCount);
   const capacityUnknown = need == null;
-  const pickup = ride.fromId, drop = ride.toId;
+  // Teilpaket B: operative Orte als einzige Quelle der Wahrheit. Fuer die vier
+  // Bestands-IDs liefert rideEndpointMatrixNode die Identitaet -> Bestandsverhalten
+  // byte-identisch. Leonardo/HBF -> Festival werden zum Sheraton-Pickup uebersetzt,
+  // Rueckfahrten behalten ihr echtes Ziel (drop). opLoc dient zusaetzlich der UI.
+  const opLoc = resolveOperationalRideLocations(ride, setup);
+  const pickup = rideEndpointMatrixNode(ride.fromId, ride.fromCustom, opLoc.operationalFrom.operationalRule && opLoc.operationalFrom.operationalLocation);
+  const drop = rideEndpointMatrixNode(ride.toId, ride.toCustom);
   const T = sortMin(ride.time);
   const durKnown = ride.estDurationMin != null;
   const dur = effDur(cfg, ride);          // Punkt 6: nie 0
@@ -1658,7 +1884,10 @@ function evaluateInsertion(setup, dyn, driver, ride) {
   const prev = before[before.length - 1];
   const next = others.filter((r) => sortMin(r.time) > T).sort((a, b) => sortMin(a.time) - sortMin(b.time))[0];
 
-  const prevLoc = prev ? prev.toId : (stats.locNow || cfg.baseLocationId);
+  // Teilpaket B: Fahrerposition = ECHTES Ziel der Vorfahrt (nie Sheraton nach einer
+  // Rueckfahrt). prev ist ein vollstaendiges Ride-Objekt -> Ziel operativ aufloesbar.
+  // prev===null: Bestandsverhalten ueber stats.locNow (Matrix-ID oder base).
+  const prevLoc = prev ? rideEndpointMatrixNode(prev.toId, prev.toCustom) : (stats.locNow || cfg.baseLocationId);
   const prevEnd = prev ? sortMin(prev.time) + effDur(cfg, prev) : Math.max(stats.freeAt, 0);
 
   const deadMin = travelMin(setup.matrix, prevLoc, pickup);
@@ -1668,7 +1897,10 @@ function evaluateInsertion(setup, dyn, driver, ride) {
 
   let lateToNext = 0, toNextKnown = true;
   if (next) {
-    const hop = travelMin(setup.matrix, drop, next.fromId);
+    // Teilpaket B: operativer Pickup der Folgefahrt (Leonardo/HBF -> Festival ueber Sheraton).
+    const nextOp = resolveOperationalRideLocations(next, setup);
+    const nextPickup = rideEndpointMatrixNode(next.fromId, next.fromCustom, nextOp.operationalFrom.operationalRule && nextOp.operationalFrom.operationalLocation);
+    const hop = travelMin(setup.matrix, drop, nextPickup);
     if (hop == null) toNextKnown = false;
     else lateToNext = Math.max(0, (end + hop) - sortMin(next.time));
   }
@@ -1698,7 +1930,9 @@ function evaluateInsertion(setup, dyn, driver, ride) {
     capacityUnknown,
     // Teilpaket A (rein informativ / fuer Filter in suggestDrivers + UI):
     available, availabilityRestricted: avail.restricted, availabilityReason: avail.reason,
-    driverCategory: driverCategoryOf(driver), teamGroup: teamGroupOf(driver), teamLabel: teamLabelOf(driver) };
+    driverCategory: driverCategoryOf(driver), teamGroup: teamGroupOf(driver), teamLabel: teamLabelOf(driver),
+    // Teilpaket B (rein informativ fuer UI): operative Orte + angewandte Regeln.
+    opLoc };
 }
 
 function suggestDrivers(setup, dyn, ride) {
@@ -3907,6 +4141,14 @@ function AssignModal({ setup, dyn, ride, onClose, onAssign }) {
   // Fahrer gleich, deshalb einmal ride-bezogen prüfen statt pro Fahrer).
   const capacityUnknown = useMemo(() => validPassengerCount(ride.passengerCount) == null, [ride.passengerCount]);
   const locName = (id, txt) => setup.locations.find((l) => l.id === id)?.short || txt || "—";
+  // Teilpaket B: operative Orte fuer die Anzeige (Abholung/Zone/Warnungen). Rein
+  // presentational, aendert keine Ride-Daten. canonName: kurzer Name fuer eine
+  // kanonische Orts-ID (Sheraton-Pickup etc.).
+  const opLoc = useMemo(() => resolveOperationalRideLocations(ride, setup), [ride, setup]);
+  const canonName = (canonId) => setup.locations.find((l) => l.id === (LOC_MATRIX_NODE[canonId] || canonId))?.short
+    || (canonId === "sheraton" ? "Sheraton" : ZONE_LABEL[LOC_ZONE[canonId]] || canonId);
+  const pickupRedirected = opLoc.appliedRules.length > 0
+    && opLoc.operationalFrom.operationalLocation !== opLoc.requestedFrom.normalizedLocation;
   const current = setup.drivers.find((d) => d.id === ride.assignedDriverId);
   const [assigning, setAssigning] = useState(false); // Doppelklick-Schutz + Ladezustand
   const [assignErr, setAssignErr] = useState("");     // sichtbare Meldung, falls die Zuteilung nicht gespeichert wird
@@ -3949,6 +4191,25 @@ function AssignModal({ setup, dyn, ride, onClose, onAssign }) {
           <span className="flex items-center gap-1 ml-auto" style={{ color: capacityUnknown ? "var(--mc-st-problem)" : "var(--mc-text-muted)" }}><Users className="w-3.5 h-3.5" />{ride.passengerCount ?? "?"} Pers.</span>
         </div>
         {ride.djName && <div className="mt-1.5 text-base font-semibold truncate" style={{ color: "var(--mc-st-assigned)" }}>{ride.djName}</div>}
+        {/* Teilpaket B: operativer Abholpunkt (nur wenn abweichend), Zone, Warnungen.
+            Rein presentational; der urspruengliche Ort oben bleibt sichtbar. */}
+        {pickupRedirected && (
+          <div className="mt-1.5 text-xs flex items-center gap-1.5" style={{ color: "var(--mc-st-assigned)" }}>
+            <MapPin className="w-3.5 h-3.5" />
+            Abholung: <span className="font-medium">{canonName(opLoc.operationalFrom.operationalLocation)}</span>
+            <span style={{ color: "var(--mc-text-muted)" }}>(Fahrgast-Ort: {locName(ride.fromId, ride.fromCustom)})</span>
+          </div>
+        )}
+        {opLoc.requestedFrom.status === "unknown" && ride.fromId === "__custom" && (
+          <div className="mt-1.5 text-xs flex items-center gap-1.5" style={{ color: "var(--mc-st-problem)" }}>
+            <AlertTriangle className="w-3.5 h-3.5" />Abholort nicht erkannt – Fahrzeit unbekannt, bitte manuell prüfen.
+          </div>
+        )}
+        {opLoc.requestedTo.status === "unknown" && ride.toId === "__custom" && (
+          <div className="mt-1 text-xs flex items-center gap-1.5" style={{ color: "var(--mc-st-problem)" }}>
+            <AlertTriangle className="w-3.5 h-3.5" />Zielort nicht erkannt – Fahrzeit unbekannt, bitte manuell prüfen.
+          </div>
+        )}
       </div>
 
       {current && (
