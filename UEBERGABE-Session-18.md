@@ -4042,3 +4042,82 @@ der Live-DB angekommen). Damit ist die einzige GO-Bedingung aus dem Abschlussber
 erfuellt. **Teilpaket B ist vollstaendig abgeschlossen, keine offenen Punkte mehr aus
 diesem Paket** (bis auf die separat dokumentierten, bewusst nicht behobenen Randfaelle
 unter "Weitere gefundene Punkte fuer spaetere Sessions").
+
+
+# ============================================================================
+# TEILPAKET C1 - Rein lesender Timetable-Tab (19.07.2026, abgeschlossen)
+# ============================================================================
+
+## Was umgesetzt wurde
+Neuer, rein lesender Tab "Timetable" in der Leitstelle. Zeigt die Open-Beatz-
+Timetable (229 Sets, 4 Tage, 10 Stages), gruppiert nach Betriebstag, mit Suche,
+Tag-/Stage-Filter, B2B- und "nach Mitternacht"-Kennzeichen. Keinerlei Schreib-
+vorgang, kein Kernpfad beruehrt.
+
+## Ruecksetzpunkt
+Git-Tag `pre-teilpaket-C1` = `6d0054c` (Stand nach Teilpaket B).
+
+## Aenderung an src/ShuttleLeitstelle.jsx
+Rein additiv: **550 Einfuegungen, 0 Loeschungen** (9522 -> 10072 Zeilen).
+Drei Einhaengepunkte:
+1. Block vor `MissionDriversTab`: `TIMETABLE_META` + `TIMETABLE_RAW` (229 Sets,
+   gebackene Konstante wie DRIVER_PROFILES) + Helfer `ttHash`/`ttAbsMin`/
+   `ttIsB2B`/`ttNorm`/`ttCompare`/`normalizeTimetableEntries` + Komponente
+   `TimetableTab`.
+2. Eine `MC_NAV`-Zeile (Tab "timetable", Gruppe "Planung & Kommunikation").
+3. Eine Render-Zeile `{tab === "timetable" && <TimetableTab />}`.
+
+## Wichtigste Design-Entscheidungen (von Jordan bestaetigt)
+- Timetable als gebackene JS-Konstante (Single-File-Artifact kann kein JSON
+  importieren).
+- Betriebstag ausschliesslich ueber bestehenden `festDayKey`. Verifiziert:
+  reproduziert `festival_day` fuer alle 229 Sets, 0 Abweichungen. Keine zweite
+  Datumslogik; `festival_day` nur zur Gegenpruefe.
+- Sichtbarkeit allein ueber `MC_ROLE_TABS` (dispo=alle; stage/driver Allowlist
+  ohne timetable; guest keine MC-Nav) -> andere Rollen strukturell unangetastet.
+
+## Verifikation (alles gruen)
+- esbuild gruen, keine Duplikat-Funktionen, JSX-Referenz-Check sauber.
+- `smoke-teilpaket-c1.mjs` 40/40 (inkl. Gegenprobe), `smoke-teilpaket-c1-ui.mjs`
+  16/16. Beide testen die ECHTEN, aus der Quelle gebundelten Funktionen/
+  Komponenten (kein Nachbau).
+- rendertest 5 Referenzwerte EXAKT konstant (25053/2452/2413/2895/101).
+- kontrast 0 Fehler, pruefe: DriverApp/StageApp/GuestApp/... unveraendert,
+  0 undefinierte CSS-Vars.
+- Byte-Diff aller Kernpfad-/Tabu-Funktionen (pre-C1 vs. aktuell): identisch.
+- Bestehende Logiktests: Springer 34/34, Personenzahl 24/24, One-Tap 14/14,
+  leere Ridelist 10/10.
+
+## Restrisiken / bewusst verschoben
+- "Jetzt / Als Naechstes"-Filter NICHT eingebaut (nur mit Echtzeit sinnvoll,
+  erst waehrend Festival testbar). Bewusst verschoben.
+- Waehrend Entwicklung gefunden+behoben: `\uXXXX`-Escapes rendern in JSX-Text/
+  Attributen literal -> durch echte Zeichen ersetzt. Diakritika-Regex in ttNorm
+  (`\u0300-\u036f`) bleibt korrekt als Escape.
+- `regression-teilpaket-b.mjs` braucht `/tmp`-Extrakte der Vorsession (fragil);
+  der Motor-Vergleich ist durch den Byte-Diff oben staerker abgedeckt.
+
+## Noch NICHT gepusht
+Zum Zeitpunkt dieses Eintrags sind Commit + Push offen (frischer PAT noetig).
+Der geklonte PAT wurde nach dem Clone gescrubbt.
+
+# ----------------------------------------------------------------------------
+# READY-TO-PASTE OPENER FUER DEN NAECHSTEN CHAT
+# ----------------------------------------------------------------------------
+# Repo: Maybach62S57S/openbeatz-shuttle, main. Hauptdatei src/ShuttleLeitstelle.jsx.
+# Deutsch, informell, keine Gedankenstriche, korrekte Umlaute. Code-Freeze 21.07.,
+# ab 21.07. KEINE Loeschungen mehr (Festival 23.-27.07.).
+#
+# Stand: Teilpaket A, B und C1 abgeschlossen und gepusht. main steht auf dem
+# C1-Commit. Ruecksetzpunkte als Tags: pre-teilpaket-A/-B/-C1.
+#
+# Schritt 0 (Pflicht): Repo klonen (frischen fine-grained PAT bereitstellen, nach
+# Clone aus der Remote-URL scrubben), `git log --graph --oneline --all` pruefen,
+# exakte Zeilenzahl von src/ShuttleLeitstelle.jsx messen (Erwartung ~10072 + evtl.
+# spaetere Commits), npm install (esbuild+react+react-dom), Baseline-Skripte laufen
+# lassen (rendertest/kontrast/pruefe/smoke*). Erst dann Auftrag entgegennehmen.
+#
+# Offene, bewusst NICHT gefixte Punkte (nur auf ausdruecklichen Auftrag):
+#   - matchLoc (Z. ~7676) liest nur 4 Hardcode-Orte, nicht setup.locations.
+#   - "Jetzt/Als Naechstes"-Filter im Timetable-Tab (verschoben, s.o.).
+#   - PIN-Sicherheit: NICHT proaktiv ansprechen.

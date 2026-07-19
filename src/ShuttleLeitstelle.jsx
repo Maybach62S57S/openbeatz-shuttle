@@ -4681,6 +4681,554 @@ function LocSelect({ setup, label, value, custom, onId, onCustom }) {
  * Lesestellen. Der aktuelle Auftrag ist die von computeDriverStats ohnehin schon
  * berechnete laufende Fahrt (s.active), nur bisher nicht angezeigt. Classic
  * DriversTab bleibt byte-genau unveraendert. */
+/* ---- Teilpaket C1: Open-Beatz-Timetable (rein lesend) ------------------- *
+ * Gebackene Konstante aus timetable_openbeatz.json (Stand generated 2026-07-18).
+ * Single-File-Artifact kann kein externes JSON importieren -> gleiches Muster
+ * wie DRIVER_PROFILES. EINZIGE Datenquelle des Timetable-Tabs. 229 Sets,
+ * Reihenfolge = Dateireihenfolge (dient als sourceIndex/Tie-Breaker).
+ * Konvention laut Datei-Header: "Festival-Tag laeuft ~14:00 bis ~06:00 Folgetag. Post-Mitternacht-Sets sind auf den echten Kalendertag gerollt."
+ * ----------------------------------------------------------------------- */
+const TIMETABLE_META = { festival: "Open Beatz 2026", generated: "2026-07-18", note: "Festival-Tag laeuft ~14:00 bis ~06:00 Folgetag. Post-Mitternacht-Sets sind auf den echten Kalendertag gerollt." };
+const TIMETABLE_RAW = [
+  { festival_day: "23/07/2026", stage: "CAMPINGSTAGE PREPARTY", artist: "TEZZ", start: "2026-07-23 15:00", end: "2026-07-23 16:15" },
+  { festival_day: "23/07/2026", stage: "CAMPINGSTAGE PREPARTY", artist: "Fever Dream", start: "2026-07-23 16:15", end: "2026-07-23 17:30" },
+  { festival_day: "23/07/2026", stage: "CAMPINGSTAGE PREPARTY", artist: "XETEX", start: "2026-07-23 17:30", end: "2026-07-23 18:30" },
+  { festival_day: "23/07/2026", stage: "CAMPINGSTAGE PREPARTY", artist: "ZEYPHIA", start: "2026-07-23 18:30", end: "2026-07-23 19:30" },
+  { festival_day: "23/07/2026", stage: "CAMPINGSTAGE PREPARTY", artist: "Neptunica", start: "2026-07-23 19:30", end: "2026-07-23 20:45" },
+  { festival_day: "23/07/2026", stage: "CAMPINGSTAGE PREPARTY", artist: "Fabian Farell", start: "2026-07-23 20:45", end: "2026-07-23 22:00" },
+  { festival_day: "23/07/2026", stage: "CAMPINGSTAGE PREPARTY", artist: "DELIVERZ", start: "2026-07-23 22:00", end: "2026-07-23 23:00" },
+  { festival_day: "23/07/2026", stage: "CAMPINGSTAGE PREPARTY", artist: "BassWar x CaoX", start: "2026-07-23 23:00", end: "2026-07-24 00:00" },
+  { festival_day: "24/07/2026", stage: "CALDERA", artist: "Lavinia", start: "2026-07-24 14:00", end: "2026-07-24 15:00" },
+  { festival_day: "24/07/2026", stage: "CALDERA", artist: "Bovski", start: "2026-07-24 15:00", end: "2026-07-24 15:45" },
+  { festival_day: "24/07/2026", stage: "CALDERA", artist: "AXMO", start: "2026-07-24 15:45", end: "2026-07-24 16:45" },
+  { festival_day: "24/07/2026", stage: "CALDERA", artist: "Gestört aber Geil", start: "2026-07-24 16:45", end: "2026-07-24 17:45" },
+  { festival_day: "24/07/2026", stage: "CALDERA", artist: "NOISETIME", start: "2026-07-24 17:45", end: "2026-07-24 18:45" },
+  { festival_day: "24/07/2026", stage: "CALDERA", artist: "Luca-Dante Spadafora", start: "2026-07-24 18:45", end: "2026-07-24 19:45" },
+  { festival_day: "24/07/2026", stage: "CALDERA", artist: "Alle Farben", start: "2026-07-24 19:45", end: "2026-07-24 20:45" },
+  { festival_day: "24/07/2026", stage: "CALDERA", artist: "Felix Jaehn", start: "2026-07-24 20:45", end: "2026-07-24 21:45" },
+  { festival_day: "24/07/2026", stage: "CALDERA", artist: "Opening Show", start: "2026-07-24 21:45", end: "2026-07-24 22:00" },
+  { festival_day: "24/07/2026", stage: "CALDERA", artist: "Toby Dean", start: "2026-07-24 22:00", end: "2026-07-24 23:00" },
+  { festival_day: "24/07/2026", stage: "CALDERA", artist: "Neelix", start: "2026-07-24 23:00", end: "2026-07-25 00:00" },
+  { festival_day: "24/07/2026", stage: "CALDERA", artist: "Timmy Trumpet", start: "2026-07-25 00:00", end: "2026-07-25 01:00" },
+  { festival_day: "24/07/2026", stage: "CALDERA", artist: "Sub Zero Project", start: "2026-07-25 01:00", end: "2026-07-25 02:00" },
+  { festival_day: "24/07/2026", stage: "STONELANDS", artist: "VISHY", start: "2026-07-24 15:00", end: "2026-07-24 16:00" },
+  { festival_day: "24/07/2026", stage: "STONELANDS", artist: "ACINA", start: "2026-07-24 16:00", end: "2026-07-24 17:00" },
+  { festival_day: "24/07/2026", stage: "STONELANDS", artist: "Chrissyjeey", start: "2026-07-24 17:00", end: "2026-07-24 18:30" },
+  { festival_day: "24/07/2026", stage: "STONELANDS", artist: "Caro van EE", start: "2026-07-24 18:30", end: "2026-07-24 20:00" },
+  { festival_day: "24/07/2026", stage: "STONELANDS", artist: "Negitiv", start: "2026-07-24 20:00", end: "2026-07-24 21:30" },
+  { festival_day: "24/07/2026", stage: "STONELANDS", artist: "Oguz", start: "2026-07-24 21:30", end: "2026-07-24 23:00" },
+  { festival_day: "24/07/2026", stage: "STONELANDS", artist: "POLTERGST", start: "2026-07-24 23:00", end: "2026-07-25 00:30" },
+  { festival_day: "24/07/2026", stage: "STONELANDS", artist: "Klofama", start: "2026-07-25 00:30", end: "2026-07-25 02:05" },
+  { festival_day: "24/07/2026", stage: "Zone III", artist: "Lil Berlin", start: "2026-07-24 15:00", end: "2026-07-24 16:15" },
+  { festival_day: "24/07/2026", stage: "Zone III", artist: "Zelecter", start: "2026-07-24 16:15", end: "2026-07-24 17:15" },
+  { festival_day: "24/07/2026", stage: "Zone III", artist: "Coone", start: "2026-07-24 17:15", end: "2026-07-24 18:15" },
+  { festival_day: "24/07/2026", stage: "Zone III", artist: "Brennan Heart", start: "2026-07-24 18:15", end: "2026-07-24 19:15" },
+  { festival_day: "24/07/2026", stage: "Zone III", artist: "Rooler", start: "2026-07-24 19:15", end: "2026-07-24 20:15" },
+  { festival_day: "24/07/2026", stage: "Zone III", artist: "Rebelion", start: "2026-07-24 20:15", end: "2026-07-24 21:15" },
+  { festival_day: "24/07/2026", stage: "Zone III", artist: "Aversion", start: "2026-07-24 21:15", end: "2026-07-24 22:15" },
+  { festival_day: "24/07/2026", stage: "Zone III", artist: "The Straikerz", start: "2026-07-24 22:15", end: "2026-07-24 23:15" },
+  { festival_day: "24/07/2026", stage: "Zone III", artist: "Mutilator", start: "2026-07-24 23:15", end: "2026-07-25 00:15" },
+  { festival_day: "24/07/2026", stage: "Zone III", artist: "GPF", start: "2026-07-25 00:15", end: "2026-07-25 01:00" },
+  { festival_day: "24/07/2026", stage: "Zone III", artist: "Equal2 b2b Invaderz", start: "2026-07-25 01:00", end: "2026-07-25 02:05" },
+  { festival_day: "24/07/2026", stage: "Magical Forest", artist: "Sylvie Miles", start: "2026-07-24 16:00", end: "2026-07-24 17:00" },
+  { festival_day: "24/07/2026", stage: "Magical Forest", artist: "Dennis Reif", start: "2026-07-24 17:00", end: "2026-07-24 18:00" },
+  { festival_day: "24/07/2026", stage: "Magical Forest", artist: "Karla Blum", start: "2026-07-24 18:00", end: "2026-07-24 19:00" },
+  { festival_day: "24/07/2026", stage: "Magical Forest", artist: "Klanglos", start: "2026-07-24 19:00", end: "2026-07-24 20:30" },
+  { festival_day: "24/07/2026", stage: "Magical Forest", artist: "A.D.H.S.", start: "2026-07-24 20:30", end: "2026-07-24 22:00" },
+  { festival_day: "24/07/2026", stage: "Magical Forest", artist: "Anna Reusch", start: "2026-07-24 22:00", end: "2026-07-24 23:00" },
+  { festival_day: "24/07/2026", stage: "Magical Forest", artist: "Pappenheimer", start: "2026-07-24 23:00", end: "2026-07-25 00:00" },
+  { festival_day: "24/07/2026", stage: "Magical Forest", artist: "Klaudia Gawlas", start: "2026-07-25 00:00", end: "2026-07-25 01:00" },
+  { festival_day: "24/07/2026", stage: "Magical Forest", artist: "Felix Kröcher", start: "2026-07-25 01:00", end: "2026-07-25 02:00" },
+  { festival_day: "24/07/2026", stage: "Goa Garden", artist: "GOA Sammelrider", start: "2026-07-24 14:00", end: "2026-07-25 14:00" },
+  { festival_day: "24/07/2026", stage: "Goa Garden", artist: "Atopia", start: "2026-07-24 16:00", end: "2026-07-24 17:30" },
+  { festival_day: "24/07/2026", stage: "Goa Garden", artist: "Isy", start: "2026-07-24 17:30", end: "2026-07-24 18:30" },
+  { festival_day: "24/07/2026", stage: "Goa Garden", artist: "Misstree", start: "2026-07-24 18:30", end: "2026-07-24 19:30" },
+  { festival_day: "24/07/2026", stage: "Goa Garden", artist: "Tamborino", start: "2026-07-24 19:30", end: "2026-07-24 21:00" },
+  { festival_day: "24/07/2026", stage: "Goa Garden", artist: "Cloud7", start: "2026-07-24 21:00", end: "2026-07-24 22:30" },
+  { festival_day: "24/07/2026", stage: "Goa Garden", artist: "Djingis Khan", start: "2026-07-24 22:30", end: "2026-07-25 00:00" },
+  { festival_day: "24/07/2026", stage: "Goa Garden", artist: "Chinchilla", start: "2026-07-25 00:00", end: "2026-07-25 01:00" },
+  { festival_day: "24/07/2026", stage: "Goa Garden", artist: "Kayara", start: "2026-07-25 01:00", end: "2026-07-25 02:00" },
+  { festival_day: "24/07/2026", stage: "Darkwoods", artist: "OSTRAUSCH b2b Düzentrieb", start: "2026-07-24 16:00", end: "2026-07-24 17:30" },
+  { festival_day: "24/07/2026", stage: "Darkwoods", artist: "FABITEKK", start: "2026-07-24 17:30", end: "2026-07-24 19:00" },
+  { festival_day: "24/07/2026", stage: "Darkwoods", artist: "Tiefundton", start: "2026-07-24 19:00", end: "2026-07-24 20:00" },
+  { festival_day: "24/07/2026", stage: "Darkwoods", artist: "OsTEKKE", start: "2026-07-24 20:00", end: "2026-07-24 21:00" },
+  { festival_day: "24/07/2026", stage: "Darkwoods", artist: "Kopf & Hörer", start: "2026-07-24 21:00", end: "2026-07-24 22:00" },
+  { festival_day: "24/07/2026", stage: "Darkwoods", artist: "KaaCee KomaCasper", start: "2026-07-24 22:00", end: "2026-07-24 23:00" },
+  { festival_day: "24/07/2026", stage: "Darkwoods", artist: "Die Gebrüder Brett", start: "2026-07-24 23:00", end: "2026-07-25 00:00" },
+  { festival_day: "24/07/2026", stage: "Darkwoods", artist: "TekkSchuster feat. Loco Erno", start: "2026-07-25 00:00", end: "2026-07-25 01:00" },
+  { festival_day: "24/07/2026", stage: "Darkwoods", artist: "TekkStreetBoyz", start: "2026-07-25 01:00", end: "2026-07-25 02:00" },
+  { festival_day: "24/07/2026", stage: "Gruener Stadl", artist: "Averro", start: "2026-07-24 14:00", end: "2026-07-24 15:15" },
+  { festival_day: "24/07/2026", stage: "Gruener Stadl", artist: "DJ OLDE", start: "2026-07-24 15:15", end: "2026-07-24 16:15" },
+  { festival_day: "24/07/2026", stage: "Gruener Stadl", artist: "Jey aux Platines", start: "2026-07-24 16:15", end: "2026-07-24 17:30" },
+  { festival_day: "24/07/2026", stage: "Gruener Stadl", artist: "Zoom.Like", start: "2026-07-24 17:30", end: "2026-07-24 18:45" },
+  { festival_day: "24/07/2026", stage: "Gruener Stadl", artist: "Nancy Franck", start: "2026-07-24 18:45", end: "2026-07-24 19:15" },
+  { festival_day: "24/07/2026", stage: "Gruener Stadl", artist: "Malle Anja", start: "2026-07-24 19:15", end: "2026-07-24 19:45" },
+  { festival_day: "24/07/2026", stage: "Gruener Stadl", artist: "Anja Bavaria", start: "2026-07-24 19:45", end: "2026-07-24 20:15" },
+  { festival_day: "24/07/2026", stage: "Gruener Stadl", artist: "DJ Aaron", start: "2026-07-24 20:15", end: "2026-07-24 20:45" },
+  { festival_day: "24/07/2026", stage: "Gruener Stadl", artist: "Alex Hof", start: "2026-07-24 20:45", end: "2026-07-24 22:00" },
+  { festival_day: "24/07/2026", stage: "Gruener Stadl", artist: "Hänsel", start: "2026-07-24 22:00", end: "2026-07-24 22:45" },
+  { festival_day: "24/07/2026", stage: "Gruener Stadl", artist: "Noisetime", start: "2026-07-24 22:45", end: "2026-07-24 23:30" },
+  { festival_day: "24/07/2026", stage: "Gruener Stadl", artist: "Noah Zett feat. NOISETIME", start: "2026-07-24 23:15", end: "2026-07-24 23:30" },
+  { festival_day: "24/07/2026", stage: "Gruener Stadl", artist: "Calvin Kleinen", start: "2026-07-24 23:30", end: "2026-07-25 00:00" },
+  { festival_day: "24/07/2026", stage: "Gruener Stadl", artist: "Felix Harrer", start: "2026-07-25 00:00", end: "2026-07-25 01:00" },
+  { festival_day: "24/07/2026", stage: "Gruener Stadl", artist: "NIKSTER b2b SANE", start: "2026-07-25 01:00", end: "2026-07-25 02:00" },
+  { festival_day: "24/07/2026", stage: "\"House of Remix\" by IQOS", artist: "TEZZ", start: "2026-07-24 14:00", end: "2026-07-24 15:30" },
+  { festival_day: "24/07/2026", stage: "\"House of Remix\" by IQOS", artist: "Lavinia", start: "2026-07-24 15:30", end: "2026-07-24 16:45" },
+  { festival_day: "24/07/2026", stage: "\"House of Remix\" by IQOS", artist: "Salvatore Mancuso", start: "2026-07-24 16:45", end: "2026-07-24 18:00" },
+  { festival_day: "24/07/2026", stage: "\"House of Remix\" by IQOS", artist: "Neptunica", start: "2026-07-24 18:00", end: "2026-07-24 19:15" },
+  { festival_day: "24/07/2026", stage: "\"House of Remix\" by IQOS", artist: "Fabian Farell", start: "2026-07-24 19:15", end: "2026-07-24 20:30" },
+  { festival_day: "24/07/2026", stage: "\"House of Remix\" by IQOS", artist: "Ava Crown", start: "2026-07-24 20:30", end: "2026-07-24 21:45" },
+  { festival_day: "24/07/2026", stage: "\"House of Remix\" by IQOS", artist: "Caro van EE", start: "2026-07-24 21:45", end: "2026-07-24 23:00" },
+  { festival_day: "24/07/2026", stage: "\"House of Remix\" by IQOS", artist: "AXMO", start: "2026-07-24 23:00", end: "2026-07-25 00:00" },
+  { festival_day: "25/07/2026", stage: "CALDERA", artist: "Carpoolboy", start: "2026-07-25 14:00", end: "2026-07-25 15:00" },
+  { festival_day: "25/07/2026", stage: "CALDERA", artist: "Paul Keen", start: "2026-07-25 15:00", end: "2026-07-25 16:00" },
+  { festival_day: "25/07/2026", stage: "CALDERA", artist: "STVW", start: "2026-07-25 16:00", end: "2026-07-25 17:00" },
+  { festival_day: "25/07/2026", stage: "CALDERA", artist: "Ely Oaks", start: "2026-07-25 17:00", end: "2026-07-25 18:00" },
+  { festival_day: "25/07/2026", stage: "CALDERA", artist: "Oswald", start: "2026-07-25 18:00", end: "2026-07-25 19:00" },
+  { festival_day: "25/07/2026", stage: "CALDERA", artist: "Mausio b2b Trancemaster Krause", start: "2026-07-25 19:00", end: "2026-07-25 20:00" },
+  { festival_day: "25/07/2026", stage: "CALDERA", artist: "Stella Bossi", start: "2026-07-25 20:00", end: "2026-07-25 21:00" },
+  { festival_day: "25/07/2026", stage: "CALDERA", artist: "Lari Luke", start: "2026-07-25 21:00", end: "2026-07-25 22:00" },
+  { festival_day: "25/07/2026", stage: "CALDERA", artist: "REWI", start: "2026-07-25 22:00", end: "2026-07-25 23:00" },
+  { festival_day: "25/07/2026", stage: "CALDERA", artist: "Blasterjaxx", start: "2026-07-25 23:00", end: "2026-07-26 00:00" },
+  { festival_day: "25/07/2026", stage: "CALDERA", artist: "Will Sparks", start: "2026-07-26 00:00", end: "2026-07-26 01:00" },
+  { festival_day: "25/07/2026", stage: "CALDERA", artist: "Da Tweekaz", start: "2026-07-26 01:00", end: "2026-07-26 02:00" },
+  { festival_day: "25/07/2026", stage: "STONELANDS", artist: "Sikhaya", start: "2026-07-25 15:00", end: "2026-07-25 16:00" },
+  { festival_day: "25/07/2026", stage: "STONELANDS", artist: "Serafina", start: "2026-07-25 16:00", end: "2026-07-25 17:00" },
+  { festival_day: "25/07/2026", stage: "STONELANDS", artist: "Kobosil", start: "2026-07-25 17:00", end: "2026-07-25 18:30" },
+  { festival_day: "25/07/2026", stage: "STONELANDS", artist: "PRADA2000", start: "2026-07-25 18:30", end: "2026-07-25 20:00" },
+  { festival_day: "25/07/2026", stage: "STONELANDS", artist: "Azzle 447 b2b Ueberrest", start: "2026-07-25 20:00", end: "2026-07-25 21:30" },
+  { festival_day: "25/07/2026", stage: "STONELANDS", artist: "Ueberrest", start: "2026-07-25 21:30", end: "2026-07-25 23:00" },
+  { festival_day: "25/07/2026", stage: "STONELANDS", artist: "Kalte Liebe LIVE", start: "2026-07-25 23:00", end: "2026-07-26 00:00" },
+  { festival_day: "25/07/2026", stage: "STONELANDS", artist: "Kølab feat. Anuuk & Don Choppa", start: "2026-07-26 00:00", end: "2026-07-26 01:00" },
+  { festival_day: "25/07/2026", stage: "STONELANDS", artist: "Dominique Lamee b2b IGDA", start: "2026-07-26 01:00", end: "2026-07-26 02:05" },
+  { festival_day: "25/07/2026", stage: "Zone III", artist: "Anodyze", start: "2026-07-25 15:00", end: "2026-07-25 16:00" },
+  { festival_day: "25/07/2026", stage: "Zone III", artist: "Dropixx", start: "2026-07-25 16:00", end: "2026-07-25 17:00" },
+  { festival_day: "25/07/2026", stage: "Zone III", artist: "Mandy", start: "2026-07-25 17:00", end: "2026-07-25 18:00" },
+  { festival_day: "25/07/2026", stage: "Zone III", artist: "Phuture Noize", start: "2026-07-25 18:00", end: "2026-07-25 19:00" },
+  { festival_day: "25/07/2026", stage: "Zone III", artist: "Justin Pollnik", start: "2026-07-25 19:00", end: "2026-07-25 20:00" },
+  { festival_day: "25/07/2026", stage: "Zone III", artist: "Jebroer", start: "2026-07-25 20:00", end: "2026-07-25 21:00" },
+  { festival_day: "25/07/2026", stage: "Zone III", artist: "The Purge", start: "2026-07-25 21:00", end: "2026-07-25 22:00" },
+  { festival_day: "25/07/2026", stage: "Zone III", artist: "D-STURB", start: "2026-07-25 22:00", end: "2026-07-25 23:00" },
+  { festival_day: "25/07/2026", stage: "Zone III", artist: "ANIME b2b D-Fence", start: "2026-07-25 23:00", end: "2026-07-26 00:00" },
+  { festival_day: "25/07/2026", stage: "Zone III", artist: "Illuszion b2b Opgenkonkerd", start: "2026-07-26 00:00", end: "2026-07-26 01:00" },
+  { festival_day: "25/07/2026", stage: "Zone III", artist: "Cyber Gunz", start: "2026-07-26 01:00", end: "2026-07-26 02:05" },
+  { festival_day: "25/07/2026", stage: "Magical Forest", artist: "Maja Sammelrider Samstag Magical", start: "2026-07-25 15:55", end: "2026-07-25 16:00" },
+  { festival_day: "25/07/2026", stage: "Magical Forest", artist: "Nell", start: "2026-07-25 16:00", end: "2026-07-25 17:30" },
+  { festival_day: "25/07/2026", stage: "Magical Forest", artist: "Tye Vie", start: "2026-07-25 17:30", end: "2026-07-25 18:30" },
+  { festival_day: "25/07/2026", stage: "Magical Forest", artist: "Maks", start: "2026-07-25 18:30", end: "2026-07-25 19:30" },
+  { festival_day: "25/07/2026", stage: "Magical Forest", artist: "Mballa", start: "2026-07-25 19:30", end: "2026-07-25 20:30" },
+  { festival_day: "25/07/2026", stage: "Magical Forest", artist: "Jean Philippe b2b Mole", start: "2026-07-25 20:30", end: "2026-07-25 22:30" },
+  { festival_day: "25/07/2026", stage: "Magical Forest", artist: "Marasi", start: "2026-07-25 22:30", end: "2026-07-26 00:00" },
+  { festival_day: "25/07/2026", stage: "Magical Forest", artist: "Osaro", start: "2026-07-26 00:00", end: "2026-07-26 01:00" },
+  { festival_day: "25/07/2026", stage: "Magical Forest", artist: "Lika", start: "2026-07-26 01:00", end: "2026-07-26 02:00" },
+  { festival_day: "25/07/2026", stage: "Goa Garden", artist: "Naze", start: "2026-07-25 16:00", end: "2026-07-25 17:00" },
+  { festival_day: "25/07/2026", stage: "Goa Garden", artist: "Orso", start: "2026-07-25 17:00", end: "2026-07-25 18:30" },
+  { festival_day: "25/07/2026", stage: "Goa Garden", artist: "B yond", start: "2026-07-25 18:30", end: "2026-07-25 20:00" },
+  { festival_day: "25/07/2026", stage: "Goa Garden", artist: "Nomos", start: "2026-07-25 20:00", end: "2026-07-25 21:30" },
+  { festival_day: "25/07/2026", stage: "Goa Garden", artist: "Grace", start: "2026-07-25 21:30", end: "2026-07-25 23:00" },
+  { festival_day: "25/07/2026", stage: "Goa Garden", artist: "Witchislav", start: "2026-07-25 23:00", end: "2026-07-26 00:30" },
+  { festival_day: "25/07/2026", stage: "Goa Garden", artist: "Opix", start: "2026-07-26 00:30", end: "2026-07-26 02:00" },
+  { festival_day: "25/07/2026", stage: "EDEKA CAMPINGSTAGE", artist: "EDEKA CAMPINGSTAGE ARTISTs", start: "2026-07-25 14:00", end: "2026-07-25 15:00" },
+  { festival_day: "25/07/2026", stage: "Darkwoods", artist: "Ill.i.saw", start: "2026-07-25 16:00", end: "2026-07-25 17:30" },
+  { festival_day: "25/07/2026", stage: "Darkwoods", artist: "Nocula", start: "2026-07-25 17:30", end: "2026-07-25 18:30" },
+  { festival_day: "25/07/2026", stage: "Darkwoods", artist: "Svmrai", start: "2026-07-25 18:30", end: "2026-07-25 19:30" },
+  { festival_day: "25/07/2026", stage: "Darkwoods", artist: "Maxxd", start: "2026-07-25 19:30", end: "2026-07-25 20:30" },
+  { festival_day: "25/07/2026", stage: "Darkwoods", artist: "Rvolution", start: "2026-07-25 20:30", end: "2026-07-25 21:30" },
+  { festival_day: "25/07/2026", stage: "Darkwoods", artist: "Dan Lee", start: "2026-07-25 21:30", end: "2026-07-25 22:30" },
+  { festival_day: "25/07/2026", stage: "Darkwoods", artist: "Eskei83", start: "2026-07-25 22:30", end: "2026-07-25 23:30" },
+  { festival_day: "25/07/2026", stage: "Darkwoods", artist: "Used", start: "2026-07-25 23:30", end: "2026-07-26 00:30" },
+  { festival_day: "25/07/2026", stage: "Darkwoods", artist: "Fishy b2b Iron", start: "2026-07-26 00:30", end: "2026-07-26 02:00" },
+  { festival_day: "25/07/2026", stage: "Gruener Stadl", artist: "Richie Lauterbach", start: "2026-07-25 14:00", end: "2026-07-25 15:15" },
+  { festival_day: "25/07/2026", stage: "Gruener Stadl", artist: "Julezz", start: "2026-07-25 15:15", end: "2026-07-25 16:30" },
+  { festival_day: "25/07/2026", stage: "Gruener Stadl", artist: "Aline Jost", start: "2026-07-25 16:30", end: "2026-07-25 17:00" },
+  { festival_day: "25/07/2026", stage: "Gruener Stadl", artist: "Micha Schue", start: "2026-07-25 17:00", end: "2026-07-25 17:30" },
+  { festival_day: "25/07/2026", stage: "Gruener Stadl", artist: "Mallotzi Boys", start: "2026-07-25 17:30", end: "2026-07-25 18:15" },
+  { festival_day: "25/07/2026", stage: "Gruener Stadl", artist: "lebendestim", start: "2026-07-25 18:15", end: "2026-07-25 18:45" },
+  { festival_day: "25/07/2026", stage: "Gruener Stadl", artist: "YAMAS", start: "2026-07-25 18:45", end: "2026-07-25 20:00" },
+  { festival_day: "25/07/2026", stage: "Gruener Stadl", artist: "Steve Lima", start: "2026-07-25 20:00", end: "2026-07-25 21:15" },
+  { festival_day: "25/07/2026", stage: "Gruener Stadl", artist: "Gregor le Dahl", start: "2026-07-25 21:15", end: "2026-07-25 22:15" },
+  { festival_day: "25/07/2026", stage: "Gruener Stadl", artist: "Jerome Molnar", start: "2026-07-25 22:15", end: "2026-07-25 23:15" },
+  { festival_day: "25/07/2026", stage: "Gruener Stadl", artist: "Almklausi", start: "2026-07-25 23:15", end: "2026-07-25 23:45" },
+  { festival_day: "25/07/2026", stage: "Gruener Stadl", artist: "NoooN", start: "2026-07-25 23:45", end: "2026-07-26 01:00" },
+  { festival_day: "25/07/2026", stage: "Gruener Stadl", artist: "Hardstyle Buamz", start: "2026-07-26 01:00", end: "2026-07-26 02:00" },
+  { festival_day: "25/07/2026", stage: "\"House of Remix\" by IQOS", artist: "Fabio Plois", start: "2026-07-25 14:00", end: "2026-07-25 14:50" },
+  { festival_day: "25/07/2026", stage: "\"House of Remix\" by IQOS", artist: "\"House of Remix Special-Act\"", start: "2026-07-25 15:00", end: "2026-07-25 15:30" },
+  { festival_day: "25/07/2026", stage: "\"House of Remix\" by IQOS", artist: "Ely Oaks", start: "2026-07-25 15:30", end: "2026-07-25 16:30" },
+  { festival_day: "25/07/2026", stage: "\"House of Remix\" by IQOS", artist: "R2", start: "2026-07-25 16:30", end: "2026-07-25 17:30" },
+  { festival_day: "25/07/2026", stage: "\"House of Remix\" by IQOS", artist: "Fät Tony", start: "2026-07-25 17:30", end: "2026-07-25 18:30" },
+  { festival_day: "25/07/2026", stage: "\"House of Remix\" by IQOS", artist: "Nina-Sue", start: "2026-07-25 18:30", end: "2026-07-25 19:30" },
+  { festival_day: "25/07/2026", stage: "\"House of Remix\" by IQOS", artist: "LIZOT", start: "2026-07-25 19:30", end: "2026-07-25 20:45" },
+  { festival_day: "25/07/2026", stage: "\"House of Remix\" by IQOS", artist: "Felicia Bianco", start: "2026-07-25 20:45", end: "2026-07-25 22:00" },
+  { festival_day: "25/07/2026", stage: "\"House of Remix\" by IQOS", artist: "Toby Romeo", start: "2026-07-25 22:00", end: "2026-07-25 23:00" },
+  { festival_day: "25/07/2026", stage: "\"House of Remix\" by IQOS", artist: "Justin Prince", start: "2026-07-25 23:00", end: "2026-07-26 00:00" },
+  { festival_day: "26/07/2026", stage: "CALDERA", artist: "ItaloBrothers", start: "2026-07-26 14:00", end: "2026-07-26 15:30" },
+  { festival_day: "26/07/2026", stage: "CALDERA", artist: "2 Engel & Charlie", start: "2026-07-26 15:30", end: "2026-07-26 16:30" },
+  { festival_day: "26/07/2026", stage: "CALDERA", artist: "Groove Coveerage", start: "2026-07-26 16:30", end: "2026-07-26 17:30" },
+  { festival_day: "26/07/2026", stage: "CALDERA", artist: "Mia Julia", start: "2026-07-26 20:00", end: "2026-07-26 20:45" },
+  { festival_day: "26/07/2026", stage: "CALDERA", artist: "HBz", start: "2026-07-26 20:45", end: "2026-07-26 21:45" },
+  { festival_day: "26/07/2026", stage: "CALDERA", artist: "Harris & Ford", start: "2026-07-26 21:45", end: "2026-07-26 22:45" },
+  { festival_day: "26/07/2026", stage: "STONELANDS", artist: "Luke Madness", start: "2026-07-26 15:00", end: "2026-07-26 16:00" },
+  { festival_day: "26/07/2026", stage: "STONELANDS", artist: "Johannes Schuster", start: "2026-07-26 16:00", end: "2026-07-26 17:30" },
+  { festival_day: "26/07/2026", stage: "STONELANDS", artist: "KUKO", start: "2026-07-26 17:30", end: "2026-07-26 19:00" },
+  { festival_day: "26/07/2026", stage: "STONELANDS", artist: "In Verruf", start: "2026-07-26 19:00", end: "2026-07-26 20:30" },
+  { festival_day: "26/07/2026", stage: "STONELANDS", artist: "Winson", start: "2026-07-26 20:30", end: "2026-07-26 21:45" },
+  { festival_day: "26/07/2026", stage: "STONELANDS", artist: "Jazzy x Jowi", start: "2026-07-26 21:45", end: "2026-07-26 23:00" },
+  { festival_day: "26/07/2026", stage: "Zone III", artist: "ANVEE", start: "2026-07-26 15:00", end: "2026-07-26 16:15" },
+  { festival_day: "26/07/2026", stage: "Zone III", artist: "LUNAX", start: "2026-07-26 16:15", end: "2026-07-26 17:15" },
+  { festival_day: "26/07/2026", stage: "Zone III", artist: "Aftershock", start: "2026-07-26 17:15", end: "2026-07-26 18:15" },
+  { festival_day: "26/07/2026", stage: "Zone III", artist: "Wildstylez", start: "2026-07-26 18:15", end: "2026-07-26 19:15" },
+  { festival_day: "26/07/2026", stage: "Zone III", artist: "Vertile", start: "2026-07-26 19:15", end: "2026-07-26 20:15" },
+  { festival_day: "26/07/2026", stage: "Zone III", artist: "Sickmode", start: "2026-07-26 20:15", end: "2026-07-26 21:00" },
+  { festival_day: "26/07/2026", stage: "Zone III", artist: "KROWDEXX", start: "2026-07-26 21:00", end: "2026-07-26 22:00" },
+  { festival_day: "26/07/2026", stage: "Zone III", artist: "Unicorn on K", start: "2026-07-26 22:00", end: "2026-07-26 23:00" },
+  { festival_day: "26/07/2026", stage: "Magical Forest", artist: "MBP", start: "2026-07-26 16:00", end: "2026-07-26 17:00" },
+  { festival_day: "26/07/2026", stage: "Magical Forest", artist: "Brandon", start: "2026-07-26 17:00", end: "2026-07-26 18:00" },
+  { festival_day: "26/07/2026", stage: "Magical Forest", artist: "Gigo'n'Migo", start: "2026-07-26 18:00", end: "2026-07-26 19:00" },
+  { festival_day: "26/07/2026", stage: "Magical Forest", artist: "Noel Holler", start: "2026-07-26 19:00", end: "2026-07-26 20:00" },
+  { festival_day: "26/07/2026", stage: "Magical Forest", artist: "Lovra", start: "2026-07-26 20:00", end: "2026-07-26 21:00" },
+  { festival_day: "26/07/2026", stage: "Magical Forest", artist: "Pretty Pink", start: "2026-07-26 21:00", end: "2026-07-26 22:00" },
+  { festival_day: "26/07/2026", stage: "Magical Forest", artist: "Phake", start: "2026-07-26 22:00", end: "2026-07-26 23:00" },
+  { festival_day: "26/07/2026", stage: "Darkwoods", artist: "Vero & Sleepwell", start: "2026-07-26 16:00", end: "2026-07-26 17:00" },
+  { festival_day: "26/07/2026", stage: "Darkwoods", artist: "Dice", start: "2026-07-26 17:00", end: "2026-07-26 18:00" },
+  { festival_day: "26/07/2026", stage: "Darkwoods", artist: "GEORGE RADSPORT b2b NYRA", start: "2026-07-26 18:00", end: "2026-07-26 19:00" },
+  { festival_day: "26/07/2026", stage: "Darkwoods", artist: "Bonnie Strange b2b shoki287", start: "2026-07-26 19:00", end: "2026-07-26 20:00" },
+  { festival_day: "26/07/2026", stage: "Darkwoods", artist: "DJ Dreckisch", start: "2026-07-26 20:00", end: "2026-07-26 21:00" },
+  { festival_day: "26/07/2026", stage: "Darkwoods", artist: "Mika Heggemann", start: "2026-07-26 21:00", end: "2026-07-26 22:00" },
+  { festival_day: "26/07/2026", stage: "Darkwoods", artist: "Trancemaster Krause", start: "2026-07-26 22:00", end: "2026-07-26 23:00" },
+  { festival_day: "26/07/2026", stage: "Gruener Stadl", artist: "Breakfast Club", start: "2026-07-26 11:00", end: "2026-07-26 11:05" },
+  { festival_day: "26/07/2026", stage: "Gruener Stadl", artist: "Heydiz & Zevs", start: "2026-07-26 11:30", end: "2026-07-26 13:00" },
+  { festival_day: "26/07/2026", stage: "Gruener Stadl", artist: "Lasse Pex b2b Moderica", start: "2026-07-26 13:00", end: "2026-07-26 14:00" },
+  { festival_day: "26/07/2026", stage: "Gruener Stadl", artist: "Choose White b2b Felipe de M.", start: "2026-07-26 14:00", end: "2026-07-26 15:30" },
+  { festival_day: "26/07/2026", stage: "Gruener Stadl", artist: "B-Zey b2b S.A.N.D.Y.", start: "2026-07-26 15:30", end: "2026-07-26 17:00" },
+  { festival_day: "26/07/2026", stage: "Gruener Stadl", artist: "Tekwantony", start: "2026-07-26 17:00", end: "2026-07-26 18:00" },
+  { festival_day: "26/07/2026", stage: "Gruener Stadl", artist: "Blankenheim b2b Lumor", start: "2026-07-26 18:00", end: "2026-07-26 19:30" },
+  { festival_day: "26/07/2026", stage: "Gruener Stadl", artist: "Gigo'n'Migo", start: "2026-07-26 19:30", end: "2026-07-26 20:30" },
+  { festival_day: "26/07/2026", stage: "Gruener Stadl", artist: "ZAPPA", start: "2026-07-26 20:30", end: "2026-07-26 21:30" },
+  { festival_day: "26/07/2026", stage: "Gruener Stadl", artist: "Habama Brothers", start: "2026-07-26 21:30", end: "2026-07-26 22:45" },
+  { festival_day: "26/07/2026", stage: "\"House of Remix\" by IQOS", artist: "TEZZ", start: "2026-07-26 14:00", end: "2026-07-26 15:30" },
+  { festival_day: "26/07/2026", stage: "\"House of Remix\" by IQOS", artist: "Jo van der Meer", start: "2026-07-26 15:30", end: "2026-07-26 16:45" },
+  { festival_day: "26/07/2026", stage: "\"House of Remix\" by IQOS", artist: "MEDUN", start: "2026-07-26 16:45", end: "2026-07-26 18:00" },
+  { festival_day: "26/07/2026", stage: "\"House of Remix\" by IQOS", artist: "MBP", start: "2026-07-26 18:00", end: "2026-07-26 19:00" },
+  { festival_day: "26/07/2026", stage: "\"House of Remix\" by IQOS", artist: "Jaxomy", start: "2026-07-26 19:00", end: "2026-07-26 20:00" },
+  { festival_day: "26/07/2026", stage: "\"House of Remix\" by IQOS", artist: "Brandon", start: "2026-07-26 20:00", end: "2026-07-26 21:00" },
+  { festival_day: "26/07/2026", stage: "\"House of Remix\" by IQOS", artist: "Noel Holler", start: "2026-07-26 21:00", end: "2026-07-26 22:00" },
+  { festival_day: "26/07/2026", stage: "\"House of Remix\" by IQOS", artist: "George Radsport", start: "2026-07-26 22:00", end: "2026-07-26 23:00" },
+  { festival_day: "26/07/2026", stage: "Goa Garden", artist: "Pinus", start: "2026-07-26 16:00", end: "2026-07-26 17:30" },
+  { festival_day: "26/07/2026", stage: "Goa Garden", artist: "Porobo", start: "2026-07-26 17:30", end: "2026-07-26 19:00" },
+  { festival_day: "26/07/2026", stage: "Goa Garden", artist: "Total Balance", start: "2026-07-26 19:00", end: "2026-07-26 20:30" },
+  { festival_day: "26/07/2026", stage: "Goa Garden", artist: "Ennaya", start: "2026-07-26 20:30", end: "2026-07-26 21:30" },
+  { festival_day: "26/07/2026", stage: "Goa Garden", artist: "Psychedelika", start: "2026-07-26 21:30", end: "2026-07-26 23:00" },
+  { festival_day: "26/07/2026", stage: "EDEKA CAMPINGSTAGE", artist: "Unicorn on K", start: "2026-07-26 11:45", end: "2026-07-26 12:15" },
+];
+
+/* ---- Teilpaket C1: Timetable-Normalisierung + Helfer (rein lesend) ------ *
+ * Reine Funktionen ohne Nebenwirkung. Keine zweite Datumslogik: der
+ * Betriebstag kommt aus dem BESTEHENDEN Helfer festDayKey (00:00-05:59 =>
+ * Vortagsnacht), festival_day dient nur zur Gegenpruefe/Diagnose. Keine
+ * Zufalls-IDs, keine geratenen Zeiten, Originaldaten werden nicht mutiert.
+ * ----------------------------------------------------------------------- */
+const TT_DT_RE = /^(\d{4})-(\d{2})-(\d{2}) (\d{2}):(\d{2})$/;   // "YYYY-MM-DD HH:MM"
+const TT_FD_RE = /^(\d{2})\/(\d{2})\/(\d{4})$/;                 // "DD/MM/YYYY"
+
+// Deterministischer, stabiler String-Hash (FNV-1a, 32 Bit) -> 8-stelliger Hex.
+// Gleiche Eingabe ergibt immer gleiche ID (Test 15/16), kein Math.random.
+function ttHash(str) {
+  let h = 0x811c9dc5;
+  for (let i = 0; i < str.length; i++) {
+    h ^= str.charCodeAt(i);
+    h = (h + ((h << 1) + (h << 4) + (h << 7) + (h << 8) + (h << 24))) >>> 0;
+  }
+  return ("00000000" + h.toString(16)).slice(-8);
+}
+
+// "YYYY-MM-DD HH:MM" -> absolute Minuten (nur fuer Dauer/Vergleich, UTC-stabil).
+function ttAbsMin(dateTime) {
+  const m = TT_DT_RE.exec(dateTime);
+  if (!m) return null;
+  const days = Math.floor(Date.UTC(+m[1], +m[2] - 1, +m[3]) / 86400000);
+  return days * 1440 + (+m[4]) * 60 + (+m[5]);
+}
+
+// B2B nur nach echten Namensmustern (b2b / vs.), Gross-/Kleinschreibung egal.
+// Der Originalname bleibt IMMER unveraendert erhalten (Test 38).
+function ttIsB2B(artist) {
+  return /\bb2b\b/i.test(artist) || /\bvs\.?\b/i.test(artist);
+}
+
+// Suchnormalisierung: Umlaute/Diakritika weg, klein, Mehrfach-Leerzeichen zu eins.
+function ttNorm(s) {
+  return String(s == null ? "" : s)
+    .normalize("NFKD").replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase().replace(/\s+/g, " ").trim();
+}
+
+// Deterministische Reihenfolge: Start, dann Stage, Artist, sourceIndex.
+// startAt ist der kanonische "YYYY-MM-DD HH:MM"-String und damit lexikografisch
+// korrekt sortierbar (Post-Mitternacht-Sets haben das echte spaetere Datum,
+// landen also korrekt hinter den Abend-Sets desselben Betriebstags).
+function ttCompare(a, b) {
+  const sa = a.startAt || "", sb = b.startAt || "";
+  if (sa !== sb) return sa < sb ? -1 : 1;
+  if (a.stage !== b.stage) return a.stage.localeCompare(b.stage, "de");
+  if (a.artist !== b.artist) return a.artist.localeCompare(b.artist, "de");
+  return a.sourceIndex - b.sourceIndex;
+}
+
+/* Wandelt Rohdaten in ein einheitliches internes Format. Ungueltige Eintraege
+ * werden NICHT still repariert, sondern mit nachvollziehbarem Diagnosegrund
+ * gekennzeichnet; ihre Zeiten bleiben null statt geraten. */
+function normalizeTimetableEntries(rawEntries) {
+  const list = Array.isArray(rawEntries) ? rawEntries : [];
+  return list.map((e, sourceIndex) => {
+    const src = e || {};
+    const artist = typeof src.artist === "string" ? src.artist : "";
+    const stage  = typeof src.stage  === "string" ? src.stage  : "";
+    const start  = typeof src.start  === "string" ? src.start  : "";
+    const end    = typeof src.end    === "string" ? src.end    : "";
+    const festivalDayRaw = typeof src.festival_day === "string" ? src.festival_day : "";
+
+    const problems = [];
+    if (!artist.trim()) problems.push({ field: "artist", reason: "Artist fehlt" });
+    if (!stage.trim())  problems.push({ field: "stage",  reason: "Stage fehlt" });
+
+    const startOk = TT_DT_RE.test(start);
+    const endOk   = TT_DT_RE.test(end);
+    if (!start.trim())      problems.push({ field: "start", reason: "Startzeit fehlt" });
+    else if (!startOk)      problems.push({ field: "start", reason: "Startzeit ungueltig" });
+    if (!end.trim())        problems.push({ field: "end",   reason: "Endzeit fehlt" });
+    else if (!endOk)        problems.push({ field: "end",   reason: "Endzeit ungueltig" });
+
+    // Betriebstag ausschliesslich ueber den bestehenden App-Helfer festDayKey.
+    let dayKey = null, date = null, startsAfterMidnight = false, durationMin = null;
+    if (startOk) {
+      date = start.slice(0, 10);
+      const startTime = start.slice(11);
+      dayKey = festDayKey(date, startTime);
+      startsAfterMidnight = toMin(startTime) < 360;
+    }
+
+    // festival_day nur zur Gegenpruefe (keine zweite Datumsquelle).
+    if (TT_FD_RE.test(festivalDayRaw)) {
+      const fm = TT_FD_RE.exec(festivalDayRaw);
+      const festivalDayISO = `${fm[3]}-${fm[2]}-${fm[1]}`;
+      if (dayKey && festivalDayISO !== dayKey) {
+        problems.push({ field: "festival_day", reason: "festival_day weicht vom errechneten Betriebstag ab" });
+      }
+    } else if (festivalDayRaw.trim()) {
+      problems.push({ field: "festival_day", reason: "festival_day-Format unbekannt" });
+    }
+
+    if (startOk && endOk) {
+      const a = ttAbsMin(start), b = ttAbsMin(end);
+      if (a != null && b != null) {
+        durationMin = b - a;
+        if (durationMin <= 0) problems.push({ field: "end", reason: "Endzeit liegt nicht nach der Startzeit" });
+      }
+    }
+
+    const valid = problems.length === 0;
+    // Stabile ID: Inhalt + sourceIndex als Tie-Breaker, deterministisch.
+    const id = "tt-" + ttHash(`${festivalDayRaw}|${stage}|${artist}|${start}|${end}`) + "-" + sourceIndex;
+
+    return {
+      id, sourceIndex,
+      artist, stage,
+      startAt: startOk ? start : null,   // interner Wert = kanonischer, sortierbarer String
+      endAt: endOk ? end : null,
+      date, dayKey, startsAfterMidnight,
+      durationMin,                       // null wenn nicht berechenbar; NIE geraten
+      isB2B: ttIsB2B(artist),
+      valid,
+      problems,                          // [] wenn gueltig
+      raw: { festival_day: festivalDayRaw, stage, artist, start, end }, // Original erhalten
+    };
+  });
+}
+
+/* ---- Timetable-Tab (nur Leitstelle, rein lesend) ----------------------- *
+ * Keinerlei Schreibvorgang: kein updateDyn, kein Supabase, keine Ride-/Fahrer-
+ * Aenderung. Suche und Filter aendern ausschliesslich lokalen useState.
+ * Sichtbarkeit steuert allein MC_ROLE_TABS (dispo bekommt alle Tabs,
+ * stage/driver ihre Allowlist ohne "timetable") - andere Rollen bleiben
+ * dadurch strukturell unangetastet.
+ * ----------------------------------------------------------------------- */
+function TimetableTab() {
+  // Einmalige Normalisierung (stabile Referenz, kein Neuparsen pro Render).
+  const entries = useMemo(() => normalizeTimetableEntries(TIMETABLE_RAW), []);
+  const [query, setQuery] = useState("");
+  const [dayFilter, setDayFilter] = useState("all");     // dayKey oder "all"
+  const [stageFilter, setStageFilter] = useState("all"); // Stage-Name oder "all"
+
+  const validEntries   = useMemo(() => entries.filter((e) => e.valid), [entries]);
+  const invalidEntries = useMemo(() => entries.filter((e) => !e.valid), [entries]);
+
+  // Dynamische Tag-Liste aus den echten Daten (sortiert), mit Wochentagslabel.
+  const days = useMemo(() => {
+    const keys = [...new Set(validEntries.map((e) => e.dayKey).filter(Boolean))].sort();
+    return keys.map((k) => ({ key: k, label: fmtDate(k) }));
+  }, [validEntries]);
+
+  // Dynamische Stage-Liste aus den echten Daten, ohne Duplikate, alphabetisch.
+  const stages = useMemo(
+    () => [...new Set(validEntries.map((e) => e.stage).filter(Boolean))].sort((a, b) => a.localeCompare(b, "de")),
+    [validEntries]
+  );
+
+  const sortedValid = useMemo(() => validEntries.slice().sort(ttCompare), [validEntries]);
+
+  // Filter + Suche: nur lesend, nur lokaler State.
+  const filtered = useMemo(() => {
+    const qTokens = ttNorm(query).split(" ").filter(Boolean);
+    return sortedValid.filter((e) => {
+      if (dayFilter !== "all" && e.dayKey !== dayFilter) return false;
+      if (stageFilter !== "all" && e.stage !== stageFilter) return false;
+      if (qTokens.length) {
+        const startHM = e.startAt ? e.startAt.slice(11) : "";
+        const endHM = e.endAt ? e.endAt.slice(11) : "";
+        const hay = ttNorm(`${e.artist} ${e.stage} ${fmtDate(e.dayKey)} ${startHM} ${endHM}`);
+        if (!qTokens.every((t) => hay.includes(t))) return false;
+      }
+      return true;
+    });
+  }, [sortedValid, dayFilter, stageFilter, query]);
+
+  // Gruppierung nach Betriebstag (Tagesreihenfolge), innerhalb chronologisch.
+  const groups = useMemo(() => {
+    const byDay = new Map();
+    filtered.forEach((e) => {
+      if (!byDay.has(e.dayKey)) byDay.set(e.dayKey, []);
+      byDay.get(e.dayKey).push(e);
+    });
+    return [...byDay.entries()]
+      .sort((a, b) => (a[0] || "").localeCompare(b[0] || ""))
+      .map(([key, items]) => ({ key, label: fmtDate(key), items }));
+  }, [filtered]);
+
+  const anyFilter = query !== "" || dayFilter !== "all" || stageFilter !== "all";
+  const reset = () => { setQuery(""); setDayFilter("all"); setStageFilter("all"); };
+
+  const hmRange = (e) => {
+    const s = e.startAt ? e.startAt.slice(11) : "?";
+    const en = e.endAt ? e.endAt.slice(11) : "?";
+    return `${s}-${en}`;
+  };
+
+  return (
+    <div className="mc-scope space-y-3">
+      <MissionPanel
+        icon={Clock}
+        title="Timetable"
+        subtitle={`Open Beatz · ${validEntries.length} Sets${invalidEntries.length ? ` · ${invalidEntries.length} mit Hinweis` : ""}`}
+      >
+        {/* Diagnose nur wenn ungueltige Eintraege existieren (aufklappbar) */}
+        {invalidEntries.length > 0 && (
+          <details className="mb-3 rounded-lg" style={{ background: "var(--mc-inset)", border: "1px solid var(--mc-border)" }}>
+            <summary className="px-3 py-2 text-xs cursor-pointer flex items-center gap-2" style={{ color: "var(--mc-st-problem)" }}>
+              <AlertTriangle className="w-3.5 h-3.5" />
+              {invalidEntries.length} Eintrag{invalidEntries.length > 1 ? "e" : ""} konnte{invalidEntries.length > 1 ? "n" : ""} nicht vollständig verarbeitet werden
+            </summary>
+            <div className="px-3 pb-2 space-y-1">
+              {invalidEntries.map((e) => (
+                <div key={e.id} className="text-[11px]" style={{ color: "var(--mc-text-secondary)" }}>
+                  #{e.sourceIndex} · {e.raw.artist || "(ohne Artist)"} · {e.problems.map((p) => p.reason).join(", ")}
+                </div>
+              ))}
+            </div>
+          </details>
+        )}
+
+        {/* Suche + Zuruecksetzen (rein lokaler UI-State) */}
+        <div className="flex items-center gap-2 mb-3">
+          <div className="relative flex-1">
+            <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" style={{ color: "var(--mc-text-muted)" }} />
+            <input
+              className="mc-input w-full pl-9 pr-3 py-2.5 text-base sm:text-sm"
+              value={query}
+              onChange={(ev) => setQuery(ev.target.value)}
+              placeholder="Artist, Stage oder Uhrzeit suchen…"
+              aria-label="Timetable durchsuchen"
+            />
+          </div>
+          {anyFilter && (
+            <button onClick={reset} aria-label="Filter zurücksetzen"
+              className="text-xs px-3 py-2.5 rounded-lg shrink-0 inline-flex items-center gap-1"
+              style={{ background: "var(--mc-hover)", color: "var(--mc-text)", border: "1px solid var(--mc-border)" }}>
+              <RotateCcw className="w-3.5 h-3.5" />Zurücksetzen
+            </button>
+          )}
+        </div>
+
+        {/* Filter: Festival-Tag (Chips) + Stage (Auswahl) */}
+        <div className="flex flex-col sm:flex-row sm:items-center gap-2 mb-1">
+          <div className="flex items-center gap-1.5 flex-wrap">
+            {[{ key: "all", label: "Alle Tage" }, ...days].map((d) => {
+              const on = dayFilter === d.key;
+              return (
+                <button key={d.key} onClick={() => setDayFilter(d.key)}
+                  className="text-xs px-3 py-1.5 rounded-lg whitespace-nowrap transition"
+                  style={on
+                    ? { background: "var(--mc-st-assigned-soft)", color: "var(--mc-st-assigned)", fontWeight: 600 }
+                    : { background: "var(--mc-inset)", color: "var(--mc-text-secondary)", border: "1px solid var(--mc-border)" }}>
+                  {d.label}
+                </button>
+              );
+            })}
+          </div>
+          <div className="sm:ml-auto">
+            <select
+              className="mc-input px-3 py-2 text-sm"
+              value={stageFilter}
+              onChange={(ev) => setStageFilter(ev.target.value)}
+              aria-label="Stage filtern"
+            >
+              <option value="all">Alle Stages</option>
+              {stages.map((s) => <option key={s} value={s}>{s}</option>)}
+            </select>
+          </div>
+        </div>
+      </MissionPanel>
+
+      {/* Ergebnis: gruppiert nach Betriebstag, chronologisch */}
+      {groups.length === 0 ? (
+        <MissionPanel padded={false}>
+          <EmptyState icon={Search} title="Keine Sets gefunden"
+            hint="Suche oder Filter passen auf keinen Eintrag. Mit „Zurücksetzen“ wieder die komplette Liste anzeigen." />
+        </MissionPanel>
+      ) : (
+        groups.map((g) => (
+          <MissionPanel key={g.key} padded={false}>
+            <div className="px-4 py-2.5 flex items-center justify-between" style={{ borderBottom: "1px solid var(--mc-border)" }}>
+              <span className="text-sm font-semibold" style={{ color: "var(--mc-text)" }}>{g.label}</span>
+              <span className="text-[11px]" style={{ color: "var(--mc-text-muted)" }}>{g.items.length} Set{g.items.length > 1 ? "s" : ""}</span>
+            </div>
+            <div>
+              {g.items.map((e) => (
+                <div key={e.id} className="px-4 py-2.5 flex items-start gap-3" style={{ borderTop: "1px solid var(--mc-border)" }}>
+                  <div className="shrink-0 w-[92px]">
+                    <div className="text-sm font-mono tabular-nums" style={{ color: "var(--mc-text)" }}>{hmRange(e)}</div>
+                    {e.durationMin != null && (
+                      <div className="text-[10px]" style={{ color: "var(--mc-text-muted)" }}>{e.durationMin} min</div>
+                    )}
+                  </div>
+                  <div className="min-w-0 flex-1">
+                    <div className="text-sm font-medium break-words" style={{ color: "var(--mc-text)" }} title={e.artist}>{e.artist}</div>
+                    <div className="mt-0.5 flex items-center gap-1.5 flex-wrap">
+                      <span className="mc-badge mc-badge--idle text-[10px]">{e.stage}</span>
+                      {e.isB2B && <span className="mc-badge mc-badge--assigned text-[10px]">B2B</span>}
+                      {e.startsAfterMidnight && <span className="mc-badge mc-badge--enroute text-[10px]">nach Mitternacht</span>}
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </MissionPanel>
+        ))
+      )}
+    </div>
+  );
+}
+
+
 function MissionDriversTab({ setup, dyn, day }) {
   const [, setTick] = useState(0);
   useEffect(() => { const t = setInterval(() => setTick((x) => x + 1), 30000); return () => clearInterval(t); }, []);
@@ -8794,6 +9342,7 @@ function MissionControl({ setup, dyn, session, updateDyn, updateSetup, onLogout,
             onEdit={(r) => { setDay(r.dayKey); setEditRide(r); }} onAssign={(r) => setAssignRide(r)} />}
           {tab === "timeline" && <MissionTimelinePage setup={setup} dyn={dyn} day={day} updateDyn={updateDyn} by={meBy} onUndo={onUndo}
             onEdit={(r) => { setDay(r.dayKey); setEditRide(r); }} onAssign={(r) => setAssignRide(r)} />}
+          {tab === "timetable" && <TimetableTab />}
           {tab === "returns" && <MissionReturnsTab setup={setup} dyn={dyn} day={day} updateDyn={updateDyn} by={meBy} onErr={notifyErr}
             onAssign={(r) => setAssignRide(r)} onWhatsApp={(r) => setWaRide(r)} onEdit={(r) => { setDay(r.dayKey); setEditRide(r); }}
             onNewReturn={(artistName) => setEditRide({ _new: true, dayKey: day, date: day, djName: artistName, fromId: "festival", toId: "" })} />}
@@ -9037,6 +9586,7 @@ const MC_NAV = [
   { tab: "emergency", label: "Probleme",        icon: Siren,         group: "BETRIEB" },
   // PLANUNG & KOMMUNIKATION
   { tab: "timeline",  label: "Timeline",        icon: Gauge,         group: "PLANUNG & KOMMUNIKATION" },
+  { tab: "timetable", label: "Timetable",       icon: Clock,         group: "PLANUNG & KOMMUNIKATION" },
   { tab: "messages",  label: "Chat",            icon: MessageSquare, group: "PLANUNG & KOMMUNIKATION" },
   // SYSTEM
   { tab: "settings",  label: "Einstellungen",   icon: Settings,      group: "SYSTEM" },
