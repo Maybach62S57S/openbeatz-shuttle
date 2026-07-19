@@ -833,3 +833,25 @@ grant execute on function upsert_driver_location(text, double precision, double 
 alter table driver_locations enable row level security;
 drop policy if exists read_driver_locations on driver_locations;
 create policy read_driver_locations on driver_locations for select using (true);
+
+-- ============================================================================
+-- Nachtrag Teilpaket A (Springer / Verfügbarkeit / Team) — 2026-07-19
+-- Rein additiv und gefahrlos erneut ausführbar. In DIESER Phase liest die App
+-- diese Attribute primär aus der eingebauten Profil-Konstante (Quelle:
+-- drivers_openbeatz.json), damit sie ohne Pflicht-Migration sofort funktioniert.
+-- Sind die Spalten vorhanden UND befüllt, hat der DB-Wert Vorrang (fromDbDriver
+-- reicht ihn als explizites Feld durch, die Helfer bevorzugen es). Fehlen die
+-- Spalten, bleibt alles beim Profil-Default — kein Bruch für Bestandsinstallationen.
+alter table drivers add column if not exists driver_category text not null default 'regular';
+alter table drivers add column if not exists available_from  text;            -- lokales Format "YYYY-MM-DD HH:MM", NULL = keine Grenze
+alter table drivers add column if not exists team_group      text;            -- z. B. 'timmy-team', NULL = kein Team
+alter table drivers drop constraint if exists drivers_driver_category_check;
+alter table drivers add constraint drivers_driver_category_check check (driver_category in ('regular','springer'));
+
+-- OPTIONALE Erstbefüllung aus drivers_openbeatz.json (nur falls die Werte künftig
+-- in der DB statt in der Profil-Konstante gepflegt werden sollen). Match über den
+-- eindeutigen Vollnamen; auskommentiert, weil die App die Werte bereits kennt.
+-- update drivers set driver_category = 'springer' where first_name = 'Leon'    and last_name = 'Merg';
+-- update drivers set driver_category = 'springer' where first_name = 'Philipp' and last_name = 'Stich';
+-- update drivers set available_from  = '2026-07-25 14:00' where first_name = 'Philipp' and last_name = 'Baumeister';
+-- update drivers set team_group = 'timmy-team' where (first_name,last_name) in (('Patrick','Ibrahimi'),('Mustafa','Ünver'),('Lukas','Bieber'));

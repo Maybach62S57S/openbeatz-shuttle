@@ -102,11 +102,22 @@ const fromDbDriver = (d) => ({
   id: d.id, firstName: d.first_name, lastName: d.last_name, vehicleType: d.vehicle_type,
   vehicleId: d.vehicle_id, seats: d.seats, active: d.active,
   phone: d.phone || "", plate: d.plate || "", pin: d.pin || "",
+  // Teilpaket A: optionale Zusatzspalten nur durchreichen, wenn in der DB vorhanden.
+  // Fehlen die Spalten (kein Schema-Update), bleiben die Felder undefined und die
+  // Helfer (driverCategoryOf/availableFromOf/teamGroupOf) greifen auf die Profile
+  // aus drivers_openbeatz.json zurueck -> voll rueckwaertskompatibel, kein Migrationszwang.
+  ...(d.driver_category != null ? { driverCategory: d.driver_category } : {}),
+  ...(d.available_from  != null ? { availableFrom:  d.available_from  } : {}),
+  ...(d.team_group      != null ? { teamGroup:      d.team_group      } : {}),
 });
 const toDbDriver = (d) => ({
   id: d.id, first_name: d.firstName, last_name: d.lastName, vehicle_type: d.vehicleType,
   vehicle_id: d.vehicleId, seats: d.seats, active: d.active !== false,
   phone: d.phone || "", plate: d.plate || "", pin: d.pin || "",
+  // Teilpaket A: nur schreiben, wenn am Objekt gesetzt (kein Ueberschreiben mit null).
+  ...(d.driverCategory != null ? { driver_category: d.driverCategory } : {}),
+  ...(d.availableFrom  != null ? { available_from:  d.availableFrom  } : {}),
+  ...(d.teamGroup      != null ? { team_group:      d.teamGroup      } : {}),
 });
 
 async function sbGetSetup() {
@@ -1531,6 +1542,96 @@ function validPassengerCount(v) {
   return v;
 }
 
+/* =========================================================================
+   Teilpaket A: Springer-Kategorie, Verfuegbarkeit-ab-Datum, Team-Kennzeichnung
+   Rein additiv. Der bestehende Vorschlagsmotor (evaluateInsertion/suggestDrivers)
+   wird nicht ersetzt, nur um drei lesende Prueffelder erweitert. Alle Funktionen
+   hier sind reine Funktionen ohne Nebenwirkung (Regel 9).
+
+   Datenquelle der drei Attribute ist drivers_openbeatz.json, hier als gebackene
+   Konstante (Single-File-Artifact kann kein externes JSON importieren) und als
+   EINZIGE Quelle in dieser Phase. Keyed auf den normalisierten Vollnamen, weil
+   App-IDs Slugs sind (finn-steinmetz) und die JSON-IDs d01..d23 - ein direkter
+   ID-Match ist also nicht moeglich, aber die Vollnamen sind alle eindeutig.
+   Nur die vom Default abweichenden Fahrer stehen hier; alle uebrigen gelten
+   automatisch als regular / ohne Verfuegbarkeitsgrenze / ohne Team.
+   ========================================================================= */
+const DRIVER_PROFILES = {
+  "leon merg":          { driverCategory: "springer", availableFrom: null,               teamGroup: null },
+  "philipp stich":      { driverCategory: "springer", availableFrom: null,               teamGroup: null },
+  "philipp baumeister": { driverCategory: "regular",  availableFrom: "2026-07-25 14:00", teamGroup: null },
+  "patrick ibrahimi":   { driverCategory: "regular",  availableFrom: null,               teamGroup: "timmy-team" },
+  "mustafa unver":      { driverCategory: "regular",  availableFrom: null,               teamGroup: "timmy-team" },
+  "lukas bieber":       { driverCategory: "regular",  availableFrom: null,               teamGroup: "timmy-team" },
+};
+
+// Normalisierter Vollname: NFKD + Diakritika weg (Ünver -> unver), klein, nur
+// Buchstaben/Ziffern, Einzelspaces. Identisch fuer Konstante und Nachschlag.
+function normDriverName(d) {
+  const full = `${(d && d.firstName) || ""} ${(d && d.lastName) || ""}`;
+  return full.normalize("NFKD").replace(/[\u0300-\u036f]/g, "").toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+}
+function driverProfile(d) { return DRIVER_PROFILES[normDriverName(d)] || null; }
+
+// Effektive Attribute mit Rueckwaertskompatibilitaet: ein explizit am Fahrer-
+// objekt gesetztes Feld gewinnt (zukunftssicher, falls spaeter aus der DB/UI
+// gepflegt), sonst das Profil aus der Datei, sonst der sichere Default. Nie
+// still "springer" annehmen.
+function driverCategoryOf(d) {
+  const v = d && d.driverCategory;
+  if (v === "springer" || v === "regular") return v;
+  const p = driverProfile(d);
+  return p && p.driverCategory === "springer" ? "springer" : "regular";
+}
+function availableFromOf(d) {
+  const v = d && d.availableFrom;
+  if (typeof v === "string" && v.trim()) return v.trim();
+  const p = driverProfile(d);
+  return p && p.availableFrom ? p.availableFrom : null;
+}
+function teamGroupOf(d) {
+  const v = d && d.teamGroup;
+  if (typeof v === "string" && v.trim()) return v.trim();
+  const p = driverProfile(d);
+  return p && p.teamGroup ? p.teamGroup : null;
+}
+const TEAM_LABEL = { "timmy-team": "Timmy-Team" };
+function teamLabelOf(d) { const g = teamGroupOf(d); return g ? (TEAM_LABEL[g] || g) : null; }
+
+// Strikter Parser fuer "YYYY-MM-DD HH:MM" (auch ...THH:MM) als LOKALE Wall-Clock
+// (Browser-Zeit, kein UTC/ISO-Offset) - passend zum bestehenden Zeitmodell der
+// App (festDayKey/dateForNightTime rechnen ebenfalls mit new Date(date+"T..")).
+// Ungueltige Kalenderwerte (Monat 13, Tag 32, ...) -> null ueber Rundreise-Check.
+function parseWallClock(s) {
+  if (typeof s !== "string") return null;
+  const m = s.trim().match(/^(\d{4})-(\d{1,2})-(\d{1,2})[ T](\d{1,2}):(\d{2})$/);
+  if (!m) return null;
+  const y = +m[1], mo = +m[2], da = +m[3], h = +m[4], mi = +m[5];
+  const dt = new Date(y, mo - 1, da, h, mi, 0, 0);
+  if (dt.getFullYear() !== y || dt.getMonth() !== mo - 1 || dt.getDate() !== da ||
+      dt.getHours() !== h || dt.getMinutes() !== mi) return null;
+  return dt;
+}
+
+// availableFrom als HARTER Ausschlussfilter. Verglichen wird gegen den fruehesten
+// noetigen Einsatzbeginn = Fahrtzeit minus Anfahrt (anfahrtMin), nicht nur gegen
+// die offizielle Fahrtzeit. Ueber-Mitternacht ergibt sich automatisch aus
+// ride.date (echtes Kalenderdatum) + ride.time. Fehlt availableFrom -> keine
+// Einschraenkung. Ungueltig -> NICHT still frei, sondern sichtbarer Ausschluss.
+function checkDriverAvailability(driver, ride, anfahrtMin) {
+  const af = availableFromOf(driver);
+  if (af == null) return { restricted: false, ok: true, reason: null };
+  const afDate = parseWallClock(af);
+  if (afDate == null) return { restricted: true, ok: false, reason: `Verfügbarkeit ungültig („${af}“)` };
+  const rideStart = parseWallClock(`${ride && ride.date ? ride.date : ""} ${ride && ride.time ? ride.time : ""}`);
+  if (rideStart == null) return { restricted: true, ok: false, reason: "Verfügbarkeit nicht prüfbar (Fahrtzeit fehlt)" };
+  const lead = Number.isFinite(anfahrtMin) ? anfahrtMin : 0;
+  const neededFrom = new Date(rideStart.getTime() - lead * 60000);
+  const ok = afDate.getTime() <= neededFrom.getTime();
+  const hhmm = (dt) => `${pad(dt.getHours())}:${pad(dt.getMinutes())}`;
+  return { restricted: true, ok, reason: ok ? null : `Fahrer erst ab ${af} verfügbar, benötigt ab ${hhmm(neededFrom)}` };
+}
+
 function evaluateInsertion(setup, dyn, driver, ride) {
   const cfg = setup.config;
   const need = validPassengerCount(ride.passengerCount);
@@ -1575,7 +1676,11 @@ function evaluateInsertion(setup, dyn, driver, ride) {
   const unknownTiming = !deadKnown || !toNextKnown || !durKnown;
   // Punkt 2: hat der Fahrer eine offene Problemmeldung (an irgendeiner seiner Fahrten)?
   const hasIssue = dyn.rides.some((r) => r.assignedDriverId === driver.id && r.dayKey === ride.dayKey && rideHasOpenIssue(r));
-  const feasible = eligible && !overlap && lateToPickup === 0 && lateToNext === 0 && !unknownTiming && !hasIssue;
+  // Teilpaket A: availableFrom als harter Filter, gegen fruehesten Einsatzbeginn
+  // (Fahrtzeit minus bekannte Anfahrt). Kategorie/Team nur informativ mitgeben.
+  const avail = checkDriverAvailability(driver, ride, deadKnown ? deadMin : null);
+  const available = avail.ok;
+  const feasible = eligible && !overlap && lateToPickup === 0 && lateToNext === 0 && !unknownTiming && !hasIssue && available;
 
   // Klartext-Probleme für manuelle Zuteilung (Punkt 8) und Ablehnungsgründe (Punkt 2)
   const problems = [];
@@ -1586,10 +1691,14 @@ function evaluateInsertion(setup, dyn, driver, ride) {
   if (lateToNext > 0) problems.push(`Folgefahrt zu knapp (${lateToNext} min)`);
   if (unknownTiming) problems.push("Fahrzeit unbekannt");
   if (hasIssue) problems.push("Fahrer hat Problem gemeldet");
+  if (!available) problems.push(avail.reason);
 
   return { driver, stats, eligible, overlap, prev, next, prevLoc, prevEnd,
     deadMin, deadKnown, lateToPickup, lateToNext, unknownTiming, hasIssue, feasible, problems,
-    capacityUnknown };
+    capacityUnknown,
+    // Teilpaket A (rein informativ / fuer Filter in suggestDrivers + UI):
+    available, availabilityRestricted: avail.restricted, availabilityReason: avail.reason,
+    driverCategory: driverCategoryOf(driver), teamGroup: teamGroupOf(driver), teamLabel: teamLabelOf(driver) };
 }
 
 function suggestDrivers(setup, dyn, ride) {
@@ -1603,10 +1712,19 @@ function suggestDrivers(setup, dyn, ride) {
     if (ev.hasIssue) score += 300;
     return { ...ev, score };
   });
-  // Fahrer mit offener Problemmeldung oder Überschneidung nicht als passend anbieten (Punkt 2)
-  return scored
-    .filter((x) => x.eligible && !x.overlap && !x.hasIssue)
-    .sort((a, b) => (a.feasible !== b.feasible ? (a.feasible ? -1 : 1) : a.score - b.score));
+  // Bestehende Sortierung UNVERAENDERT (feasible zuerst, dann Score aufsteigend).
+  const sortFn = (a, b) => (a.feasible !== b.feasible ? (a.feasible ? -1 : 1) : a.score - b.score);
+  // Grundfilter wie bisher (Punkt 2) PLUS Teilpaket A: availableFrom ist harter Filter.
+  const passes = (x) => x.eligible && !x.overlap && !x.hasIssue && x.available;
+  // Teilpaket A: Zwei-Runden-Springer-Logik als HARTER zweistufiger Filter, kein
+  // Zusatz-Score. Springer erscheinen NIE, solange mindestens ein regulaerer
+  // Fahrer geeignet ist. Die Rangfolge innerhalb der jeweiligen Gruppe bleibt
+  // exakt die bestehende (sortFn).
+  const regulars  = scored.filter((x) => passes(x) && x.driverCategory !== "springer");
+  if (regulars.length > 0) return regulars.sort(sortFn);
+  const springers = scored.filter((x) => passes(x) && x.driverCategory === "springer");
+  // Fallback-Runde: als Notfall-Springer markieren, damit die UI das kennzeichnet.
+  return springers.sort(sortFn).map((x) => ({ ...x, emergencySpringer: true }));
 }
 
 function reasonText(setup, x) {
@@ -3845,6 +3963,13 @@ function AssignModal({ setup, dyn, ride, onClose, onAssign }) {
       )}
 
       <div className="text-xs mb-2 flex items-center gap-1.5" style={{ color: "var(--mc-text-muted)" }}><Gauge className="w-3.5 h-3.5" />Vorschläge – Nähe &amp; Verfügbarkeit zuerst, Reisezeiten &amp; Fairness berücksichtigt</div>
+      {/* Teilpaket A: Springer-Fallback nur, wenn kein regulaerer Fahrer geeignet war. */}
+      {!capacityUnknown && suggestions.some((s) => s.emergencySpringer) && (
+        <div className="p-2.5 mb-2 text-xs flex items-start gap-2" style={{ background: "var(--mc-st-problem-soft)", border: "1px solid var(--mc-st-problem)", borderRadius: "var(--mc-r)", color: "var(--mc-st-problem)" }}>
+          <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" />
+          <span><span className="font-medium">Kein regulärer Fahrer verfügbar</span> – Springer-Vorschläge (Notfall-Reserve).</span>
+        </div>
+      )}
       <div className="space-y-1.5 max-h-[46vh] overflow-y-auto pr-1">
         {capacityUnknown && <div className="text-sm py-6 text-center" style={{ color: "var(--mc-text-muted)" }}>Keine Vorschläge, solange die Personenzahl fehlt.</div>}
         {!capacityUnknown && suggestions.length === 0 && <div className="text-sm py-6 text-center" style={{ color: "var(--mc-text-muted)" }}>Kein passender Fahrer (Kapazität/Überschneidung). Manuell unten wählen.</div>}
@@ -3860,10 +3985,13 @@ function AssignModal({ setup, dyn, ride, onClose, onAssign }) {
               <span className="w-8 h-8 flex items-center justify-center text-xs shrink-0"
                 style={{ borderRadius: "var(--mc-r-sm)", fontFamily: "var(--mc-font-mono)", background: x.driver.vehicleType === "Van" ? "var(--mc-st-assigned-soft)" : "var(--mc-st-new-soft)", color: x.driver.vehicleType === "Van" ? "var(--mc-st-assigned)" : "var(--mc-st-new)" }}>{x.driver.vehicleType === "Van" ? "Van" : "Car"}</span>
               <div className="min-w-0 flex-1">
-                <div className="text-sm flex items-center gap-2" style={{ color: "var(--mc-text)" }}>
+                <div className="text-sm flex items-center gap-2 flex-wrap" style={{ color: "var(--mc-text)" }}>
                   {x.driver.firstName} {x.driver.lastName}
                   {best && <span className="mc-badge mc-badge--brand text-[10px]">beste Wahl</span>}
                   {!x.feasible && <span className="mc-badge mc-badge--assigned text-[10px]">knapp</span>}
+                  {/* Teilpaket A: Springer- und Team-Kennzeichnung (rein informativ) */}
+                  {x.emergencySpringer && <span className="mc-badge mc-badge--problem text-[10px]">Springer</span>}
+                  {x.teamLabel && <span className="mc-badge mc-badge--assigned text-[10px]">Team: {x.teamLabel}</span>}
                 </div>
                 <div className="text-[11px]" style={{ color: "var(--mc-text-muted)" }}>{reasonText(setup, x)}</div>
               </div>
@@ -3895,14 +4023,18 @@ function AssignModal({ setup, dyn, ride, onClose, onAssign }) {
               <button key={d.id} onClick={assignManual} disabled={assigning || ev.capacityUnknown}
                 title={ev.capacityUnknown ? "Personenzahl fehlt – Kapazität kann nicht geprüft werden" : undefined}
                 className="mc-ride-card text-xs px-2 py-1.5 text-left disabled:opacity-50"
-                style={ev.capacityUnknown || !ev.eligible ? { borderColor: "var(--mc-st-problem)" } : !ev.feasible ? { borderColor: "var(--mc-st-assigned)" } : undefined}>
+                style={ev.capacityUnknown || !ev.eligible || !ev.available ? { borderColor: "var(--mc-st-problem)" } : !ev.feasible ? { borderColor: "var(--mc-st-assigned)" } : undefined}>
                 <div className="truncate" style={{ color: "var(--mc-text)" }}>{d.firstName} {d.lastName[0]}.</div>
-                <div className="flex items-center gap-1">
+                <div className="flex items-center gap-1 flex-wrap">
                   <span className="text-[10px]" style={{ color: "var(--mc-text-muted)", fontFamily: "var(--mc-font-mono)" }}>{d.vehicleType === "Van" ? "Van" : "Car"}</span>
                   {ev.capacityUnknown ? <span className="text-[9px]" style={{ color: "var(--mc-st-problem)" }}>Personenzahl fehlt</span>
                     : !ev.eligible ? <span className="text-[9px]" style={{ color: "var(--mc-st-problem)" }}>zu klein</span>
+                    : !ev.available ? <span className="text-[9px]" style={{ color: "var(--mc-st-problem)" }}>noch nicht verfügbar</span>
                     : ev.overlap ? <span className="text-[9px]" style={{ color: "var(--mc-st-assigned)" }}>Überschneidung</span>
                       : !ev.feasible ? <span className="text-[9px]" style={{ color: "var(--mc-st-assigned)" }}>knapp</span> : null}
+                  {/* Teilpaket A: Springer/Team als Info auch in der manuellen Liste */}
+                  {ev.driverCategory === "springer" && <span className="text-[9px]" style={{ color: "var(--mc-st-problem)" }}>· Springer</span>}
+                  {ev.teamLabel && <span className="text-[9px]" style={{ color: "var(--mc-st-assigned)" }}>· {ev.teamLabel}</span>}
                 </div>
               </button>
             );
@@ -4360,8 +4492,11 @@ function MissionDriversTab({ setup, dyn, day }) {
                     <Car className="w-3 h-3" />{isVan ? "Van" : "Car"}
                   </span>
                   <div className="min-w-0 flex-1">
-                    <div className="flex items-center gap-2">
+                    <div className="flex items-center gap-2 flex-wrap">
                       <span className="text-sm font-semibold truncate" style={{ color: "var(--mc-text)" }}>{d.firstName} {d.lastName}</span>
+                      {/* Teilpaket A: Springer-/Team-Kennzeichnung (rein informativ) */}
+                      {driverCategoryOf(d) === "springer" && <span className="mc-badge mc-badge--problem text-[10px] shrink-0">Springer</span>}
+                      {teamLabelOf(d) && <span className="mc-badge mc-badge--assigned text-[10px] shrink-0">{teamLabelOf(d)}</span>}
                       {gi.has && (
                         <span className="inline-flex items-center gap-1 text-[10px] shrink-0"
                           style={{ color: gi.online ? "var(--mc-st-done)" : "var(--mc-text-muted)" }}>
@@ -5808,11 +5943,13 @@ function MissionEmergencyTab({ setup, dyn, day, updateDyn, by, onErr, onAssign, 
                       {/* nächste passende Fahrer */}
                       {sugg.length > 0 && (
                         <div className="mt-2 text-xs">
-                          <span style={{ color: "var(--mc-text-muted)" }}>Passende Fahrer: </span>
+                          <span style={{ color: "var(--mc-text-muted)" }}>
+                            {sugg.some((x) => x.emergencySpringer) ? "Kein regulärer Fahrer – Springer: " : "Passende Fahrer: "}
+                          </span>
                           {sugg.map((x, k) => (
                             <span key={x.driver.id} className="inline-flex items-center gap-1 mr-2"
                               style={{ color: x.feasible ? "var(--mc-st-done)" : "var(--mc-st-assigned)" }}>
-                              {x.driver.vehicleType === "Van" ? "Van" : "Car"} {x.driver.firstName}{x.deadKnown ? ` (${x.deadMin}′)` : ""}{k < sugg.length - 1 ? "," : ""}
+                              {x.driver.vehicleType === "Van" ? "Van" : "Car"} {x.driver.firstName}{x.emergencySpringer ? " (Springer)" : ""}{x.teamLabel ? ` [${x.teamLabel}]` : ""}{x.deadKnown ? ` (${x.deadMin}′)` : ""}{k < sugg.length - 1 ? "," : ""}
                             </span>
                           ))}
                         </div>
