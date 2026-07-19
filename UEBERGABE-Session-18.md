@@ -3954,3 +3954,82 @@ Behoben (reine Sicherungs-/Doku-Massnahme, kein Code angefasst):
 Lehre fuers naechste Mal: Sicherungs-Tags direkt nach dem Anlegen mit
 `git push origin <tag>` hochladen und mit `git ls-remote --tags origin` bestaetigen, sonst
 steht der Ruecksetzpunkt nur lokal und ist nach dem Sandbox-Reset weg.
+
+# Session vom 19.07.2026 (Chat-Interface): Teilpaket B umgesetzt, verifiziert, committed
+
+## Ruecksetzpunkt
+Tag `pre-teilpaket-B` = 030bc15 (Codestand = Teilpaket A). Auf origin, gegengeprueft.
+
+## Was gebaut wurde (rein additiv)
+Neuer Block nach checkDriverAvailability (vor evaluateInsertion): Ortsaufloesungs-Schicht
+ueber den bestehenden festen IDs. Reine Funktionen ohne Nebenwirkung, keine Ride-Mutation.
+- Config: LOC_ZONE, ZONE_LABEL, LOC_MATRIX_NODE, LOC_ALIASES, KNOWN_FIXED_IDS, PICKUP_RULES
+- normLoc(s): deterministische Normalisierung (lower, oe/ae/ue, ss, Satzzeichen->Space)
+- resolveLocation(text, fixedId): strukturierte Antwort (requested/normalized/zone/
+  operational/matchedAlias/status matched|unknown|ambiguous). Feste ID gewinnt (Rueckwaerts-
+  kompat). Spezifische Aliase vor allgemeinen (NUE-GAT vor NUE). Keine stille Auswahl.
+- resolveRideEndpoint(id, custom): feste ID vor Custom-Freitext (Spec 10).
+- resolveOperationalRideLocations(ride, setup): EINZIGE Quelle der operativen Orte. Pickup-
+  Regel NUR bei Leonardo/HBF -> Festival (=> Sheraton). Ziel wird NIE umgeschrieben.
+- resolveTravelMinutes({from,to,setup}): sichere Fahrzeit ueber Matrix, unknown/null bei
+  fehlender Kante, nie 0/geschaetzt.
+- rideEndpointMatrixNode(id, custom, opRule): uebersetzt Endpunkt -> Matrix-Knoten.
+  Bekannte feste ID -> Identitaet (Bestandsverhalten byte-identisch). Unbekannt -> id
+  (i.d.R. __custom -> null-Fahrzeit wie Bestand).
+
+## Kernpfad-Eingriff (minimal, in evaluateInsertion)
+Drei Ortsbezuege durch operative Matrix-Knoten ersetzt:
+- pickup = rideEndpointMatrixNode(fromId, fromCustom, <Sheraton-Regel>), drop analog
+- prevLoc = echtes Ziel der Vorfahrt via rideEndpointMatrixNode(prev.toId, prev.toCustom)
+- Folgehop: next-Pickup operativ aufgeloest
+opLoc zusaetzlich im Return (nur fuer UI). Sonst nichts geaendert.
+
+## Datenentscheidungen (von Jordan bestaetigt, in seedLocations/seedMatrix)
+- Festival-Koordinate 49.52728/10.83139, Anfahrt Puschendorf (nicht Hoefen). Adresse ergaenzt.
+- sheraton|festival 33 -> 38 min (weiter suedliche Koordinate).
+- muc|festival = muc|sheraton = 105 min (neuer Matrix-Knoten "muc").
+- Nachbar-Zeitzuordnung (LOC_MATRIX_NODE): leonardo/hbf_nue/karl_august -> sheraton,
+  gat_nue -> airport, airport_muc -> muc. Fahrer sieht immer den echten Ort.
+
+## WICHTIG fuer den Live-Betrieb (Supabase)
+Die drei Matrix-Werte stehen nur im SEED (Artifact/Demo). Das Live-Festival laedt die Matrix
+aus Supabase. Jordan muss dort in den Einstellungen nachtragen, sonst greifen sie live nicht:
+  sheraton|festival = 38, muc|festival = 105, muc|sheraton = 105
+Die Nachbar-Zuordnung braucht KEINE Live-Eintraege fuer leonardo/hbf/karl_august/gat, weil
+sie ueber sheraton/airport rechnen (die schon existieren). Nur "muc" ist neu.
+
+## UI (AssignModal, rein presentational)
+Kopfzeile ergaenzt: "Abholung: <op>" nur wenn abweichend (Leonardo/HBF), Fahrgast-Ort bleibt
+sichtbar. Warnzeile bei unbekanntem Abhol-/Zielort. Nutzt bestehende Design-Token.
+
+## Verifikation (alles gruen)
+- esbuild gruen, keine doppelten Funktionen, alle Icons/Bezeichner definiert.
+- smoke-teilpaket-b.mjs: 69/69 Pruefungen (alle Spec-Faelle 1..64 + Zusatz + Gegenprobe),
+  gegen die AUS DER QUELLE extrahierten echten Funktionen (kein Nachbau).
+- regression-teilpaket-b.mjs: suggestDrivers/evaluateInsertion alt (pre-teilpaket-B) vs neu,
+  5 Bestandsfahrten ueber die 4 alten Orte, BYTE-IDENTISCH (0 Abweichungen). Gegenprobe ok.
+  Byte-Identitaet zusaetzlich direkt belegt: rideEndpointMatrixNode(<Bestands-ID>) == ID.
+- rendertest.mjs: alle 5 Referenzwerte konstant (25053/2452/2413/2895/101).
+- pruefe.mjs: Field/inp/SettingsTab/LocSelect unveraendert, alle CSS-Variablen definiert.
+- kontrast.mjs: 0 WCAG-Fehler.
+
+## Regressionsrisiken
+- evaluateInsertion ist Kernpfad. Byte-Identitaet fuer Bestandsfahrten bewiesen (s.o.), Risiko
+  daher niedrig. Neuverhalten betrifft nur bisher als __custom/unbekannt gefuehrte Orte.
+- Fahrerposition nach Rueckfahrt zu NEUEM Ort ueber stats.locNow (prev===null-Fall): dort
+  geht der Custom-Text verloren (computeDriverStats speichert nur toId). Bewusst NICHT
+  angefasst (Teilpaket-A/shared, ausserhalb minimalem Scope). Fuer den Folge-Insertion-Fall
+  (prev vorhanden) ist es korrekt geloest. Siehe "Weitere Punkte".
+
+## Weitere gefundene Punkte fuer spaetere Sessions (NICHT jetzt fixen)
+- computeDriverStats.locNow traegt bei Custom-Zielen keinen Freitext -> Fahrerposition eines
+  idle-Fahrers an einem neuen Ort bleibt fuer die allererste Insertion unbekannt. Nur relevant,
+  wenn ein Fahrer OHNE Folgefahrt zuletzt an einem neuen Custom-Ort stand.
+- matchLoc (Import) trennt GAT weiterhin nicht ("private jet gat" -> airport). Bewusst
+  unangetastet (Auftrag). resolveLocation trennt GAT im Vorschlagsmotor korrekt.
+- resolveTravelMinutes wird im Hauptcode nicht direkt aufgerufen (evaluateInsertion nutzt
+  travelMin+rideEndpointMatrixNode). Bereitgestellt als Spec-geforderte reine API + fuer Tests.
+
+## GO/NO-GO
+GO. Additiv, Bestandsverhalten bewiesen unveraendert, volle Pipeline gruen. Vor Live-Betrieb
+die drei Matrix-Werte in Supabase-Settings eintragen (s.o.).
