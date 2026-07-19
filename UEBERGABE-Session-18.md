@@ -4502,9 +4502,13 @@ Personenzahl24/Ridelist10.
 # Pfade; smoke-teilpaket-b.mjs und smoke-teilpaket-e.mjs brauchen vorab gebaute
 # tmp-tb-funcs.mjs bzw. tmp-te-funcs.mjs (via extract-funcs-*.py).
 #
-# Offene Entscheidung aus Teilpaket E:
-#   - `driverHubLocationId` in der Konfiguration setzen (aktiviert wait_recommended
-#     mit Einsparung) ODER konservativ leer lassen. Jordans GO/NO-GO abwarten.
+# Entscheidung aus Teilpaket E (GETROFFEN am 19.07.2026, Jordan):
+#   `driverHubLocationId` bleibt NICHT gesetzt (konservativ). Kein Hub wird
+#   erfunden, keine Einsparungsbehauptung ohne echte Grundlage. `wait_recommended`
+#   erscheint praktisch nicht, `wait_possible` mit allen echten Fakten (Ankunft,
+#   Wartezeit, Konflikte, Alternativen) ist bewusst die Standardanzeige. NICHT
+#   von selbst aendern. Falls Jordan es nach dem Fahrertest doch will: einzeiliger
+#   Konfig-Eintrag `driverHubLocationId`, danach in eigener Mini-Session pruefen.
 #
 # Offene, bewusst NICHT gefixte Punkte (nur auf ausdrücklichen Auftrag):
 #   - matchLoc (verschiebt sich, vor Gebrauch neu grep-en) liest nur 4 Hardcode-
