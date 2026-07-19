@@ -4033,3 +4033,12 @@ sichtbar. Warnzeile bei unbekanntem Abhol-/Zielort. Nutzt bestehende Design-Toke
 ## GO/NO-GO
 GO. Additiv, Bestandsverhalten bewiesen unveraendert, volle Pipeline gruen. Vor Live-Betrieb
 die drei Matrix-Werte in Supabase-Settings eintragen (s.o.).
+
+# Nachtrag 19.07.2026 (spaeter am selben Tag): Teilpaket-B-Bedingung erfuellt, GO final
+
+Jordan hat `teilpaket-b-matrix-update.sql` im Supabase SQL-Editor ausgefuehrt und die
+Kontroll-Abfrage bestaetigt (sheraton|festival=38, muc|festival=105, muc|sheraton=105 in
+der Live-DB angekommen). Damit ist die einzige GO-Bedingung aus dem Abschlussbericht
+erfuellt. **Teilpaket B ist vollstaendig abgeschlossen, keine offenen Punkte mehr aus
+diesem Paket** (bis auf die separat dokumentierten, bewusst nicht behobenen Randfaelle
+unter "Weitere gefundene Punkte fuer spaetere Sessions").

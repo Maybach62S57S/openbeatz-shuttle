@@ -58,7 +58,9 @@ kontrast.mjs ohne Befund. GO empfohlen.
 
 ## Bekannte offene Punkte (nur zur Kenntnis, NICHT selbst anfangen)
 
-- Vor dem Live-Betrieb: 3 Matrix-Werte manuell in Supabase nachtragen (siehe oben).
+- ~~Vor dem Live-Betrieb: 3 Matrix-Werte manuell in Supabase nachtragen~~ ERLEDIGT von
+  Jordan am 19.07.2026 (`teilpaket-b-matrix-update.sql` ausgefuehrt, Kontroll-Abfrage
+  bestaetigt). Kein offener Punkt mehr.
 - Randfall computeDriverStats.locNow bei Custom-Zielen ohne Folgefahrt (dokumentiert in
   UEBERGABE-Session-18.md unter "Weitere gefundene Punkte").
 - matchLoc trennt "private jet gat" weiterhin nicht separat (bewusst unangetastet).

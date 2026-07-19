@@ -55,11 +55,13 @@ was du sehen sollst.
     wenn der Live-Matrix-Wert angepasst wurde.)
 
 ## WICHTIG vor dem Live-Einsatz (einmalig in Einstellungen -> Fahrzeiten)
-Diese drei Werte in der Live-Matrix eintragen, sonst greifen sie nur in der Demo:
+**ERLEDIGT am 19.07.2026** (per `teilpaket-b-matrix-update.sql` im Supabase SQL-Editor
+ausgefuehrt, Kontroll-Abfrage bestaetigt die drei Werte). Zur Nachvollziehbarkeit, was
+eingetragen wurde:
 - Sheraton <-> Festival: 38 min
 - Muenchen (muc) <-> Festival: 105 min
 - Muenchen (muc) <-> Sheraton: 105 min
-Fuer Leonardo/HBF/Karl August/GAT ist NICHTS extra einzutragen - die rechnen automatisch
+Fuer Leonardo/HBF/Karl August/GAT war NICHTS extra einzutragen - die rechnen automatisch
 ueber Sheraton bzw. Flughafen.
 
 ## Was NICHT passieren darf
