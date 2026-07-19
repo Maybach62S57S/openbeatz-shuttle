@@ -37,7 +37,7 @@ def grab_any(name):
 # Reihenfolge nach Abhaengigkeit (Definitionen vor Nutzung wo noetig; ESM hoisting
 # deckt function-decls, const-arrows brauchen Reihenfolge -> pad/sortMin zuerst)
 order = ["toMin","pad","localDateISO","sortMin","dayNowMin","driverDay","travel","travelMin","effDur",
-         "logRide","issueOpen","rideHasOpenIssue","validPassengerCount",
+         "logRide","issueOpen","rideHasOpenIssue","validPassengerCount","seedMatrix",
          "DRIVER_PROFILES","TEAM_LABEL","normDriverName","driverProfile","driverCategoryOf","teamGroupOf","teamLabelOf",
          "availableFromOf","parseWallClock","checkDriverAvailability","STATUS_TS","computeDriverStats",
          "LOC_ZONE","ZONE_LABEL","LOC_MATRIX_NODE","LOC_ALIASES","KNOWN_FIXED_IDS","PICKUP_RULES",
@@ -50,5 +50,7 @@ for n in order:
     if b: pieces.append(b)
 open(outfile,"w",encoding="utf-8").write(
     "// AUTO\n"+"\n\n".join(pieces)+
-    "\n\nexport { travelMin, computeDriverStats, evaluateInsertion, suggestDrivers };\n")
+    "\n\nexport { travelMin, computeDriverStats, evaluateInsertion, suggestDrivers, "
+    "normLoc, resolveLocation, resolveRideEndpoint, resolveOperationalRideLocations, "
+    "resolveTravelMinutes, rideEndpointMatrixNode, LOC_MATRIX_NODE, seedMatrix };\n")
 print(f"{outfile}: {len(pieces)} Bloecke")
