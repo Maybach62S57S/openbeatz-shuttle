@@ -4101,6 +4101,108 @@ Drei Einhaengepunkte:
 Zum Zeitpunkt dieses Eintrags sind Commit + Push offen (frischer PAT noetig).
 Der geklonte PAT wurde nach dem Clone gescrubbt.
 
+# ============================================================================
+# Session vom 19.07.2026 (Chat-Interface): Teilpaket C2 umgesetzt, verifiziert,
+# committed UND gepusht
+# ============================================================================
+
+## Ruecksetzpunkt
+Tag `pre-teilpaket-C2` = `2fb4ca2` (C1-Stand, VOR C2). Lag bereits lokal und auf
+origin. main steht jetzt auf dem C2-Commit `be22172`
+(`2fb4ca2..be22172 main -> main`, sauberer Fast-Forward).
+
+## Was umgesetzt wurde (rein additiv, rein lesend)
+Sichere, nachvollziehbare Zuordnung Fahrt -> Timetable-Set. Nur berechnet und
+neutral angezeigt, KEIN Schreibvorgang, keine Zeit-/Status-/Fahreraenderung,
+kein Fuzzy-Matching. Datei 10072 -> 10536 Zeilen.
+
+Neue reine Funktionen (nach TimetableTab gespliced):
+- `normalizeArtistName` (Vergleichs-Normalisierung: Gross/Klein, deutsche Umlaute
+  ausgeschrieben oe/ae/ue UND als Umlaut identisch, ss/ß, typografische
+  Apostrophe, dekorative Sonderzeichen/Bindestriche -> Space, "&" -> "and";
+  Original NIE veraendert; kein Fuzzy).
+- `ARTIST_ALIASES` (LEER, datengetrieben - siehe Alias-Befund unten) +
+  `buildArtistAliasIndex` (verwirft mehrdeutige Aliase).
+- `TT_COLLAB_RE`, `extractTimetableArtists` (B2B/back to back/vs./vs-Split;
+  "&" bleibt Namensteil; Original-Set-Name erhalten; status parsed/unparsed).
+- `rideFestivalDirection` (toFestival/fromFestival/other aus fromId/toId).
+- `rideCanonicalArtist` (nur ride.djName).
+- `buildTimetableMatchIndex` (byArtist inkl. B2B-Mitglieder + byDay ueber die
+  GUELTIGEN C1-normalisierten Eintraege; nutzt C1-Normalisierung, kein Neuparsen).
+- `pickByTime` (richtungsabhaengige Zeitauswahl unter Kandidaten; erzeugt NIE
+  einen Match).
+- `matchRideToTimetable` (Reihenfolge exact -> alias -> b2b_member; Zeit NUR nach
+  Artist-Match zur Auswahl; Status: exact/alias/b2b_member/multiple_candidates/
+  no_match/missing_artist/invalid_artist; liefert Diagnose).
+- Helfer `candOut`, `reasonFor`, `ttSetLine`.
+UI (nur Leitstelle, neutral, KEINE Ampel-/Warnfarben - das ist C3-Scope):
+- `TimetableMatchInfo` + `renderDiagnostics` (aufklappbare Diagnose).
+- Eingebunden in `RideForm` (live unter dem Feld "DJ / Artist", useMemo aus
+  Formular-State) und `AssignModal` (feste Fahrt, useMemo).
+
+## Wichtigste Entscheidungen
+- Kanonisches Ride-Artist-Feld = `ride.djName` (einzige Quelle laut Analyse:
+  makeExampleRides, parseRow Header-Aliase artist/dj/djname/kuenstler, RideForm
+  DJ-Feld). KEIN Fallback aus passengers (=Begleitnamen)/notes (=Freitext)/type
+  (=Fahrttyp).
+- Alias-Befund: Abgleich aller Beispiel-Ride-Artists gegen die 229 Timetable-
+  Sets zeigt, die grossen Headliner stehen gar nicht im Timetable. KEINE
+  belegbare Alias-Regel -> ARTIST_ALIASES bleibt leer (Vorgabe "keine erfundenen
+  Aliase"), zentral erweiterbar.
+- "&" ist mehrdeutig (echte Einzel-Acts: Harris & Ford, 2 Engel & Charlie,
+  Vero & Sleepwell, Kopf & Hoerer) -> NIE B2B-Trenner. Nur b2b/back to back/
+  vs/vs. trennen.
+- Betriebstag ausschliesslich ueber bestehenden `festDayKey` (keine zweite
+  Datumslogik).
+
+## Verifikation (alles gruen)
+- esbuild gruen, keine Duplikat-Funktionen, JSX-Referenz-Cross-Check: alle 13
+  C2-Bezeichner definiert, TimetableMatchInfo 2x genutzt.
+- rendertest 5 Referenzwerte EXAKT konstant (25053/2452/2413/2895/101) - C2 nicht
+  im gemessenen Render-Pfad.
+- kontrast 19 ok-Zeilen 0 Fehler; pruefe: keine undefinierten vars, Diff gegen
+  pre-teilpaket-C2 = 2 GEAENDERT (RideForm, AssignModal), 15 NEU, 0 ENTFERNT.
+- `smoke-teilpaket-c2.mjs` 65/65 (echte Quellfunktionen, inkl. Gegenproben),
+  `smoke-teilpaket-c2-ui.mjs` 14/14 (alle Statusfaelle rendern, statische
+  Read-only-Analyse, Gegenprobe).
+- Bestand gruen: C1 40/40 + 16/16, Springer/A 34/34, One-Tap 14/14,
+  Personenzahl 24/24, Ridelist 10/10.
+
+## Angepasster Bestandstest (dokumentiert, keine Aufweichung)
+`smoke-teilpaket-c1-ui.mjs`: Test-Anker grenzt den TimetableTab-Koerper jetzt
+KLAMMER-GENAU ab (Depth-Zaehler) statt bis "function MissionDriversTab" - sonst
+wuerde der direkt danach eingefuegte C2-Block faelschlich als TimetableTab-
+Koerper mitgemessen (fand updateDyn/.delete). TimetableTab selbst BYTE-IDENTISCH
+bewiesen (8595 Bytes vorher=nachher). Gegenprobe (injiziertes updateDyn) belegt
+echte Messung. Zusaetzlich im C2-UI-Smoke: lokale `map.delete(alias)` in
+buildArtistAliasIndex ist KEIN Persistenz-Schreibweg -> Token praezisiert auf
+DB-/Storage-Deletes; separater Supabase-DB-Delete-Regex-Check ergaenzt.
+
+## Regressionsrisiken
+Sehr gering, rein additiv. Einzige Bestandseingriffe: zwei rein anzeigende
+Einbindungen (je ein TimetableMatchInfo) + zwei useMemo fuer normalisierte
+Timetable-Daten in RideForm/AssignModal. Keine Handler, Felder, Props (ausser
+den bestehenden) oder Speicherpfade beruehrt.
+
+## Geaenderte / neue Dateien (Commit be22172)
+- src/ShuttleLeitstelle.jsx (C2-Schicht + 2 Einbindungen, 10072 -> 10536)
+- smoke-teilpaket-c2.mjs (NEU, 65 Logiktests)
+- smoke-teilpaket-c2-ui.mjs (NEU, 14 UI/Read-only-Tests)
+- smoke-teilpaket-c1-ui.mjs (GEAENDERT, Anker robuster, keine Logikaenderung)
+- TEILPAKET-C2-ABNAHME.md (NEU, manuelle Checkliste)
+- TEILPAKET-C2-BERICHT.md (NEU, technischer Bericht)
+
+## GO/NO-GO
+GO. C2 vollstaendig, verifiziert, committed und gepusht. Anhalten laut Spec:
+noch KEINE Timetable-Warnungen (C3), keine Zeitbewertung, keine Ride-Aenderungen.
+
+## Weitere gefundene Punkte fuer spaetere Sessions (NICHT jetzt fixen)
+- matchLoc (Z. ~7676) liest nur 4 Hardcode-Orte, nicht setup.locations.
+- "Jetzt/Als Naechstes"-Filter im Timetable-Tab (verschoben).
+- ARTIST_ALIASES leer - sobald ein echter, belegter Alias-Fall bekannt ist,
+  zentral nachtragen.
+
+
 # ----------------------------------------------------------------------------
 # READY-TO-PASTE OPENER FUER DEN NAECHSTEN CHAT
 # ----------------------------------------------------------------------------
@@ -4108,16 +4210,28 @@ Der geklonte PAT wurde nach dem Clone gescrubbt.
 # Deutsch, informell, keine Gedankenstriche, korrekte Umlaute. Code-Freeze 21.07.,
 # ab 21.07. KEINE Loeschungen mehr (Festival 23.-27.07.).
 #
-# Stand: Teilpaket A, B und C1 abgeschlossen und gepusht. main steht auf dem
-# C1-Commit. Ruecksetzpunkte als Tags: pre-teilpaket-A/-B/-C1.
+# Stand: Teilpaket A, B, C1 und C2 abgeschlossen und gepusht. main steht auf dem
+# C2-Commit be22172. Ruecksetzpunkte als Tags: pre-teilpaket-A/-B/-C1/-C2.
+# Erwartete Zeilenzahl src/ShuttleLeitstelle.jsx: 10536.
 #
 # Schritt 0 (Pflicht): Repo klonen (frischen fine-grained PAT bereitstellen, nach
-# Clone aus der Remote-URL scrubben), `git log --graph --oneline --all` pruefen,
-# exakte Zeilenzahl von src/ShuttleLeitstelle.jsx messen (Erwartung ~10072 + evtl.
-# spaetere Commits), npm install (esbuild+react+react-dom), Baseline-Skripte laufen
-# lassen (rendertest/kontrast/pruefe/smoke*). Erst dann Auftrag entgegennehmen.
+# Clone aus der Remote-URL scrubben mit `git remote set-url`), `git log --graph
+# --oneline --all` pruefen (HEAD = be22172), exakte Zeilenzahl messen (10536),
+# npm install (esbuild+react+react-dom), Baseline-Skripte laufen lassen:
+# rendertest (5 Werte 25053/2452/2413/2895/101), kontrast (0 Fehler), pruefe
+# (0 undefinierte vars), smoke-teilpaket-c1/-c1-ui/-c2/-c2-ui, Springer/One-Tap/
+# Personenzahl/Ridelist. Erst dann Auftrag entgegennehmen.
+# Hinweis: rendertest/smoke-Skripte schreiben nach /home/claude/repo/ -> ggf.
+# `ln -s <clone>/node_modules /home/claude/repo/node_modules`. Skripte brauchen
+# `src/ShuttleLeitstelle.jsx` als argv[2]; pruefe.mjs braucht ZWEI Pfade.
+#
+# Was als Naechstes ansteht (C3, NUR auf ausdruecklichen Auftrag): Timetable-
+# basierte Zeitbewertung/Warnungen. C2 hat bewusst NICHTS davon vorweggenommen
+# (neutrale Anzeige, keine Ampelfarben). Kanon: matchRideToTimetable liefert
+# status/selected/candidates/Diagnose - darauf laesst sich C3 aufsetzen.
 #
 # Offene, bewusst NICHT gefixte Punkte (nur auf ausdruecklichen Auftrag):
 #   - matchLoc (Z. ~7676) liest nur 4 Hardcode-Orte, nicht setup.locations.
-#   - "Jetzt/Als Naechstes"-Filter im Timetable-Tab (verschoben, s.o.).
+#   - "Jetzt/Als Naechstes"-Filter im Timetable-Tab (verschoben).
+#   - ARTIST_ALIASES leer - erst bei belegtem Alias-Fall nachtragen.
 #   - PIN-Sicherheit: NICHT proaktiv ansprechen.
