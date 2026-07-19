@@ -4524,3 +4524,36 @@ Personenzahl24/Ridelist10.
 # Jordan einholen (wie bei A/B/C/D/E). Terminlich: harter Code-Freeze 21.07.,
 # Fahrertest 18.07. Nach dem Festival ggf. Paket 2 (Datei-Modularisierung,
 # Base64-Asset-Extraktion) und zurückgestellte Punkte.
+
+# Session F1 (19.07.2026): Teilpaket F1 - Sichere Sammelfahrt-Vorschlaege, Kern (ABGESCHLOSSEN)
+Rein additiv, rein lesend. Ruecksetzpunkt Tag `pre-teilpaket-F` = `815e750`.
+Details im `TEILPAKET-F-BERICHT.md`, Abnahme in `TEILPAKET-F-ABNAHME.md`.
+#
+# Was F1 gebaut hat: 14 reine Funktionen (14 NEU, 0 GEAENDERT, 0 ENTFERNT laut
+# pruefe), +444 Zeilen, keine UI. Kern: evaluateRidePairForGrouping (Statusleiter),
+# buildGroupRidePairCandidates (Vorfilter + Fenster-Paarung), rankGroupRideCandidates
+# (Kopie-Sortierung + Primaervorschlag), groupPairRoute/groupRideEndpoints/
+# groupFleetSeats/groupRideC3, GROUP_RIDE_CONFIG. Nur Paare (maxGroupSize 2), vier
+# Status. Wiederverwendung: rideFestivalDirection, c3OperationalNodes, travelMin,
+# validPassengerCount, festDayKey, c3RideStartAbsMin/c3AbsToParts, matchRideToTimetable,
+# evaluateTimetableTiming, LOC_ZONE. Kein neues dyn-Feld, kein Schreibweg.
+#
+# Verifikation gruen: esbuild, keine Duplikate, pruefe (815e750 vs Arbeitsstand:
+# GEAENDERT 0 / NEU 14 / ENTFERNT 0, keine undef. CSS-Var), rendertest
+# 25053/2452/2413/2895/101, kontrast 0, smoke-teilpaket-f.mjs 120/120,
+# gegenprobe-teilpaket-f.mjs 8/8, volle Regression (b/c1/c1-ui/c2/c2-ui/c3/c3-ui/
+# d/d-ui/e/gegenprobe-e/27b*/27c/27d/27e).
+#
+# Neue Proof-Skripte: smoke-teilpaket-f.mjs (Vollkopie+Export gegen die ECHTEN
+# Funktionen; braucht src als argv[2], KEIN Extract noetig), gegenprobe-teilpaket-f.mjs
+# (patcht die Quelle, baut neu, prueft Flip; laeuft standalone).
+#
+# Slicing: F2 = UI (buildGroupRidePairCandidates read-only in MissionReturnsTab;
+# Hinfahrt-Host vor Bau mit Jordan klaeren). F3 = Dreiergruppen bewusst vertagt
+# (Paare zuerst, Stabilitaet vor Dreiern). Ready-to-paste Opener fuer F2 steht am
+# Ende von TEILPAKET-F-BERICHT.md.
+#
+# Bekannte Grenzen (dokumentiert, NICHT gefixt): Airport-Zone via Matrix-Knoten
+# "airport" faellt auf UNKNOWN (nur Anzeige-Signal sameZone, kein Gate);
+# Leonardo/HBF teilen Matrix-Knoten sheraton -> sameDestination kann bei
+# unterschiedlichen Anzeigezielen operativ korrekt true werden (F aendert nie toId).
