@@ -1,0 +1,224 @@
+{
+ "festival": "Open Beatz 2026",
+ "generated": "2026-07-18",
+ "roles": {
+  "regular": "Normal im Ranking",
+  "springer": "Nur wenn kein regulaerer Fahrer verfuegbar (absoluter Notfall)"
+ },
+ "notes": [
+  "Philipp Baumeister trifft erst Sa nachmittag/abend ein. Empfehlung: regulaer ab Ankunft.",
+  "Leon Merg und Philipp Stich sind Notfall-Reserve.",
+  "Stefan Baumann faehrt Car. Damit 7 Vans, 16 Cars.",
+  "Van-Sitzzahlen sind FAHRZEUGSPEZIFISCH, nicht pauschal 7: Patrick/Mustafa=7, alle anderen Vans=6 (Fahrer ausgeschlossen). Siehe Feld seats pro Fahrer.",
+  "Car seats=4 pauschal."
+ ],
+ "drivers": [
+  {
+   "id": "d01",
+   "name": "Leon Merg",
+   "vehicle": "car",
+   "role": "springer",
+   "available_from": null,
+   "seats": 4,
+   "timmy_team": false
+  },
+  {
+   "id": "d02",
+   "name": "Philipp Stich",
+   "vehicle": "car",
+   "role": "springer",
+   "available_from": null,
+   "seats": 4,
+   "timmy_team": false
+  },
+  {
+   "id": "d03",
+   "name": "Finn Steinmetz",
+   "vehicle": "van",
+   "role": "regular",
+   "available_from": null,
+   "seats": 6,
+   "timmy_team": false
+  },
+  {
+   "id": "d04",
+   "name": "Jassin Salah",
+   "vehicle": "car",
+   "role": "regular",
+   "available_from": null,
+   "seats": 4,
+   "timmy_team": false
+  },
+  {
+   "id": "d05",
+   "name": "Björn Korn",
+   "vehicle": "van",
+   "role": "regular",
+   "available_from": null,
+   "seats": 6,
+   "timmy_team": false
+  },
+  {
+   "id": "d06",
+   "name": "Daniel Sakic",
+   "vehicle": "car",
+   "role": "regular",
+   "available_from": null,
+   "seats": 4,
+   "timmy_team": false
+  },
+  {
+   "id": "d07",
+   "name": "Dominik Dittes",
+   "vehicle": "car",
+   "role": "regular",
+   "available_from": null,
+   "seats": 4,
+   "timmy_team": false
+  },
+  {
+   "id": "d08",
+   "name": "Amar Piljevic",
+   "vehicle": "van",
+   "role": "regular",
+   "available_from": null,
+   "seats": 6,
+   "timmy_team": false
+  },
+  {
+   "id": "d09",
+   "name": "Tim Kostka",
+   "vehicle": "car",
+   "role": "regular",
+   "available_from": null,
+   "seats": 4,
+   "timmy_team": false
+  },
+  {
+   "id": "d10",
+   "name": "Marian Mihalca",
+   "vehicle": "car",
+   "role": "regular",
+   "available_from": null,
+   "seats": 4,
+   "timmy_team": false
+  },
+  {
+   "id": "d11",
+   "name": "Philipp Baumeister",
+   "vehicle": "car",
+   "role": "regular",
+   "available_from": "2026-07-25 14:00",
+   "seats": 4,
+   "timmy_team": false
+  },
+  {
+   "id": "d12",
+   "name": "Patrick Ibrahimi",
+   "vehicle": "van",
+   "role": "regular",
+   "available_from": null,
+   "seats": 7,
+   "timmy_team": true
+  },
+  {
+   "id": "d13",
+   "name": "Mustafa Ünver",
+   "vehicle": "van",
+   "role": "regular",
+   "available_from": null,
+   "seats": 7,
+   "timmy_team": true
+  },
+  {
+   "id": "d14",
+   "name": "Lukas Bieber",
+   "vehicle": "van",
+   "role": "regular",
+   "available_from": null,
+   "seats": 6,
+   "timmy_team": true
+  },
+  {
+   "id": "d15",
+   "name": "Toni Penno",
+   "vehicle": "car",
+   "role": "regular",
+   "available_from": null,
+   "seats": 4,
+   "timmy_team": false
+  },
+  {
+   "id": "d16",
+   "name": "Marco Haney",
+   "vehicle": "car",
+   "role": "regular",
+   "available_from": null,
+   "seats": 4,
+   "timmy_team": false
+  },
+  {
+   "id": "d17",
+   "name": "Simon Schug",
+   "vehicle": "car",
+   "role": "regular",
+   "available_from": null,
+   "seats": 4,
+   "timmy_team": false
+  },
+  {
+   "id": "d18",
+   "name": "Bennet Füger",
+   "vehicle": "car",
+   "role": "regular",
+   "available_from": null,
+   "seats": 4,
+   "timmy_team": false
+  },
+  {
+   "id": "d19",
+   "name": "Stefan Baumann",
+   "vehicle": "car",
+   "role": "regular",
+   "available_from": null,
+   "seats": 4,
+   "timmy_team": false
+  },
+  {
+   "id": "d20",
+   "name": "Sandro Benz",
+   "vehicle": "car",
+   "role": "regular",
+   "available_from": null,
+   "seats": 4,
+   "timmy_team": false
+  },
+  {
+   "id": "d21",
+   "name": "Karim Salah",
+   "vehicle": "car",
+   "role": "regular",
+   "available_from": null,
+   "seats": 4,
+   "timmy_team": false
+  },
+  {
+   "id": "d22",
+   "name": "David Schneider",
+   "vehicle": "car",
+   "role": "regular",
+   "available_from": null,
+   "seats": 4,
+   "timmy_team": false
+  },
+  {
+   "id": "d23",
+   "name": "Maximilian Schneider",
+   "vehicle": "van",
+   "role": "regular",
+   "available_from": null,
+   "seats": 6,
+   "timmy_team": false
+  }
+ ]
+}

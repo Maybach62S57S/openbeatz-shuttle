@@ -1514,9 +1514,27 @@ function computeDriverStats(setup, dyn, driverId, dayKey) {
 /* =========================================================================
    Zuteilungs-Vorschläge – reisezeit-bewusst
 ========================================================================= */
+// Vor-Festival-Sicherheitsphase: fehlende/ungültige Personenzahl NIE still auf 1
+// setzen. Gibt eine positive ganze Zahl zurück, sonst null (= "nicht prüfbar").
+// Deckt: undefined, null, "", "   ", 0, "0", nicht-numerische Strings, negative
+// Zahlen, Dezimalzahlen. Wird von evaluateInsertion, RideForm-Speichern und dem
+// Import genutzt, damit derselbe Maßstab überall gilt (keine getrennten Defaults).
+function validPassengerCount(v) {
+  if (v == null) return null;
+  if (typeof v === "string") {
+    const t = v.trim();
+    if (t === "") return null;
+    if (!/^\d+$/.test(t)) return null; // nur positive ganze Zahlen als String zulassen
+    v = Number(t);
+  }
+  if (typeof v !== "number" || !Number.isFinite(v) || !Number.isInteger(v) || v <= 0) return null;
+  return v;
+}
+
 function evaluateInsertion(setup, dyn, driver, ride) {
   const cfg = setup.config;
-  const need = ride.passengerCount || 1;
+  const need = validPassengerCount(ride.passengerCount);
+  const capacityUnknown = need == null;
   const pickup = ride.fromId, drop = ride.toId;
   const T = sortMin(ride.time);
   const durKnown = ride.estDurationMin != null;
@@ -1525,7 +1543,9 @@ function evaluateInsertion(setup, dyn, driver, ride) {
 
   const stats = computeDriverStats(setup, dyn, driver.id, ride.dayKey);
   const others = stats.rides.filter((r) => r.id !== ride.id && r.status !== "cancelled");
-  const eligible = driver.seats >= need;
+  // capacityUnknown: Kapazität kann grundsätzlich nicht geprüft werden, also nie
+  // "eligible" – NICHT mit "zu wenig Sitzplätze" (need bekannt, reicht nicht) verwechseln.
+  const eligible = !capacityUnknown && driver.seats >= need;
 
   // direkte Überschneidung – Punkt 7: auch bestehende Fahrten mit unbekannter Dauer via effDur
   const overlap = others.some((r) => {
@@ -1559,7 +1579,8 @@ function evaluateInsertion(setup, dyn, driver, ride) {
 
   // Klartext-Probleme für manuelle Zuteilung (Punkt 8) und Ablehnungsgründe (Punkt 2)
   const problems = [];
-  if (!eligible) problems.push(`zu wenig Sitzplätze (${driver.seats} < ${need})`);
+  if (capacityUnknown) problems.push("Personenzahl fehlt – Kapazität kann nicht geprüft werden");
+  else if (!eligible) problems.push(`zu wenig Sitzplätze (${driver.seats} < ${need})`);
   if (overlap) problems.push("zeitlicher Konflikt");
   if (lateToPickup > 0) problems.push(`${lateToPickup} min zu spät zur Abholung`);
   if (lateToNext > 0) problems.push(`Folgefahrt zu knapp (${lateToNext} min)`);
@@ -1567,7 +1588,8 @@ function evaluateInsertion(setup, dyn, driver, ride) {
   if (hasIssue) problems.push("Fahrer hat Problem gemeldet");
 
   return { driver, stats, eligible, overlap, prev, next, prevLoc, prevEnd,
-    deadMin, deadKnown, lateToPickup, lateToNext, unknownTiming, hasIssue, feasible, problems };
+    deadMin, deadKnown, lateToPickup, lateToNext, unknownTiming, hasIssue, feasible, problems,
+    capacityUnknown };
 }
 
 function suggestDrivers(setup, dyn, ride) {
@@ -3762,6 +3784,10 @@ function DriverRow({ setup, driver, stats }) {
 /* ------------------------------ Zuteilen-Modal --------------------------- */
 function AssignModal({ setup, dyn, ride, onClose, onAssign }) {
   const suggestions = useMemo(() => suggestDrivers(setup, dyn, ride), [setup, dyn, ride]);
+  // Vor-Festival-Sicherheitsphase: solange die Personenzahl fehlt/ungültig ist,
+  // kann grundsätzlich niemand als kapazitiv geprüft gelten (gilt für JEDEN
+  // Fahrer gleich, deshalb einmal ride-bezogen prüfen statt pro Fahrer).
+  const capacityUnknown = useMemo(() => validPassengerCount(ride.passengerCount) == null, [ride.passengerCount]);
   const locName = (id, txt) => setup.locations.find((l) => l.id === id)?.short || txt || "—";
   const current = setup.drivers.find((d) => d.id === ride.assignedDriverId);
   const [assigning, setAssigning] = useState(false); // Doppelklick-Schutz + Ladezustand
@@ -3802,7 +3828,7 @@ function AssignModal({ setup, dyn, ride, onClose, onAssign }) {
           <ArrowRight className="w-4 h-4" style={{ color: "var(--mc-text-muted)" }} />
           <span className="font-medium" style={{ color: "var(--mc-text)" }}>{locName(ride.toId, ride.toCustom)}</span>
           {ride.zone && <span className="text-xs px-1.5 py-0.5" style={{ background: "var(--mc-st-assigned-soft)", color: "var(--mc-st-assigned)", borderRadius: "var(--mc-r-sm)" }}>{ride.zone}</span>}
-          <span className="flex items-center gap-1 ml-auto" style={{ color: "var(--mc-text-muted)" }}><Users className="w-3.5 h-3.5" />{ride.passengerCount} Pers.</span>
+          <span className="flex items-center gap-1 ml-auto" style={{ color: capacityUnknown ? "var(--mc-st-problem)" : "var(--mc-text-muted)" }}><Users className="w-3.5 h-3.5" />{ride.passengerCount ?? "?"} Pers.</span>
         </div>
         {ride.djName && <div className="mt-1.5 text-base font-semibold truncate" style={{ color: "var(--mc-st-assigned)" }}>{ride.djName}</div>}
       </div>
@@ -3811,10 +3837,18 @@ function AssignModal({ setup, dyn, ride, onClose, onAssign }) {
         <div className="text-xs mb-2" style={{ color: "var(--mc-text-muted)" }}>Aktuell zugeteilt: <span style={{ color: "var(--mc-text-secondary)" }}>{current.firstName} {current.lastName} ({current.vehicleType === "Van" ? "Van" : "Car"})</span></div>
       )}
 
+      {capacityUnknown && (
+        <div className="p-3 mb-4 text-sm" style={{ background: "var(--mc-st-problem-soft)", border: "1px solid var(--mc-st-problem)", borderRadius: "var(--mc-r)", color: "var(--mc-st-problem)" }}>
+          <div className="font-medium mb-1">Personenzahl fehlt</div>
+          <div>Kapazität kann nicht sicher geprüft werden.<br />Bitte ergänze die Personenzahl vor der Zuteilung.</div>
+        </div>
+      )}
+
       <div className="text-xs mb-2 flex items-center gap-1.5" style={{ color: "var(--mc-text-muted)" }}><Gauge className="w-3.5 h-3.5" />Vorschläge – Nähe &amp; Verfügbarkeit zuerst, Reisezeiten &amp; Fairness berücksichtigt</div>
       <div className="space-y-1.5 max-h-[46vh] overflow-y-auto pr-1">
-        {suggestions.length === 0 && <div className="text-sm py-6 text-center" style={{ color: "var(--mc-text-muted)" }}>Kein passender Fahrer (Kapazität/Überschneidung). Manuell unten wählen.</div>}
-        {suggestions.slice(0, 8).map((x, i) => {
+        {capacityUnknown && <div className="text-sm py-6 text-center" style={{ color: "var(--mc-text-muted)" }}>Keine Vorschläge, solange die Personenzahl fehlt.</div>}
+        {!capacityUnknown && suggestions.length === 0 && <div className="text-sm py-6 text-center" style={{ color: "var(--mc-text-muted)" }}>Kein passender Fahrer (Kapazität/Überschneidung). Manuell unten wählen.</div>}
+        {!capacityUnknown && suggestions.slice(0, 8).map((x, i) => {
           const best = i === 0 && x.feasible;
           // Nur borderColor inline, damit der :hover aus .mc-ride-card (Flaeche +
           // Rahmen + 1px Lift) in allen drei Zustaenden lebt. Ein inline
@@ -3845,7 +3879,12 @@ function AssignModal({ setup, dyn, ride, onClose, onAssign }) {
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-1.5 max-h-40 overflow-y-auto">
           {setup.drivers.map((d) => {
             const ev = evaluateInsertion(setup, dyn, d, ride);
+            // Vor-Festival-Sicherheitsphase: bei fehlender/ungültiger Personenzahl gibt
+            // es NICHTS zu bestätigen (kein "trotzdem zuweisen?"), der Button ist hart
+            // gesperrt statt per confirm() übergehbar. Andere Konflikte (zu wenig Sitze
+            // bei bekannter Zahl, Überschneidung, ...) bleiben wie bisher übergehbar.
             const assignManual = () => {
+              if (ev.capacityUnknown) return; // Button ist ohnehin disabled, zusätzliche Sperre hier
               if (!ev.feasible) {
                 const ok = window.confirm(`${d.firstName} ${d.lastName} (${d.vehicleType === "Van" ? "Van" : "Car"}) hat einen Konflikt:\n\n• ${ev.problems.join("\n• ")}\n\nTrotzdem zuweisen?`);
                 if (!ok) return;
@@ -3853,13 +3892,15 @@ function AssignModal({ setup, dyn, ride, onClose, onAssign }) {
               doAssign(d.id);
             };
             return (
-              <button key={d.id} onClick={assignManual} disabled={assigning}
+              <button key={d.id} onClick={assignManual} disabled={assigning || ev.capacityUnknown}
+                title={ev.capacityUnknown ? "Personenzahl fehlt – Kapazität kann nicht geprüft werden" : undefined}
                 className="mc-ride-card text-xs px-2 py-1.5 text-left disabled:opacity-50"
-                style={!ev.eligible ? { borderColor: "var(--mc-st-problem)" } : !ev.feasible ? { borderColor: "var(--mc-st-assigned)" } : undefined}>
+                style={ev.capacityUnknown || !ev.eligible ? { borderColor: "var(--mc-st-problem)" } : !ev.feasible ? { borderColor: "var(--mc-st-assigned)" } : undefined}>
                 <div className="truncate" style={{ color: "var(--mc-text)" }}>{d.firstName} {d.lastName[0]}.</div>
                 <div className="flex items-center gap-1">
                   <span className="text-[10px]" style={{ color: "var(--mc-text-muted)", fontFamily: "var(--mc-font-mono)" }}>{d.vehicleType === "Van" ? "Van" : "Car"}</span>
-                  {!ev.eligible ? <span className="text-[9px]" style={{ color: "var(--mc-st-problem)" }}>zu klein</span>
+                  {ev.capacityUnknown ? <span className="text-[9px]" style={{ color: "var(--mc-st-problem)" }}>Personenzahl fehlt</span>
+                    : !ev.eligible ? <span className="text-[9px]" style={{ color: "var(--mc-st-problem)" }}>zu klein</span>
                     : ev.overlap ? <span className="text-[9px]" style={{ color: "var(--mc-st-assigned)" }}>Überschneidung</span>
                       : !ev.feasible ? <span className="text-[9px]" style={{ color: "var(--mc-st-assigned)" }}>knapp</span> : null}
                 </div>
@@ -3894,7 +3935,10 @@ function RideForm({ setup, ride, onClose, onSave, onDelete }) {
     toCustom: ride.toCustom || "",
     zone: ride.zone || "",
     djName: ride.djName || "",
-    passengerCount: ride.passengerCount || 1,
+    // Vor-Festival-Sicherheitsphase: fehlende Zahl bleibt im Formular LEER statt
+    // mit 1 vorbelegt zu werden – sonst würde blosses Öffnen+Speichern einer alten
+    // Fahrt ohne Personenzahl sie unbemerkt auf "1" festschreiben (geschätzt).
+    passengerCount: ride.passengerCount ?? "",
     passengers: ride.passengers || "",
     flightNo: ride.flightNo || "",
     airline: ride.airline || "",
@@ -3949,8 +3993,10 @@ function RideForm({ setup, ride, onClose, onSave, onDelete }) {
   const toIsFestival = f.toId === "festival";
   const dur = travel(setup.matrix, f.fromId, f.toId);        // aus Matrix (null = unbekannt)
   const durKnown = dur != null;
-  const pax = Number(f.passengerCount) || 1;
-  const tooBig = pax > 7; // größer als jede V-Klasse
+  // Vor-Festival-Sicherheitsphase: keine stille 1 mehr. pax ist entweder eine
+  // echte positive ganze Zahl oder null (= "fehlt/ungültig", wird so gespeichert).
+  const pax = validPassengerCount(f.passengerCount);
+  const tooBig = pax != null && pax > 7; // größer als jede V-Klasse
 
   // Slice 3: weiche Eingabe-Warnungen (warnen, NICHT blockieren) fuer Fehler,
   // die nie gewollt sind und heute kommentarlos durchgehen. Speichern bleibt
@@ -3973,6 +4019,7 @@ function RideForm({ setup, ride, onClose, onSave, onDelete }) {
   if (fromCustomEmpty) inputWarnings.push("Für „Von“ ist „Anderer Ort“ gewählt, aber kein Ort eingetragen.");
   if (toCustomEmpty) inputWarnings.push("Für „Nach“ ist „Anderer Ort“ gewählt, aber kein Ort eingetragen.");
   if (dateOffFestival) inputWarnings.push("Dieses Datum liegt außerhalb der eingetragenen Festivaltage. Bitte Datum prüfen (Vor-/Nachtag ist ok).");
+  if (pax == null) inputWarnings.push("Personenzahl fehlt oder ungültig – Kapazität kann bei der Zuteilung nicht geprüft werden.");
 
   const save = async () => {
     // Doppelklick-Schutz: laeuft schon ein Speicher-/Stornier-Vorgang, nichts tun,
@@ -7743,7 +7790,8 @@ function parseRow(setup, row, matchDrivers) {
       toId: to.id, toCustom: to.custom || "",
       zone: to.zone || "",
       djName: artist,
-      passengerCount: Number(get("#", "pax", "personen", "anzahl")) || 1,
+      // Vor-Festival-Sicherheitsphase: wie beim Formular keine stille 1 mehr.
+      passengerCount: validPassengerCount(get("#", "pax", "personen", "anzahl")),
       passengers: passengersTxt,
       contactPhones: extractContactPhones(passengersTxt), // aus "Name (+49…)" im Passagiere-Text
       flightNo: flight,
