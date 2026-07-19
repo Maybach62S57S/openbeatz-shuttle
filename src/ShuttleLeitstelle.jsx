@@ -4152,6 +4152,8 @@ function AssignModal({ setup, dyn, ride, onClose, onAssign }) {
   const current = setup.drivers.find((d) => d.id === ride.assignedDriverId);
   // Teilpaket C2: einmalig normalisierte Timetable-Eintraege (rein lesend).
   const ttMatchEntries = useMemo(() => normalizeTimetableEntries(TIMETABLE_RAW), []);
+  // Teilpaket C3: Match nur EINMAL berechnen, an C2-Anzeige und C3-Bewertung teilen.
+  const ttMatch = useMemo(() => matchRideToTimetable({ ride, timetableEntries: ttMatchEntries }), [ride, ttMatchEntries]);
   const [assigning, setAssigning] = useState(false); // Doppelklick-Schutz + Ladezustand
   const [assignErr, setAssignErr] = useState("");     // sichtbare Meldung, falls die Zuteilung nicht gespeichert wird
 
@@ -4213,7 +4215,9 @@ function AssignModal({ setup, dyn, ride, onClose, onAssign }) {
           </div>
         )}
         {/* Teilpaket C2: rein lesende Timetable-Zuordnung (nur Anzeige, nichts gespeichert). */}
-        <TimetableMatchInfo ride={ride} entries={ttMatchEntries} />
+        <TimetableMatchInfo ride={ride} entries={ttMatchEntries} match={ttMatch} />
+        {/* Teilpaket C3: rein lesende Planungsbewertung (Ankunft/Rueckfahrt vs. Set). */}
+        <TimetableTimingInfo ride={ride} matchResult={ttMatch} setup={setup} />
       </div>
 
       {current && (
@@ -4395,8 +4399,11 @@ function RideForm({ setup, ride, onClose, onSave, onDelete }) {
   const ttMatchRide = useMemo(() => ({
     djName: f.djName, date: f.date, time: f.time,
     fromId: f.fromId, toId: f.toId,
+    fromCustom: f.fromCustom, toCustom: f.toCustom,
     dayKey: festDayKey(f.date, f.time),
-  }), [f.djName, f.date, f.time, f.fromId, f.toId]);
+  }), [f.djName, f.date, f.time, f.fromId, f.toId, f.fromCustom, f.toCustom]);
+  // Teilpaket C3: Match nur EINMAL berechnen, an C2-Anzeige und C3-Bewertung teilen.
+  const ttMatch = useMemo(() => matchRideToTimetable({ ride: ttMatchRide, timetableEntries: ttEntries }), [ttMatchRide, ttEntries]);
   const dur = travel(setup.matrix, f.fromId, f.toId);        // aus Matrix (null = unbekannt)
   const durKnown = dur != null;
   // Vor-Festival-Sicherheitsphase: keine stille 1 mehr. pax ist entweder eine
@@ -4511,7 +4518,8 @@ function RideForm({ setup, ride, onClose, onSave, onDelete }) {
           </Field>
         )}
         <Field label="DJ / Artist" mc><input className={mcInp} value={f.djName} onChange={(e) => set("djName", e.target.value)} placeholder="z. B. Alok" /></Field>
-        <div className="col-span-2"><TimetableMatchInfo ride={ttMatchRide} entries={ttEntries} /></div>
+        <div className="col-span-2"><TimetableMatchInfo ride={ttMatchRide} entries={ttEntries} match={ttMatch} /></div>
+        <div className="col-span-2"><TimetableTimingInfo ride={ttMatchRide} matchResult={ttMatch} setup={setup} /></div>
         <Field label="Personen" mc><input type="number" min="1" max="8" className={mcInp} value={f.passengerCount} onChange={(e) => set("passengerCount", e.target.value)} /></Field>
         <Field label="Flugnummer" mc><input className={mcInp} value={f.flightNo} onChange={(e) => set("flightNo", e.target.value)} placeholder="z. B. KL1845" /></Field>
         {(f.fromId === "airport" || f.flightNo) && (
@@ -5612,10 +5620,10 @@ function ttSetLine(setup, cand) {
   return `${day ? day + " · " : ""}${cand.stage} · ${s}–${en}`;
 }
 
-function TimetableMatchInfo({ ride, entries }) {
+function TimetableMatchInfo({ ride, entries, match: matchProp }) {
   const match = useMemo(
-    () => matchRideToTimetable({ ride, timetableEntries: entries }),
-    [ride, entries]
+    () => matchProp || matchRideToTimetable({ ride, timetableEntries: entries }),
+    [ride, entries, matchProp]
   );
 
   const wrap = (children) => (
@@ -5689,6 +5697,296 @@ function renderDiagnostics(match) {
         <div>Auswahl: {match.selected ? `${match.selected.artist} · ${match.selected.stage}` : match.reason}</div>
       </div>
     </details>
+  );
+}
+
+/* =========================================================================
+   TEILPAKET C3 - rein lesende Timetable-Zeitbewertung
+   -------------------------------------------------------------------------
+   Baut ausschliesslich auf dem C2-Match-Ergebnis (matchRideToTimetable) auf.
+   Veraendert NICHTS: keine Ride-/Match-/Timetable-Mutation, kein State-Write,
+   keine Persistenz (DB/Storage). Alle Werte werden bei Bedarf rein berechnet.
+   Betriebstag ausschliesslich ueber festDayKey; Set-/Fahrtzeiten mitternachts-
+   sicher ueber Absolutminuten (dieselbe Tagesmathematik wie ttAbsMin).
+   ========================================================================= */
+
+// Verbindliche, EINZIGE Quelle der Zeitpuffer (Spec Abschnitt 4). Keine zweiten
+// Grenzwerte in anderen Funktionen/Komponenten.
+const TIMETABLE_WARNING_CONFIG = {
+  arrivalOnTimeBufferMin: 40,
+  arrivalTightBufferMin: 20,
+  returnGraceAfterSetMin: 0,
+};
+
+// Ride-Start als Absolutminute (Kalendertag * 1440 + Minuten). Gleiche Tages-
+// mathematik wie ttAbsMin -> direkt mit Set-Start/-Ende vergleichbar, auch ueber
+// Mitternacht. Streng: ungueltiges/fehlendes Datum oder Uhrzeit -> null (nie geraten).
+function c3RideStartAbsMin(date, time) {
+  const dm = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(date == null ? "" : date));
+  if (!dm) return null;
+  const Y = +dm[1], M = +dm[2], D = +dm[3];
+  const tm = /^(\d{1,2}):(\d{2})$/.exec(String(time == null ? "" : time).trim());
+  if (!tm) return null;
+  const h = +tm[1], mi = +tm[2];
+  if (h < 0 || h > 23 || mi < 0 || mi > 59) return null;
+  const t = Date.UTC(Y, M - 1, D);
+  const chk = new Date(t);
+  // ungueltige Datumskombination (z. B. 2026-02-30) faengt der Rundlauf ab.
+  if (chk.getUTCFullYear() !== Y || chk.getUTCMonth() !== M - 1 || chk.getUTCDate() !== D) return null;
+  const days = Math.floor(t / 86400000);
+  return days * 1440 + h * 60 + mi;
+}
+
+// Umkehrung: Absolutminute -> { iso:"YYYY-MM-DD HH:MM", hm:"HH:MM" } (nur Anzeige/Diagnose).
+function c3AbsToParts(abs) {
+  if (abs == null) return { iso: null, hm: null };
+  const dayIndex = Math.floor(abs / 1440);
+  const minOfDay = abs - dayIndex * 1440;
+  const d = new Date(dayIndex * 86400000);
+  const iso = `${d.getUTCFullYear()}-${pad(d.getUTCMonth() + 1)}-${pad(d.getUTCDate())} ${pad(Math.floor(minOfDay / 60))}:${pad(minOfDay % 60)}`;
+  return { iso, hm: `${pad(Math.floor(minOfDay / 60))}:${pad(minOfDay % 60)}` };
+}
+// "YYYY-MM-DD HH:MM" -> "HH:MM" (rein fuer die Anzeige).
+function c3HM(iso) { return iso && iso.length >= 16 ? iso.slice(11, 16) : "—"; }
+
+// Operative Orte/Knoten EXAKT wie der Teilpaket-B-Pfad in evaluateInsertion:
+// resolveOperationalRideLocations (Sheraton-Override fuer Leonardo/HBF -> Festival)
+// + rideEndpointMatrixNode. Rueckfahrten behalten ihr echtes Ziel. Reine Ableitung.
+function c3OperationalNodes(ride, setup) {
+  const opLoc = resolveOperationalRideLocations(ride, setup);
+  const fromNode = rideEndpointMatrixNode(ride.fromId, ride.fromCustom, opLoc.operationalFrom.operationalRule && opLoc.operationalFrom.operationalLocation);
+  const toNode = rideEndpointMatrixNode(ride.toId, ride.toCustom);
+  return { opLoc, fromNode, toNode };
+}
+
+// Lueckenlose, ueberschneidungsfreie Stufenzuordnung der Ankunfts-Marge (Spec 4.5).
+// >= onTime -> on_time | >= tight -> tight | >= 0 -> critical | sonst late.
+function gradeArrivalMargin(margin, cfg) {
+  if (margin >= cfg.arrivalOnTimeBufferMin) return { status: "on_time", severity: "ok" };
+  if (margin >= cfg.arrivalTightBufferMin) return { status: "tight", severity: "warning" };
+  if (margin >= 0) return { status: "critical", severity: "critical" };
+  return { status: "late", severity: "critical" };
+}
+
+// Sichtbare Meldung fuer Hinfahrten (Planungsbewertung, klar als Plan formuliert).
+function c3ArrivalMessage(status, margin) {
+  if (status === "on_time") return `Geplante Ankunft ${margin} Minuten vor Set-Beginn.`;
+  if (status === "tight") return `Geplante Ankunft nur ${margin} Minuten vor Set-Beginn.`;
+  if (status === "critical") return margin === 0 ? "Geplante Ankunft exakt zum Set-Beginn." : `Geplante Ankunft nur ${margin} Minuten vor Set-Beginn.`;
+  return `Geplante Ankunft ${Math.abs(margin)} Minuten nach Set-Beginn.`; // late
+}
+
+// Neutrale Zuordnung, wenn C2 KEIN eindeutiges Set liefert (Spec Abschnitt 11).
+// Erzeugt bewusst KEINE harte Zeitbewertung.
+function c3NeutralForMatch(status) {
+  if (status === "multiple_candidates") return { status: "multiple_candidates", reason: "C2 lieferte mehrere plausible Sets", message: "Eine Zeitbewertung ist erst nach eindeutiger Zuordnung möglich." };
+  if (status === "missing_artist") return { status: "missing_artist", reason: "Kein Artist hinterlegt", message: "Kein Artist hinterlegt." };
+  if (status === "invalid_artist") return { status: "invalid_artist", reason: "Artist-Angabe nicht verarbeitbar", message: "Die Artist-Angabe kann nicht verarbeitet werden." };
+  return { status: "no_match", reason: "Kein passendes Set gefunden", message: "Kein passendes Set gefunden." };
+}
+
+/* Zentrale reine Bewertungsfunktion (Spec Abschnitt 2/3/19). Veraendert nichts,
+ * loest keine DB-/UI-Seiteneffekte aus, ist deterministisch (nutzt `now` NICHT
+ * fuer die Bewertung - reine Planungsbewertung). Liefert eine vollstaendig aus
+ * den enthaltenen Werten nachvollziehbare Struktur. */
+function evaluateTimetableTiming({ ride, matchResult, setup, now }) {
+  const cfg = TIMETABLE_WARNING_CONFIG;
+  const reasons = [];
+  const matchStatus = matchResult && matchResult.status ? matchResult.status : "no_match";
+
+  // Operative Knoten + Fahrzeit (nur wenn Matrix vorhanden). Keine Schaetzung.
+  let fromNode = null, toNode = null, travelMinutes = null;
+  if (setup && setup.matrix) {
+    const nodes = c3OperationalNodes(ride, setup);
+    fromNode = nodes.fromNode;
+    toNode = nodes.toNode;
+    travelMinutes = travelMin(setup.matrix, fromNode, toNode); // null = unbekannt
+  }
+  const toFestival = toNode === "festival" && fromNode !== "festival";
+  const fromFestival = fromNode === "festival" && toNode !== "festival";
+  const direction = toFestival ? "to_festival" : fromFestival ? "from_festival" : "none";
+
+  const sel = matchResult && matchResult.selected ? matchResult.selected : null;
+  const base = {
+    direction,
+    matchStatus,
+    rideStartAt: null,
+    operationalFrom: fromNode,
+    operationalTo: toNode,
+    operationalTravelMinutes: travelMinutes == null ? null : travelMinutes,
+    estimatedArrivalAt: null,
+    plannedDepartureAt: null,
+    setStartAt: sel ? sel.startAt : null,
+    setEndAt: sel ? sel.endAt : null,
+    marginMinutes: null,
+    minutesRelativeToSetEnd: null,
+    status: "timing_unknown",
+    severity: "info",
+    message: "",
+    reasons,
+  };
+
+  // (1) Keine Festival-Beteiligung -> keine Hin-/Rueckfahrtbewertung (Spec 15).
+  if (direction === "none") {
+    reasons.push("Fahrt ohne Festivalbezug (weder Start noch Ziel ist das Festival)");
+    return { ...base, status: "not_applicable", severity: "info", message: "Für diese Fahrt ist keine Festival-Zeitbewertung erforderlich." };
+  }
+
+  // (2) Kein eindeutiges C2-Set -> neutral spiegeln, KEINE harte Bewertung (Spec 11).
+  const unique = (matchStatus === "exact" || matchStatus === "alias" || matchStatus === "b2b_member") && !!sel;
+  if (!unique) {
+    const n = c3NeutralForMatch(matchStatus);
+    reasons.push(n.reason);
+    return { ...base, status: n.status, severity: "info", message: n.message };
+  }
+
+  // (3) Fahrtzeit/-datum pruefen (Spec 13).
+  const rideAbs = c3RideStartAbsMin(ride.date, ride.time);
+  if (rideAbs == null) {
+    reasons.push("Ride-Datum oder -Uhrzeit fehlt oder ist ungueltig");
+    return { ...base, status: "timing_unknown", severity: "info", message: "Fahrtzeit kann nicht ausgewertet werden." };
+  }
+  base.rideStartAt = c3AbsToParts(rideAbs).iso;
+
+  const setStartAbs = ttAbsMin(sel.startAt);
+  const setEndAbs = ttAbsMin(sel.endAt);
+
+  if (direction === "to_festival") {
+    // (4) Timetable-Startzeit pruefen (Spec 14).
+    if (setStartAbs == null) {
+      reasons.push("Set-Startzeit fehlt oder ist ungueltig");
+      return { ...base, status: "timing_unknown", severity: "info", message: "Timetable-Zeit kann nicht sicher ausgewertet werden." };
+    }
+    // (5) Operative Fahrzeit pruefen (Spec 12) - keine Schaetzung.
+    if (travelMinutes == null) {
+      reasons.push(`Keine sichere operative Fahrzeit fuer ${fromNode || "?"} -> ${toNode || "?"}`);
+      return { ...base, status: "timing_unknown", severity: "info", message: "Ankunftszeit kann nicht berechnet werden. Für diese Ortsverbindung ist keine sichere Fahrzeit hinterlegt." };
+    }
+    const arrAbs = rideAbs + travelMinutes;
+    const margin = setStartAbs - arrAbs;
+    const g = gradeArrivalMargin(margin, cfg);
+    base.estimatedArrivalAt = c3AbsToParts(arrAbs).iso;
+    base.marginMinutes = margin;
+    reasons.push(`Ankunft ${c3AbsToParts(arrAbs).hm} (Ride-Start ${c3AbsToParts(rideAbs).hm} + ${travelMinutes} min), Set-Beginn ${c3AbsToParts(setStartAbs).hm}, Puffer ${margin} min`);
+    return { ...base, status: g.status, severity: g.severity, message: c3ArrivalMessage(g.status, margin) };
+  }
+
+  // direction === "from_festival": geplante Abfahrt gegen Set-Ende (Spec 8).
+  if (setEndAbs == null) {
+    reasons.push("Set-Endzeit fehlt oder ist ungueltig");
+    return { ...base, status: "timing_unknown", severity: "info", message: "Timetable-Zeit kann nicht sicher ausgewertet werden." };
+  }
+  const depAbs = rideAbs;
+  base.plannedDepartureAt = c3AbsToParts(depAbs).iso;
+  const rel = depAbs - setEndAbs; // >= 0: zum/nach Set-Ende
+  base.minutesRelativeToSetEnd = rel;
+  reasons.push(`Abfahrt ${c3AbsToParts(depAbs).hm}, Set-Ende ${c3AbsToParts(setEndAbs).hm}, ${rel >= 0 ? "+" : ""}${rel} min relativ zum Set-Ende`);
+  if (rel >= cfg.returnGraceAfterSetMin) {
+    return { ...base, status: "return_ok", severity: "ok", message: rel === 0 ? "Rückfahrt zum Set-Ende geplant." : `Abfahrt ${rel} Minuten nach dem geplanten Set-Ende.` };
+  }
+  return { ...base, status: "return_before_set_end", severity: "critical", message: `Abfahrt ${Math.abs(rel)} Minuten vor dem geplanten Set-Ende.` };
+}
+
+/* ---- C3 UI: Planungsbewertung (nur Leitstelle, rein lesend) --------------- *
+ * Erscheint direkt unter der C2-Match-Anzeige (RideForm / AssignModal). Nutzt
+ * ausschliesslich bestehende, WCAG-gepruefte MC-Farbvariablen; keine neue Farbe.
+ * matchResult wird von oben durchgereicht (Match nur einmal berechnet).
+ * ------------------------------------------------------------------------- */
+const C3_LABEL = {
+  on_time: "Rechtzeitig geplant",
+  tight: "Knapp geplant",
+  critical: "Kritische Planung",
+  late: "Zu spät geplant",
+  return_ok: "Rückfahrt nach Set-Ende geplant",
+  return_before_set_end: "Rückfahrt vor Set-Ende",
+};
+function c3SeverityColor(sev) {
+  if (sev === "ok") return "var(--mc-st-done)";
+  if (sev === "warning") return "var(--mc-st-assigned)";
+  if (sev === "critical") return "var(--mc-st-problem)";
+  return "var(--mc-text-muted)";
+}
+const C3_GRADED = ["on_time", "tight", "critical", "late", "return_ok", "return_before_set_end"];
+
+function c3Diag(t) {
+  return (
+    <details className="mt-2">
+      <summary className="cursor-pointer text-[11px]" style={{ color: "var(--mc-text-muted)" }}>Details</summary>
+      <div className="mt-1 space-y-0.5 text-[11px]" style={{ color: "var(--mc-text-muted)" }}>
+        <div>Richtung: {t.direction}</div>
+        <div>Match-Status: {t.matchStatus}</div>
+        <div>Ride-Start: {t.rideStartAt || "—"}</div>
+        <div>Operativ: {t.operationalFrom || "—"} → {t.operationalTo || "—"}</div>
+        <div>Operative Fahrzeit: {t.operationalTravelMinutes == null ? "—" : t.operationalTravelMinutes + " min"}</div>
+        {t.estimatedArrivalAt && <div>Geplante Ankunft: {t.estimatedArrivalAt}</div>}
+        {t.plannedDepartureAt && <div>Geplante Abfahrt: {t.plannedDepartureAt}</div>}
+        <div>Set: {t.setStartAt || "—"} bis {t.setEndAt || "—"}</div>
+        {t.marginMinutes != null && <div>Puffer: {t.marginMinutes} min</div>}
+        {t.minutesRelativeToSetEnd != null && <div>Relativ zum Set-Ende: {t.minutesRelativeToSetEnd} min</div>}
+        <div>Status / Severity: {t.status} / {t.severity}</div>
+        {t.reasons && t.reasons.length > 0 && <div>Gründe: {t.reasons.join("; ")}</div>}
+      </div>
+    </details>
+  );
+}
+
+function TimetableTimingInfo({ ride, matchResult, setup }) {
+  const timing = useMemo(
+    () => evaluateTimetableTiming({ ride, matchResult, setup, now: Date.now() }),
+    [ride, matchResult, setup]
+  );
+  const st = timing.status;
+  const wrap = (children) => (
+    <div className="rounded-lg p-3 mt-1 text-xs" style={{ background: "var(--mc-inset)", border: "1px solid var(--mc-border)" }}>
+      <div className="flex items-center gap-1.5 mb-1.5 font-medium" style={{ color: "var(--mc-text-secondary)" }}>
+        <Clock className="w-3.5 h-3.5" />Planungsbewertung
+      </div>
+      {children}
+    </div>
+  );
+
+  if (st === "not_applicable") {
+    return wrap(<div style={{ color: "var(--mc-text-muted)" }}>Für diese Fahrt ist keine Festival-Zeitbewertung erforderlich.</div>);
+  }
+
+  if (!C3_GRADED.includes(st)) {
+    // Neutral: timing_unknown / multiple_candidates / no_match / missing_artist / invalid_artist.
+    const heading = st === "multiple_candidates" ? "Timetable-Zuordnung prüfen"
+      : st === "timing_unknown" ? "Zeitbewertung nicht möglich"
+        : "Keine Timetable-Zeitbewertung möglich";
+    return wrap(
+      <div>
+        <div className="font-medium mb-0.5" style={{ color: "var(--mc-text-secondary)" }}>{heading}</div>
+        <div style={{ color: "var(--mc-text-muted)" }}>{timing.message}</div>
+        {c3Diag(timing)}
+      </div>
+    );
+  }
+
+  const color = c3SeverityColor(timing.severity);
+  const label = (st === "return_ok" && timing.minutesRelativeToSetEnd === 0) ? "Rückfahrt zum Set-Ende geplant" : C3_LABEL[st];
+  return wrap(
+    <div>
+      <div className="font-semibold mb-0.5" style={{ color }}>{label}</div>
+      <div style={{ color: "var(--mc-text-secondary)" }}>{timing.message}</div>
+      <div className="mt-1 space-y-0.5" style={{ color: "var(--mc-text-muted)" }}>
+        {timing.direction === "to_festival" && (
+          <>
+            <div>Geplante Ankunft: {c3HM(timing.estimatedArrivalAt)}</div>
+            <div>Set-Beginn: {c3HM(timing.setStartAt)}</div>
+            <div>Puffer: {timing.marginMinutes} Minuten</div>
+          </>
+        )}
+        {timing.direction === "from_festival" && (
+          <>
+            <div>Geplante Rückfahrt: {c3HM(timing.rideStartAt)}</div>
+            <div>Set-Ende: {c3HM(timing.setEndAt)}</div>
+            <div>Differenz: {timing.minutesRelativeToSetEnd >= 0 ? "+" : ""}{timing.minutesRelativeToSetEnd} Minuten</div>
+          </>
+        )}
+      </div>
+      {c3Diag(timing)}
+    </div>
   );
 }
 

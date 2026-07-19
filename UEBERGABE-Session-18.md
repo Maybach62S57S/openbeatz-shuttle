@@ -4235,3 +4235,65 @@ noch KEINE Timetable-Warnungen (C3), keine Zeitbewertung, keine Ride-Aenderungen
 #   - "Jetzt/Als Naechstes"-Filter im Timetable-Tab (verschoben).
 #   - ARTIST_ALIASES leer - erst bei belegtem Alias-Fall nachtragen.
 #   - PIN-Sicherheit: NICHT proaktiv ansprechen.
+
+# =========================================================================
+# Session C3 (19.07.2026) - Timetable-Zeitbewertung ABGESCHLOSSEN
+# =========================================================================
+# Rein lesende Planungsbewertung auf Basis des C2-Match. Zeigt in der Leitstelle
+# (RideForm + AssignModal), ob eine geplante Fahrt rechtzeitig/knapp/kritisch/zu
+# spaet zum Set-Beginn ankommt bzw. ob eine Rueckfahrt vor/nach dem Set-Ende liegt.
+# Keine Schreibvorgaenge, keine Auto-Aenderung, keine Live-ETA.
+#
+# Ruecksetzpunkt-Tag: pre-teilpaket-C3 = fc8ff23. Neue Zeilenzahl: 10834.
+# Bausteine: GEAENDERT (3) AssignModal, RideForm, TimetableMatchInfo (nur additiv:
+#   optionaler match-Prop bzw. geteiltes Match + <TimetableTimingInfo>).
+#   NEU (14): TIMETABLE_WARNING_CONFIG, c3RideStartAbsMin, c3AbsToParts, c3HM,
+#   c3OperationalNodes, gradeArrivalMargin, c3ArrivalMessage, c3NeutralForMatch,
+#   evaluateTimetableTiming, C3_LABEL, c3SeverityColor, C3_GRADED, c3Diag,
+#   TimetableTimingInfo. ENTFERNT: keine.
+#
+# Schwellwerte (einzige Quelle) TIMETABLE_WARNING_CONFIG: onTime 40, tight 20,
+#   returnGrace 0. Grader lueckenlos/ueberschneidungsfrei (Grid -120..+180 getestet).
+# Fahrzeit-Quelle = Teilpaket-B-Pfad (resolveOperationalRideLocations +
+#   rideEndpointMatrixNode + travelMin), Sheraton-Override fuer Leonardo/HBF ->
+#   Festival. estDurationMin wird NICHT genutzt. Fehlende Kante -> timing_unknown.
+# Mitternacht: Absolutminuten (wie ttAbsMin), Betriebstag ueber festDayKey.
+#
+# Neue Proof-Skripte: smoke-teilpaket-c3.mjs (147 Logiktests),
+#   smoke-teilpaket-c3-ui.mjs (35 UI/Read-only-Tests). Beide nehmen die
+#   Quelle als argv[2]. Gegenproben eingebaut UND extern belegt (kaputter
+#   Schwellwert/Label laesst Smokes fehlschlagen).
+#
+# Verifikation komplett gruen: esbuild, keine Doppelfunktionen, keine undefinierten
+#   Referenzen, rendertest 5 Werte konstant (25053/2452/2413/2895/101), kontrast 0,
+#   pruefe (nur 3 gewollte Aenderungen, 337/340 byte-identisch), C1 40, C1-UI 16,
+#   C2 65, C2-UI 14 (C3 liegt im C2-UI-Scanbereich, weiterhin gruen), C3 147,
+#   C3-UI 35, B-Smoke 69 (B-Schicht byte-identisch), Springer 34, One-Tap 14,
+#   Personenzahl 24, Ridelist 10, smoke.mjs (RideForm/AssignModal Classic-Reste 0).
+# Berichte: TEILPAKET-C3-BERICHT.md, TEILPAKET-C3-ABNAHME.md (20 Punkte).
+#
+# -------------------------------------------------------------------------
+# OPENER fuer die naechste Session (fertig zum Kopieren)
+# -------------------------------------------------------------------------
+# Stand: Teilpaket A, B, C1, C2 und C3 abgeschlossen und gepusht. Ruecksetzpunkte
+# als Tags: pre-teilpaket-A/-B/-C1/-C2/-C3. Erwartete Zeilenzahl
+# src/ShuttleLeitstelle.jsx: 10834 (nach C3-Push per git-Hash bestaetigen, der
+# Doc-Commit-Hash verschiebt sich).
+#
+# Schritt 0 (Pflicht): Repo klonen (frischen fine-grained PAT bereitstellen, nach
+# Clone aus der Remote-URL scrubben mit `git remote set-url`), `git log --graph
+# --oneline --all` pruefen, exakte Zeilenzahl + letzten CODE-Commit-Hash messen,
+# npm install (esbuild+react+react-dom), Baseline-Skripte laufen lassen:
+# rendertest (5 Werte 25053/2452/2413/2895/101), kontrast (0 Fehler), pruefe
+# (self, 0 undefinierte vars), smoke-teilpaket-c1/-c1-ui/-c2/-c2-ui/-c3/-c3-ui,
+# Springer/One-Tap/Personenzahl/Ridelist. Erst dann Auftrag entgegennehmen.
+# Hinweis: Skripte brauchen `src/ShuttleLeitstelle.jsx` als argv[2]; pruefe.mjs
+# braucht ZWEI Pfade; smoke-teilpaket-b.mjs braucht vorab gebaute tmp-tb-funcs.mjs.
+#
+# Offene, bewusst NICHT gefixte Punkte (nur auf ausdruecklichen Auftrag):
+#   - matchLoc (Z. ~7676/aktuell verschoben) liest nur 4 Hardcode-Orte statt
+#     setup.locations. Betrifft C3 nicht (C3 nutzt die B-Ortsaufloesung).
+#   - "Jetzt/Als Naechstes"-Filter im Timetable-Tab (verschoben).
+#   - ARTIST_ALIASES leer - erst bei belegtem Alias-Fall nachtragen.
+#   - PIN-Sicherheit: NICHT proaktiv ansprechen.
+#   - Ab 21.07.: keine Loeschungen mehr (Festival 23.-27.07.).
