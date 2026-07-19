@@ -6869,37 +6869,199 @@ function PresenceManager({ presence, manualOnly, onSetManual, onAdd, onSetNoRetu
   );
 }
 
-/* ---- Mission-Control-Variante der Rueckfahrten (Session 7) --------------- *
- * Eigene Kopie von ReturnsTab (Ansatz A): die komplette Datenableitung und
- * ALLE Schreib-Handler sind VERBATIM aus ReturnsTab uebernommen (keine
- * Aenderung an Rueckfahrten-/Zeit-/Zuteilungs-/Supabase-Logik). Nur der Render
- * ist neu (Mission-Control-Designsystem). ReturnsTab (Classic) bleibt dadurch
- * byte-genau unveraendert. Gemeinsame Unterkomponenten (PresenceManager,
- * BoardMiniMap, TimelineView) werden unveraendert wiederverwendet.
- * Zusaetzlich rein PRAESENTATIONAL: Suche (View-Filter ueber vorhandene
- * Felder), "ueberfaellig"- und "naechste"-Hervorhebung (abgeleitet, kein
- * Schreibweg). ------------------------------------------------------------- */
+/* ======================================================================
+   Teilpaket D: Operativer Rueckfahrten-Leitstand (rein lesend, abgeleitet)
+   ----------------------------------------------------------------------
+   Fuehrt vorhandene Informationen (Fahrt, Fahrerzuweisung, Fahrtstatus,
+   C2-Match, C3-Zeitbewertung) zu genau EINEM operativen Zustand pro
+   Rueckfahrt zusammen. Keine neue Datenstruktur, keine Speicherung, kein
+   Schreibweg. Alle Zustaende werden zur Laufzeit aus `now` + Ride berechnet.
+   ====================================================================== */
+
+// Schwellwerte (einzige Quelle, Spec 7). Zeiten in Minuten.
+const RETURN_CONTROL_CONFIG = {
+  dueSoonWindowMin: 60,             // 0..60 min bis Abfahrt (mit Fahrer) -> bald faellig
+  urgentDriverMissingWindowMin: 90, // bis 90 min bis Abfahrt & kein Fahrer -> Fahrer fehlt
+  overdueGraceMin: 10,              // MEHR als 10 min nach Planabfahrt & nicht gestartet/erledigt -> ueberfaellig
+};
+
+// Anzeige-/Sortierreihenfolge (Spec 6). Kleinere Zahl = weiter oben/dringender.
+const RETURN_OPERATIONAL_GROUP_ORDER = {
+  needs_review: 10,
+  overdue: 20,
+  driver_missing: 30,
+  due_soon: 40,
+  driver_assigned: 50,
+  in_progress: 60,
+  not_due: 70,
+  completed: 80,
+};
+
+// Sichtbare deutsche Labels + Farbschluessel. Nur bestehende, WCAG-gepruefte
+// --mc-st-*-Variablen (keine neue Farbe): problem=rot, assigned=amber, new=blau,
+// enroute=aktiv, idle=grau, done=gruen.
+const RETURN_GROUP_META = {
+  needs_review:    { label: "Prüfen",           stKey: "problem",  severity: "critical" },
+  overdue:         { label: "Überfällig",        stKey: "problem",  severity: "critical" },
+  driver_missing:  { label: "Fahrer fehlt",      stKey: "assigned", severity: "warning" },
+  due_soon:        { label: "Bald fällig",       stKey: "assigned", severity: "warning" },
+  driver_assigned: { label: "Fahrer zugeteilt",  stKey: "new",      severity: "ok" },
+  in_progress:     { label: "Läuft",             stKey: "enroute",  severity: "info" },
+  not_due:         { label: "Später",            stKey: "idle",     severity: "neutral" },
+  completed:       { label: "Erledigt",          stKey: "done",     severity: "muted" },
+};
+const RETURN_GROUPS_IN_ORDER = ["needs_review", "overdue", "driver_missing", "due_soon", "driver_assigned", "in_progress", "not_due", "completed"];
+
+// Status-Klassen aus den BESTEHENDEN Ride-Statuswerten (Spec 4). Keine neuen
+// Statuswerte. planned|accepted = nicht gestartet (bestehende isOverdue-Konvention).
+const RETURN_STATUS_COMPLETED = new Set(["done"]);
+const RETURN_STATUS_ACTIVE = new Set(["enroute_pickup", "onboard"]);
+
+// Abfahrts-Timestamp einer Fahrt (echter Kalendertag + Uhrzeit, Wanduhr). dayKey
+// rollt nur die Betriebstag-Zuordnung zurueck; date/time bleiben echt -> Mitter-
+// nacht korrekt. null = ungueltig/fehlend (nie geraten).
+function returnDepartureTs(ride) {
+  if (!ride || !ride.date || !ride.time) return null;
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(ride.date)) return null;
+  if (!/^\d{1,2}:\d{2}$/.test(ride.time)) return null;
+  const t = new Date(`${ride.date}T${ride.time.length === 4 ? "0" + ride.time : ride.time}`).getTime();
+  return Number.isFinite(t) ? t : null;
+}
+
+/* Zentrale reine Klassifizierung (Spec 3/8/9/30). Veraendert KEINE Eingabe,
+ * loest keine Seiteneffekte aus, ist deterministisch fuer (ride, now). `now` in
+ * ms. `driver` = bereits aufgeloestes Fahrerobjekt oder null. `timetableMatch` =
+ * C2-Ergebnis (matchRideToTimetable). `timingEvaluation` = C3-Ergebnis
+ * (evaluateTimetableTiming) - wird NUR wiederverwendet, nie neu berechnet. */
+function deriveReturnRideOperationalState({ ride, driver, timetableMatch, timingEvaluation, now, setup }) {
+  const reasons = [];
+  const secondaryInfo = [];
+  const status = ride && ride.status ? ride.status : "";
+  const rideCompleted = RETURN_STATUS_COMPLETED.has(status);
+  const rideStarted = RETURN_STATUS_ACTIVE.has(status);
+
+  const driverIdRaw = ride && ride.assignedDriverId ? ride.assignedDriverId : null;
+  const driverAssigned = !!driverIdRaw;      // echte Fahrerreferenz im Ride (Spec 22)
+  const driverResolved = !!driver;           // Fahrerobjekt tatsaechlich auffindbar
+  const driverUnresolved = driverAssigned && !driverResolved;
+
+  // Zeitliche Einordnung (Spec 7/19). Absolute Wanduhr, Vorzeichen: >0 = Zukunft.
+  const depTs = returnDepartureTs(ride);
+  const minutesUntilRaw = depTs == null ? null : (depTs - now) / 60000;
+
+  const tt = timingEvaluation || null;
+  const matchStatus = timetableMatch && timetableMatch.status ? timetableMatch.status : "no_match";
+  const ttStatus = tt && tt.status ? tt.status : matchStatus;
+  const hasArtist = !!(ride && (ride.djName || "").trim());
+  const uniqueMatch = matchStatus === "exact" || matchStatus === "alias" || matchStatus === "b2b_member";
+
+  // ---- Harte Prueflagen sammeln (Spec 9/10/11/23) ----
+  if (!ride || !ride.date || !ride.dayKey) reasons.push("festival_day_unknown");
+  if (!ride || !ride.time) reasons.push("planned_departure_missing");
+  else if (depTs == null) reasons.push("ride_time_invalid");
+  if (ride && !ride.fromId && !((ride.fromCustom || "").trim())) reasons.push("start_location_unknown");
+  if (driverUnresolved) reasons.push("driver_unresolved");
+  if (ttStatus === "return_before_set_end") reasons.push("return_before_set_end");
+  if (matchStatus === "invalid_artist") reasons.push("invalid_artist");
+  if (hasArtist && matchStatus === "multiple_candidates") reasons.push("multiple_timetable_candidates");
+  if (uniqueMatch && ttStatus === "timing_unknown") reasons.push("set_time_invalid");
+
+  const hardReview = reasons.length > 0;
+
+  // ---- Zusatzhinweise (nie Primaergruppe, Spec 8/11) ----
+  if (driverUnresolved) secondaryInfo.push("Fahrerzuweisung prüfen");
+  if (!driverAssigned) secondaryInfo.push("Kein Fahrer zugeteilt");
+  if (ttStatus === "return_before_set_end" && tt && tt.minutesRelativeToSetEnd != null)
+    secondaryInfo.push(`Rückfahrt ${Math.abs(tt.minutesRelativeToSetEnd)} min vor Set-Ende`);
+  if (hasArtist && matchStatus === "multiple_candidates") secondaryInfo.push("Timetable-Zuordnung prüfen");
+  if (hasArtist && matchStatus === "no_match") secondaryInfo.push("Kein passendes Timetable-Set gefunden");
+
+  // ---- Entscheidungskette (Spec 8) - genau EINE Primaergruppe ----
+  const cfg = RETURN_CONTROL_CONFIG;
+  const m = minutesUntilRaw; // Kurzform
+  let group;
+  if (rideCompleted) group = "completed";
+  else if (rideStarted) group = "in_progress";
+  else if (hardReview) group = "needs_review";
+  else if (m != null && m < -cfg.overdueGraceMin) group = "overdue";
+  else if (!driverAssigned && m != null && m <= cfg.urgentDriverMissingWindowMin) group = "driver_missing";
+  else if (m != null && m <= cfg.dueSoonWindowMin) group = "due_soon";
+  else if (driverAssigned && m != null && m > cfg.dueSoonWindowMin) group = "driver_assigned";
+  else group = "not_due";
+
+  const meta = RETURN_GROUP_META[group];
+  const minutesUntilDeparture = m == null ? null : Math.round(m);
+  const minutesOverdue = (m == null || m >= 0) ? null : Math.round(-m);
+
+  return {
+    group,
+    severity: meta.severity,
+    label: meta.label,
+    stKey: meta.stKey,
+    sortPriority: RETURN_OPERATIONAL_GROUP_ORDER[group],
+    scheduledDepartureAt: depTs == null ? null : `${ride.date}T${ride.time}`,
+    minutesUntilDeparture,
+    minutesOverdue,
+    driverAssigned,
+    driverResolved,
+    rideStarted,
+    rideCompleted,
+    timetableStatus: ttStatus,
+    requiresReview: group === "needs_review",
+    reasons,
+    secondaryInfo,
+  };
+}
+
+// Innerhalb-Gruppen-Sortierung (Spec 18). Stabiler Tie-Breaker ueber Ride-ID.
+function returnGroupSort(group, a, b) {
+  const depA = returnDepartureTs(a.ride);
+  const depB = returnDepartureTs(b.ride);
+  const A = depA == null ? Infinity : depA;
+  const B = depB == null ? Infinity : depB;
+  const tie = () => String(a.ride.id || "").localeCompare(String(b.ride.id || ""));
+  if (group === "completed") return (B - A) || tie(); // neueste (spaeteste Planzeit) zuerst
+  if (group === "needs_review") {
+    // 1. Rueckfahrt vor Set-Ende mit groesster Abweichung zuerst
+    const devA = (a.timing && a.timing.status === "return_before_set_end" && a.timing.minutesRelativeToSetEnd != null) ? -a.timing.minutesRelativeToSetEnd : -Infinity;
+    const devB = (b.timing && b.timing.status === "return_before_set_end" && b.timing.minutesRelativeToSetEnd != null) ? -b.timing.minutesRelativeToSetEnd : -Infinity;
+    if (devA !== devB) return devB - devA;
+    // 2. Abfahrt am naechsten, 3. fehlende Daten ans Ende (Infinity), 4. id
+    return (A - B) || tie();
+  }
+  // overdue/driver_missing/due_soon/driver_assigned/in_progress/not_due:
+  // frueheste/naechste Abfahrt zuerst; ueberfaelligste ist die frueheste.
+  return (A - B) || tie();
+}
+
+/* ---- Mission-Control-Variante der Rueckfahrten (Session 7; Teilpaket D) --- *
+ * Datenableitung und ALLE Schreib-Handler (Anwesenheit) sind VERBATIM aus der
+ * bestehenden Ansicht uebernommen (keine Aenderung an Rueckfahrten-/Zeit-/
+ * Zuteilungs-/Supabase-Logik). Teilpaket D ergaenzt REIN LESEND: eine zentrale
+ * operative Klassifizierung pro Rueckfahrt (deriveReturnRideOperationalState),
+ * gruppierte Darstellung, operative Zaehler und einen Gruppenfilter. Kein neuer
+ * Schreibweg, keine gespeicherten Zustaende. -------------------------------- */
 function MissionReturnsTab({ setup, dyn, day, updateDyn, by, onErr, onAssign, onWhatsApp, onEdit, onNewReturn }) {
-  const [sort, setSort] = useState("time"); // time | dest
+  const [sort, setSort] = useState("time"); // time | dest (bestehend)
   const [q, setQ] = useState("");
+  const [groupFilter, setGroupFilter] = useState("all"); // all | <gruppe> (Teilpaket D)
+  const [onlyNoDriver, setOnlyNoDriver] = useState(false); // Teilpaket D
   const [now, setNow] = useState(Date.now());
-  useEffect(() => { const t = setInterval(() => setNow(Date.now()), 30000); return () => clearInterval(t); }, []);
+  // Teilpaket D: Aktualisierung der operativen Einordnung einmal pro Minute
+  // (Spec 19). Rein Re-Render: kein Schreibweg, kein DB-Abruf. Beim Unmount weg.
+  useEffect(() => { const t = setInterval(() => setNow(Date.now()), 60000); return () => clearInterval(t); }, []);
   const ln = (id, c) => setup.locations.find((l) => l.id === id)?.short || c || "—";
   const destName = (r) => ln(r.toId, r.toCustom);
   const origName = (r) => ln(r.fromId, r.fromCustom); // Abholort (i.d.R. Festival)
 
-  // ---- Datenableitung: VERBATIM aus ReturnsTab (keine Logikaenderung) ----
+  // ---- Rueckfahrt-Erkennung: VERBATIM bestehende zentrale Logik (Spec 1/21) --
   const returns = (dyn.rides || []).filter((r) => r.dayKey === day && r.status !== "cancelled" && (r.type === "return" || r.fromId === "festival"));
-  const open = returns.filter((r) => !r.assignedDriverId && r.status !== "done");
-  const active = returns.filter((r) => r.assignedDriverId && r.status !== "done");
-  const done = returns.filter((r) => r.status === "done");
-  const problems = returns.filter((r) => rideHasOpenIssue(r));
   const presence = useMemo(() => computeArtistPresence(dyn), [dyn.rides, dyn.artistPresence]);
   const missing = presence.filter((p) => !p.pendingReturn && !p.noReturn);
   const noReturnList = presence.filter((p) => !p.pendingReturn && p.noReturn);
   const covered = presence.filter((p) => p.pendingReturn);
 
-  // Schreib-Handler VERBATIM aus ReturnsTab (gleiche updateDyn-Kette, by/Zeit).
+  // Schreib-Handler VERBATIM aus der bestehenden Ansicht (gleiche updateDyn-Kette).
   const setNoReturn = async (name, value) => {
     const res = await updateDyn((d) => {
       d.artistPresence = d.artistPresence || {};
@@ -6935,60 +7097,85 @@ function MissionReturnsTab({ setup, dyn, day, updateDyn, by, onErr, onAssign, on
     .filter(([name, ov]) => ov?.manual === "here" && !presenceNames.has(name))
     .map(([name]) => ({ name, onSite: true, pendingReturn: null, noReturn: false, manual: "here", manualOnly: true }));
 
-  const sortRides = (list) => list.slice().sort((a, b) => sort === "dest"
-    ? (destName(a).localeCompare(destName(b)) || sortMin(a.time) - sortMin(b.time))
-    : sortMin(a.time) - sortMin(b.time));
-
   const atFestival = setup.drivers
     .map((d) => ({ d, s: computeDriverStats(setup, dyn, d.id, day) }))
     .filter((x) => !x.s.active && (x.s.locNow === "festival" || !x.s.locNow))
     .sort((a, b) => a.s.drivingMin - b.s.drivingMin);
 
-  // ---- rein PRAESENTATIONAL (neu, keine Logikaenderung) ----
-  // Suche: reiner View-Filter ueber vorhandene Felder (Artist/Ziel/Abholort/
-  // Treffpunkt). Aendert NICHT die KPIs (die zeigen die echten Tages-Totale).
+  // ---- Teilpaket D: operatives View-Model pro Rueckfahrt (rein lesend) ------
+  // Basis (C2-Match + C3-Zeitbewertung) haengt NICHT von `now` ab -> nur bei
+  // Datenaenderung neu. C3 nutzt `now` nicht (reine Planungsbewertung).
+  const ttMatchEntries = useMemo(() => normalizeTimetableEntries(TIMETABLE_RAW), []);
+  const baseModels = useMemo(() => returns.map((r) => {
+    const driver = setup.drivers.find((d) => d.id === r.assignedDriverId) || null;
+    const match = matchRideToTimetable({ ride: r, timetableEntries: ttMatchEntries });
+    const timing = evaluateTimetableTiming({ ride: r, matchResult: match, setup, now: 0 });
+    return { ride: r, driver, match, timing };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }), [dyn.rides, day, setup, ttMatchEntries]);
+  // Operative Einordnung: EINMAL pro Render aus baseModels + now abgeleitet und
+  // von Zaehlern, Gruppen, Filter, Sortierung und Karten gemeinsam genutzt (Spec 26).
+  const viewModels = useMemo(() => baseModels.map((b) => ({
+    ...b,
+    op: deriveReturnRideOperationalState({ ride: b.ride, driver: b.driver, timetableMatch: b.match, timingEvaluation: b.timing, now, setup }),
+  })), [baseModels, now, setup]);
+
+  // Operative Tages-Zaehler: echte Totale, unabhaengig von Suche/Filter (Spec 16).
+  const counts = {};
+  RETURN_GROUPS_IN_ORDER.forEach((g) => { counts[g] = 0; });
+  viewModels.forEach((vm) => { counts[vm.op.group] = (counts[vm.op.group] || 0) + 1; });
+
+  // ---- Ansicht-Filter (rein praesentational) ----
   const matchesQ = (r) => {
     if (!q.trim()) return true;
     const hay = `${r.djName || ""} ${destName(r)} ${origName(r)} ${r.meetingPoint || ""}`.toLowerCase();
     return hay.includes(q.trim().toLowerCase());
   };
-  const searching = q.trim().length > 0;
-  const openShown = sortRides(open.filter(matchesQ));
-  const activeShown = sortRides(active.filter(matchesQ));
-  const doneShown = sortRides(done.filter(matchesQ));
-  const shownCount = openShown.length + activeShown.length + doneShown.length;
-  // "ueberfaellig": geplant/angenommen, Abholzeit liegt in der Vergangenheit.
-  // Reiner Datums/Zeit-Vergleich fuer eine visuelle Markierung, keine Sortier-
-  // oder Statuslogik. Sobald ein Fahrer unterwegs ist (enroute/onboard) oder
-  // erledigt, keine Markierung.
-  const isOverdue = (r) => ["planned", "accepted"].includes(r.status) && r.date && r.time && new Date(`${r.date}T${r.time}`).getTime() < now;
-  const nextOpenId = openShown[0]?.id || null; // frueheste offene Rueckfahrt = "naechste"
+  const passesFilters = (vm) => matchesQ(vm.ride)
+    && (groupFilter === "all" || vm.op.group === groupFilter)
+    && (!onlyNoDriver || !vm.op.driverAssigned);
+  const anyFilter = q.trim().length > 0 || groupFilter !== "all" || onlyNoDriver;
 
-  const Tile = ({ r, next }) => {
-    const drv = setup.drivers.find((d) => d.id === r.assignedDriverId);
+  // Gruppierte, sortierte Darstellung. Leere Gruppen fallen raus (Spec 15/29).
+  const grouped = RETURN_GROUPS_IN_ORDER.map((g) => ({
+    group: g, meta: RETURN_GROUP_META[g],
+    items: viewModels.filter((vm) => vm.op.group === g && passesFilters(vm))
+      .sort((a, b) => sort === "dest" ? (destName(a.ride).localeCompare(destName(b.ride)) || returnGroupSort(g, a, b)) : returnGroupSort(g, a, b)),
+  })).filter((x) => x.items.length > 0);
+  const shownTotal = grouped.reduce((n, x) => n + x.items.length, 0);
+
+  // Minuten-Text fuer die Karte (Spec 14).
+  const depText = (op) => {
+    if (op.minutesUntilDeparture == null) return null;
+    if (op.group === "overdue") return `seit ${op.minutesOverdue} min`;
+    const m = op.minutesUntilDeparture;
+    if (m < 0) return `Abfahrt fällig (${Math.abs(m)} min)`;
+    if (m < 60) return `Abfahrt in ${m} min`;
+    const h = Math.floor(m / 60), mm = m % 60;
+    return mm ? `Abfahrt in ${h} Std. ${mm} min` : `Abfahrt in ${h} Std.`;
+  };
+
+  const OpTile = ({ vm }) => {
+    const r = vm.ride, op = vm.op, timing = vm.timing;
+    const drv = vm.driver;
     const flow = STATUS_FLOW[r.status];
     const issue = rideHasOpenIssue(r);
-    const overdue = isOverdue(r);
     const stripeKey = mcRideStatusKey(r.status, !!r.assignedDriverId);
-    // Streifen/Akzent: Problem oder ueberfaellig -> rot; sonst naechste -> blau; sonst Status.
-    const accent = (issue || overdue) ? "var(--mc-st-problem)" : next ? "var(--mc-st-new)" : `var(--mc-st-${stripeKey})`;
+    // Akzentstreifen richtet sich nach der operativen Gruppe (Spec 14).
+    const accent = `var(--mc-st-${op.stKey})`;
+    const critical = op.severity === "critical";
     return (
-      <div className="mc-ride-card relative flex items-stretch overflow-hidden"
-        style={next ? { boxShadow: "0 0 0 1px var(--mc-st-new)" } : undefined}>
+      <div className="mc-ride-card relative flex items-stretch overflow-hidden">
         <span className="w-1 shrink-0 self-stretch" style={{ background: accent }} aria-hidden="true" />
         <div className="flex-1 min-w-0 p-3.5">
           <div className="flex items-start justify-between gap-2">
             <div className="flex items-start gap-3 min-w-0">
-              {/* Abholzeit prominent */}
               <div className="text-center shrink-0">
-                <div className="font-mono text-2xl font-bold leading-none tabular-nums" style={{ color: overdue ? "var(--mc-st-problem)" : "var(--mc-text)" }}>{r.time}</div>
-                {(overdue || next) && (
-                  <div className="text-[9px] uppercase tracking-wide mt-1 font-semibold" style={{ color: overdue ? "var(--mc-st-problem)" : "var(--mc-st-new)" }}>
-                    {overdue ? "überfällig" : "nächste"}
-                  </div>
+                <div className="font-mono text-2xl font-bold leading-none tabular-nums" style={{ color: critical ? "var(--mc-st-problem)" : "var(--mc-text)" }}>{r.time}</div>
+                {depText(op) && (
+                  <div className="text-[9px] uppercase tracking-wide mt-1 font-semibold leading-tight" style={{ color: `var(--mc-st-${op.stKey})` }}>{depText(op)}</div>
                 )}
               </div>
-              {/* Abholort -> Ziel klar getrennt, Artist, Personen */}
               <div className="min-w-0">
                 <div className="flex items-center gap-1.5 text-sm flex-wrap">
                   <span style={{ color: "var(--mc-text-muted)" }}>{origName(r)}</span>
@@ -7000,8 +7187,17 @@ function MissionReturnsTab({ setup, dyn, day, updateDyn, by, onErr, onAssign, on
                 <div className="text-xs inline-flex items-center gap-1 mt-0.5" style={{ color: "var(--mc-text-muted)" }}><Users className="w-3 h-3" />{r.passengerCount} Pers.</div>
               </div>
             </div>
-            <StatusBadge status={stripeKey} label={STATUS_LABEL[r.status] || r.status || "—"} />
+            <span className="mc-badge shrink-0 inline-flex items-center gap-1 text-[11px] px-2 py-1 rounded-[var(--mc-r-sm)]"
+              style={{ background: `var(--mc-st-${op.stKey}-soft)`, color: `var(--mc-st-${op.stKey})`, border: `1px solid color-mix(in srgb, var(--mc-st-${op.stKey}) 40%, transparent)` }}>
+              {op.severity === "critical" ? <AlertTriangle className="w-3 h-3" /> : op.group === "completed" ? <CheckCircle2 className="w-3 h-3" /> : <Clock className="w-3 h-3" />}{op.label}
+            </span>
           </div>
+          {timing && timing.setEndAt && (
+            <div className="text-xs mt-2 inline-flex items-center gap-1.5" style={{ color: "var(--mc-text-muted)" }}><Clock className="w-3.5 h-3.5" />Set-Ende {c3HM(timing.setEndAt)}</div>
+          )}
+          {op.secondaryInfo.map((s, i) => (
+            <div key={i} className="text-xs mt-1.5 inline-flex items-center gap-1.5" style={{ color: op.requiresReview ? "var(--mc-st-problem)" : "var(--mc-st-assigned)" }}><AlertTriangle className="w-3.5 h-3.5 shrink-0" />{s}</div>
+          ))}
           {r.meetingPoint && <div className="text-xs mt-2 inline-flex items-center gap-1.5" style={{ color: "var(--mc-st-assigned)" }}><MapPin className="w-3.5 h-3.5" />{r.meetingPoint}</div>}
           {issue && <div className="text-xs mt-2 inline-flex items-center gap-1" style={{ color: "var(--mc-st-problem)" }}><AlertTriangle className="w-3.5 h-3.5" />{(r.issues || []).filter(issueOpen).map((i) => i.type).join(", ")}</div>}
 
@@ -7023,11 +7219,28 @@ function MissionReturnsTab({ setup, dyn, day, updateDyn, by, onErr, onAssign, on
     );
   };
 
+  // Kompakte Erledigt-Zeile (dezent).
+  const DoneRow = ({ vm }) => {
+    const r = vm.ride, drv = vm.driver;
+    return (
+      <div className="flex items-center gap-2 text-xs rounded-[var(--mc-r)] px-3 py-2 opacity-70" style={{ background: "var(--mc-inset)", border: "1px solid var(--mc-border)" }}>
+        <span className="font-mono tabular-nums" style={{ color: "var(--mc-text-secondary)" }}>{r.time}</span><span style={{ color: "var(--mc-text-secondary)" }}>{destName(r)}</span>
+        <span className="truncate" style={{ color: "var(--mc-text-muted)" }}>{r.djName || ""}</span>
+        <span className="ml-auto" style={{ color: "var(--mc-text-muted)" }}>{drv ? drv.vehicleId : ""}</span>
+      </div>
+    );
+  };
+
+  const summaryTiles = [
+    ["needs_review", "Prüfen"], ["overdue", "Überfällig"], ["driver_missing", "Fahrer fehlt"],
+    ["due_soon", "Bald fällig"], ["in_progress", "Läuft"],
+  ];
+
   return (
     <div>
       {/* Kopf: Titel + Datum + Suche + Sort */}
       <div className="flex flex-wrap items-center gap-3 mb-4">
-        <h3 className="text-base font-medium inline-flex items-center gap-2" style={{ color: "var(--mc-text)" }}><Moon className="w-5 h-5" style={{ color: "var(--mc-st-enroute)" }} />Rückfahrten · Nachtmodus</h3>
+        <h3 className="text-base font-medium inline-flex items-center gap-2" style={{ color: "var(--mc-text)" }}><Moon className="w-5 h-5" style={{ color: "var(--mc-st-enroute)" }} />Rückfahrten · Leitstand</h3>
         <span className="text-xs" style={{ color: "var(--mc-text-muted)" }}>{fmtDate(day)}</span>
         <div className="relative flex-1 min-w-[160px] max-w-xs ml-auto">
           <Search className="w-4 h-4 absolute left-2.5 top-2.5 pointer-events-none" style={{ color: "var(--mc-text-muted)" }} />
@@ -7080,55 +7293,72 @@ function MissionReturnsTab({ setup, dyn, day, updateDyn, by, onErr, onAssign, on
         presence={presence} manualOnly={manualOnly}
         onSetManual={setManualPresence} onAdd={addManualArtist} onSetNoReturn={setNoReturn} />
 
-      {/* KPIs (echte Tages-Totale, unabhaengig von der Suche) */}
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 mb-4">
-        {[["Offen", open.length, "assigned", open.length > 0], ["Unterwegs", active.length, "enroute", false], ["Erledigt", done.length, "done", false], ["Probleme", problems.length, "problem", problems.length > 0]].map(([l, v, key, emph]) => (
-          <div key={l} className="rounded-[var(--mc-r)] px-3 py-2.5 text-center" style={{ background: "var(--mc-panel)", border: "1px solid var(--mc-border)" }}>
-            <div className="text-2xl font-bold font-mono tabular-nums" style={{ color: (v > 0 || emph) ? `var(--mc-st-${key})` : "var(--mc-text)" }}><MissionCount value={v} /></div>
-            <div className="text-[10px] uppercase tracking-wide" style={{ color: "var(--mc-text-muted)" }}>{l}</div>
-          </div>
-        ))}
+      {/* Teilpaket D: operative Zaehler (echte Tages-Totale). Klick filtert die Gruppe. */}
+      <div className="grid grid-cols-3 sm:grid-cols-5 gap-2 mb-3">
+        {summaryTiles.map(([g, l]) => {
+          const meta = RETURN_GROUP_META[g];
+          const v = counts[g] || 0;
+          const activeSel = groupFilter === g;
+          return (
+            <button key={g} onClick={() => setGroupFilter(activeSel ? "all" : g)}
+              className="rounded-[var(--mc-r)] px-3 py-2.5 text-center transition-colors"
+              style={{ background: activeSel ? `var(--mc-st-${meta.stKey}-soft)` : "var(--mc-panel)", border: `1px solid ${activeSel ? `var(--mc-st-${meta.stKey})` : "var(--mc-border)"}` }}
+              title={activeSel ? "Filter aufheben" : `Nur ${l} zeigen`}>
+              <div className="text-2xl font-bold font-mono tabular-nums" style={{ color: v > 0 ? `var(--mc-st-${meta.stKey})` : "var(--mc-text)" }}><MissionCount value={v} /></div>
+              <div className="text-[10px] uppercase tracking-wide" style={{ color: "var(--mc-text-muted)" }}>{l}</div>
+            </button>
+          );
+        })}
+      </div>
+
+      {/* Teilpaket D: Gruppenfilter (operative Prioritaet) + nur ohne Fahrer */}
+      <div className="flex flex-wrap items-center gap-1.5 mb-4">
+        <button onClick={() => setGroupFilter("all")} className="text-xs px-2.5 py-1 rounded-[var(--mc-r-sm)] transition-colors"
+          style={groupFilter === "all" ? { background: "var(--mc-hover)", color: "var(--mc-text)", fontWeight: 500, border: "1px solid var(--mc-border)" } : { color: "var(--mc-text-secondary)", border: "1px solid var(--mc-border)" }}>Alle</button>
+        {RETURN_GROUPS_IN_ORDER.map((g) => {
+          const meta = RETURN_GROUP_META[g];
+          const sel = groupFilter === g;
+          return (
+            <button key={g} onClick={() => setGroupFilter(sel ? "all" : g)} className="text-xs px-2.5 py-1 rounded-[var(--mc-r-sm)] inline-flex items-center gap-1 transition-colors"
+              style={sel ? { background: `var(--mc-st-${meta.stKey}-soft)`, color: `var(--mc-st-${meta.stKey})`, fontWeight: 500, border: `1px solid var(--mc-st-${meta.stKey})` } : { color: "var(--mc-text-secondary)", border: "1px solid var(--mc-border)" }}>
+              <span className="w-1.5 h-1.5 rounded-full" style={{ background: `var(--mc-st-${meta.stKey})` }} />{meta.label}{counts[g] ? ` ${counts[g]}` : ""}
+            </button>
+          );
+        })}
+        <button onClick={() => setOnlyNoDriver((v) => !v)} className="text-xs px-2.5 py-1 rounded-[var(--mc-r-sm)] inline-flex items-center gap-1 transition-colors ml-1"
+          style={onlyNoDriver ? { background: "var(--mc-st-assigned-soft)", color: "var(--mc-st-assigned)", fontWeight: 500, border: "1px solid var(--mc-st-assigned)" } : { color: "var(--mc-text-secondary)", border: "1px solid var(--mc-border)" }}>
+          <Navigation className="w-3 h-3" />nur ohne Fahrer
+        </button>
       </div>
 
       {returns.length === 0 && (
-        <EmptyState icon={Moon} title="Keine Rückfahrten (Festival → Hotel/Airport) an diesem Tag."
+        <EmptyState icon={Moon} title="Keine Rückfahrten für diesen Betriebstag vorhanden."
           hint="Rückfahrten entstehen aus Fahrten vom Festival weg oder über „braucht Rückfahrt“ oben." />
       )}
 
-      {returns.length > 0 && searching && shownCount === 0 && (
-        <EmptyState icon={Search} title={`Keine Rückfahrt passt zu „${q.trim()}".`}
-          action={<button onClick={() => setQ("")} className="text-xs px-3 py-1.5 rounded-[var(--mc-r)]" style={{ background: "var(--mc-hover)", color: "var(--mc-text)", border: "1px solid var(--mc-border)" }}>Suche zurücksetzen</button>} />
+      {returns.length > 0 && anyFilter && shownTotal === 0 && (
+        <EmptyState icon={Search} title="Keine Rückfahrten entsprechen den aktuellen Filtern."
+          action={<button onClick={() => { setQ(""); setGroupFilter("all"); setOnlyNoDriver(false); }} className="text-xs px-3 py-1.5 rounded-[var(--mc-r)]" style={{ background: "var(--mc-hover)", color: "var(--mc-text)", border: "1px solid var(--mc-border)" }}>Filter zurücksetzen</button>} />
       )}
 
-      {returns.length > 0 && !(searching && shownCount === 0) && (
+      {returns.length > 0 && !(anyFilter && shownTotal === 0) && (
       <div className="grid grid-cols-1 xl:grid-cols-3 gap-4">
         <div className="xl:col-span-2 space-y-4">
-          {openShown.length > 0 && (
-            <div>
-              <div className="mc-eyebrow mb-2 inline-flex items-center gap-1.5" style={{ color: "var(--mc-st-assigned)" }}><AlertTriangle className="w-3.5 h-3.5" />Offene Rückfahrten ohne Fahrer{searching ? ` (${openShown.length})` : ""}</div>
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">{openShown.map((r) => <Tile key={r.id} r={r} next={r.id === nextOpenId} />)}</div>
-            </div>
-          )}
-          {activeShown.length > 0 && (
-            <div>
-              <div className="mc-eyebrow mb-2">Zugeteilt / unterwegs{searching ? ` (${activeShown.length})` : ""}</div>
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">{activeShown.map((r) => <Tile key={r.id} r={r} />)}</div>
-            </div>
-          )}
-          {doneShown.length > 0 && (
-            <details className="group">
-              <summary className="mc-eyebrow cursor-pointer mb-2 inline-flex items-center gap-1.5"><CheckCircle2 className="w-3.5 h-3.5" style={{ color: "var(--mc-st-done)" }} />Erledigte Rückfahrten ({doneShown.length})</summary>
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-2 mt-2">
-                {doneShown.map((r) => {
-                  const drv = setup.drivers.find((d) => d.id === r.assignedDriverId);
-                  return <div key={r.id} className="flex items-center gap-2 text-xs rounded-[var(--mc-r)] px-3 py-2 opacity-70" style={{ background: "var(--mc-inset)", border: "1px solid var(--mc-border)" }}>
-                    <span className="font-mono tabular-nums" style={{ color: "var(--mc-text-secondary)" }}>{r.time}</span><span style={{ color: "var(--mc-text-secondary)" }}>{destName(r)}</span>
-                    <span className="ml-auto" style={{ color: "var(--mc-text-muted)" }}>{drv ? drv.vehicleId : ""}</span>
-                  </div>;
-                })}
+          {grouped.map(({ group, meta, items }) => (
+            group === "completed" ? (
+              <details key={group} className="group">
+                <summary className="mc-eyebrow cursor-pointer mb-2 inline-flex items-center gap-1.5"><CheckCircle2 className="w-3.5 h-3.5" style={{ color: "var(--mc-st-done)" }} />{meta.label} ({items.length})</summary>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-2 mt-2">{items.map((vm) => <DoneRow key={vm.ride.id} vm={vm} />)}</div>
+              </details>
+            ) : (
+              <div key={group}>
+                <div className="mc-eyebrow mb-2 inline-flex items-center gap-1.5" style={{ color: `var(--mc-st-${meta.stKey})` }}>
+                  <span className="w-2 h-2 rounded-full" style={{ background: `var(--mc-st-${meta.stKey})` }} />{meta.label} ({items.length})
+                </div>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">{items.map((vm) => <OpTile key={vm.ride.id} vm={vm} />)}</div>
               </div>
-            </details>
-          )}
+            )
+          ))}
         </div>
 
         {/* Fahrer am Festival / frei + Live-Karte */}

@@ -4318,3 +4318,99 @@ noch KEINE Timetable-Warnungen (C3), keine Zeitbewertung, keine Ride-Aenderungen
 # als Vorschlaege nennen (matchLoc-Fix, Timetable-Filter, Leonardo-Ortsobjekt).
 # Terminlich beachten: Fahrertest 18.07. ist vorbei: naechster harter Termin ist
 # der Code-Freeze 21.07. (danach keine Loeschungen mehr, Festival 23.-27.07.).
+
+# =========================================================================
+# Session Teilpaket D (19.07.2026) - Operativer Rueckfahrten-Leitstand FERTIG
+# =========================================================================
+# Rein lesende Professionalisierung von MissionReturnsTab. Fuehrt Fahrt,
+# Fahrerzuweisung, Fahrtstatus, C2-Match und C3-Zeitbewertung zu genau EINER
+# operativen Gruppe pro Rueckfahrt zusammen. Keine neue Datenstruktur, keine
+# Migration, kein Schreibweg, keine gespeicherten Zustaende.
+#
+# Ruecksetzpunkt-Tag: pre-teilpaket-D = 6fee451. Neue Zeilenzahl: 11064.
+# (Spec nannte c40cae5 = C3-Code-Commit; echter HEAD war der Doku-Commit 6fee451.)
+#
+# Bausteine: GEAENDERT (1) MissionReturnsTab. NEU (9): RETURN_CONTROL_CONFIG,
+#   RETURN_OPERATIONAL_GROUP_ORDER, RETURN_GROUP_META, RETURN_GROUPS_IN_ORDER,
+#   RETURN_STATUS_COMPLETED, RETURN_STATUS_ACTIVE, returnDepartureTs,
+#   deriveReturnRideOperationalState, returnGroupSort. ENTFERNT: keine.
+#
+# Gruppen/Labels: needs_review=Pruefen, overdue=Ueberfaellig,
+#   driver_missing=Fahrer fehlt, due_soon=Bald faellig,
+#   driver_assigned=Fahrer zugeteilt, in_progress=Laeuft, not_due=Spaeter,
+#   completed=Erledigt. Reihenfolge 10..80 (Spec 6). Nur bestehende
+#   --mc-st-*-Farben (problem/assigned/new/enroute/idle/done).
+#
+# Schwellwerte (RETURN_CONTROL_CONFIG): dueSoonWindowMin 60,
+#   urgentDriverMissingWindowMin 90, overdueGraceMin 10. Overdue STRENG bei
+#   m < -10 (exakt 10 min vorbei = noch NICHT overdue). Grace-Zone (0..10 min
+#   vorbei) faellt in due_soon (mit Fahrer) bzw. driver_missing (ohne Fahrer),
+#   NICHT in not_due.
+#
+# Entscheidungskette (genau eine Primaergruppe): completed -> in_progress ->
+#   needs_review -> overdue -> driver_missing -> due_soon -> driver_assigned ->
+#   not_due. C2/C3 werden 1:1 wiederverwendet (kein zweiter Set-Ende-Rechenweg).
+#
+# Timer: bestehende 30s -> 60s (Spec 19). Rein Re-Render, kein Schreibweg/DB,
+#   clearInterval beim Unmount. View-Model memoisiert, einmal pro Render.
+#
+# UI: gruppierte Abschnitte (Ueberschrift + Anzahl), Erledigt als Akkordeon,
+#   5 operative Zaehler-Kacheln (ersetzen die alten 4 KPIs), Gruppenfilter-Chips
+#   + "nur ohne Fahrer". Suche/Sort/Tagesfilter/Presence/MiniMap/Timeline und
+#   alle Aktionen (zuweisen/umteilen/Text/oeffnen/anrufen) unveraendert erhalten.
+#
+# Neue Proof-Skripte: smoke-teilpaket-d.mjs (83 Logiktests),
+#   smoke-teilpaket-d-ui.mjs (35 UI/Read-only). Beide nehmen die Quelle als
+#   argv[2]. Gegenproben extern belegt (Schwelle 60->61 / Grace 10->9 /
+#   Titel / Timer 60000->30000 lassen die passenden Tests fehlschlagen).
+#   Hinweis: d-ui rendert MissionReturnsTab -> dyn braucht driverState:{} je
+#   Fahrer, sonst wirft computeDriverStats. C2 matcht ueber ride.dayKey.
+#
+# Verifikation komplett gruen: esbuild, keine Doppelfunktionen, keine
+#   undefinierten CSS-Variablen, rendertest 5 Werte konstant (25053/2452/2413/
+#   2895/101), kontrast 0, pruefe (nur MissionReturnsTab geaendert, 353/354
+#   byte-identisch, alle geschuetzten Kernfunktionen unveraendert), C1 40,
+#   C1-UI 16, C2 65, C2-UI 14, C3 147, C3-UI 35, B 69, D 83, D-UI 35,
+#   Springer 34, One-Tap 14, Personenzahl 24, Ridelist 10, smoke.mjs
+#   (Classic-Reste 0).
+# Berichte: TEILPAKET-D-BERICHT.md, TEILPAKET-D-ABNAHME.md (24 Punkte).
+#
+# -------------------------------------------------------------------------
+# OPENER fuer die naechste Session (fertig zum Kopieren)
+# -------------------------------------------------------------------------
+# Repo: Maybach62S57S/openbeatz-shuttle, main. Hauptdatei src/ShuttleLeitstelle.jsx.
+# Deutsch, informell, keine Gedankenstriche, korrekte Umlaute. Code-Freeze 21.07.,
+# ab 21.07. KEINE Loeschungen mehr (Festival 23.-27.07.).
+#
+# Stand: Teilpaket A, B, C1, C2, C3 und D abgeschlossen und gepusht.
+# Ruecksetzpunkte als Tags: pre-teilpaket-A/-B/-C1/-C2/-C3/-D. Erwartete
+# Zeilenzahl src/ShuttleLeitstelle.jsx: 11064 (nach D-Push per git-Hash
+# bestaetigen, der Doc-Commit-Hash verschiebt sich).
+#
+# Schritt 0 (Pflicht): Repo klonen (frischen fine-grained PAT bereitstellen, nach
+# Clone aus der Remote-URL scrubben mit `git remote set-url`), `git log --graph
+# --oneline --all` pruefen, exakte Zeilenzahl + letzten CODE-Commit-Hash messen,
+# npm install (esbuild+react+react-dom), Baseline-Skripte laufen lassen:
+# rendertest (5 Werte 25053/2452/2413/2895/101), kontrast (0 Fehler), pruefe
+# (self, 0 undefinierte vars), smoke-teilpaket-c1/-c1-ui/-c2/-c2-ui/-c3/-c3-ui/
+# -d/-d-ui, Springer/One-Tap/Personenzahl/Ridelist. Erst dann Auftrag entgegennehmen.
+# Hinweis: Skripte schreiben nach /home/claude/repo/ -> ggf. node_modules dorthin
+# symlinken. Skripte brauchen src/ShuttleLeitstelle.jsx als argv[2]; pruefe.mjs
+# braucht ZWEI Pfade; smoke-teilpaket-b.mjs braucht vorab gebaute tmp-tb-funcs.mjs;
+# smoke-teilpaket-d-ui.mjs braucht dyn.driverState je Fahrer.
+#
+# Offene, bewusst NICHT gefixte Punkte (nur auf ausdruecklichen Auftrag):
+#   - matchLoc (aktuell Z. ~9634, verschiebt sich - vor Gebrauch neu grep-en)
+#     liest nur 4 Hardcode-Orte statt setup.locations. Betrifft D nicht (D nutzt
+#     die zentrale Rueckfahrt-Erkennung r.type/r.fromId und die C3-Ortsaufloesung).
+#   - "Jetzt/Als Naechstes"-Filter im Timetable-Tab (verschoben).
+#   - ARTIST_ALIASES leer - erst bei belegtem Alias-Fall nachtragen.
+#   - PIN-Sicherheit: NICHT proaktiv ansprechen.
+#   - Leonardo-Ortsobjekt (Sheraton-Adresse uebernehmen) auf Eis, nur auf
+#     erneuten ausdruecklichen Auftrag, eigene Session mit Ruecksetzpunkt.
+#   - Ab 21.07.: keine Loeschungen mehr (Festival 23.-27.07.).
+#
+# Naechster Schritt: kein Teilpaket vordefiniert. Vor jeder Umsetzung Spec von
+# Jordan einholen (wie bei A/B/C/D). Falls unsicher: obige offene Punkte als
+# Vorschlaege nennen. Terminlich: naechster harter Termin ist der Code-Freeze
+# 21.07.
