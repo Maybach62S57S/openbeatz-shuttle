@@ -3851,6 +3851,11 @@ MissionDriversTab-Badges waren alle schon im Code, nur noch nicht verifiziert/co
     Neuer Commit:                   72f1b5b (9261 Zeilen, +137 netto)
     Gepusht nach origin/main:       ea74666..72f1b5b, sauberer Fast-Forward, 0 Divergenz
 
+> KORREKTUR (Nachtrag 19.07.2026, siehe ganz unten "Nachtrag"): Der hier genannte Tag
+> `pre-teilpaket-A` war zum Zeitpunkt dieses Abschnitts nur lokal erzeugt, aber NIE nach
+> origin gepusht worden. Er wurde in einer spaeteren Chat-Session desselben Tages
+> nachgezogen und liegt jetzt korrekt auf origin (zeigt auf ea74666).
+
 `matchLoc` (der bekannte, bewusst nicht angefasste Bug) sitzt jetzt bei **Z. 7833**, nicht
 mehr Z. 7676 wie in älterer Doku. Verschiebung durch die 137 neuen/geänderten Zeilen vor
 `evaluateInsertion`. **Immer per grep nachmessen, nie auf die alte Zahl verlassen.**
@@ -3929,3 +3934,23 @@ Ergebnisbericht.
 ## Zeitfenster, unverändert wichtig
 
 Ab 21.07. keine Löschungen mehr. Festival 23. bis 27.07.2026.
+
+# Nachtrag 19.07.2026 (spaeterer Chat, nach Teilpaket A): Ruecksetz-Tag nachgezogen
+
+Beim Schritt-0-Nachmessen in einer neuen Chat-Session fiel auf: der weiter oben und im
+Opener (`OPENER-Naechster-Chat-nach-Teilpaket-A.md`) genannte Sicherungs-Tag
+`pre-teilpaket-A` existierte auf origin gar nicht. Auf origin lagen nur die drei aelteren
+Tags (`stabil-classic-vorhanden-2026-07-15`, `stabil-vor-design-2026-07-13`,
+`stabil-vor-mc-design-2026-07-16`). Der Commit `ea74666` selbst war im Verlauf vorhanden
+und hatte die dokumentierten 9124 Zeilen, aber als benannter Ruecksetzpunkt fehlte er.
+Klassischer Fall "Doku beschreibt Absicht, nicht Messwert".
+
+Behoben (reine Sicherungs-/Doku-Massnahme, kein Code angefasst):
+- Annotierten Tag `pre-teilpaket-A` auf `ea74666` angelegt und nach origin gepusht.
+- Von origin gegengeprueft: `git ls-remote --tags origin` zeigt
+  `pre-teilpaket-A^{}` -> `ea74666`, also der Stand mit 9124 Zeilen vor Teilpaket A.
+- `origin/main` unveraendert bei `42a9d1d`, kein Code-Commit in dieser Massnahme.
+
+Lehre fuers naechste Mal: Sicherungs-Tags direkt nach dem Anlegen mit
+`git push origin <tag>` hochladen und mit `git ls-remote --tags origin` bestaetigen, sonst
+steht der Ruecksetzpunkt nur lokal und ist nach dem Sandbox-Reset weg.
