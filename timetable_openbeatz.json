@@ -1,0 +1,1610 @@
+{
+ "festival": "Open Beatz 2026",
+ "generated": "2026-07-18",
+ "note": "Festival-Tag laeuft ~14:00 bis ~06:00 Folgetag. Post-Mitternacht-Sets sind auf den echten Kalendertag gerollt.",
+ "sets": [
+  {
+   "festival_day": "23/07/2026",
+   "stage": "CAMPINGSTAGE PREPARTY",
+   "artist": "TEZZ",
+   "start": "2026-07-23 15:00",
+   "end": "2026-07-23 16:15"
+  },
+  {
+   "festival_day": "23/07/2026",
+   "stage": "CAMPINGSTAGE PREPARTY",
+   "artist": "Fever Dream",
+   "start": "2026-07-23 16:15",
+   "end": "2026-07-23 17:30"
+  },
+  {
+   "festival_day": "23/07/2026",
+   "stage": "CAMPINGSTAGE PREPARTY",
+   "artist": "XETEX",
+   "start": "2026-07-23 17:30",
+   "end": "2026-07-23 18:30"
+  },
+  {
+   "festival_day": "23/07/2026",
+   "stage": "CAMPINGSTAGE PREPARTY",
+   "artist": "ZEYPHIA",
+   "start": "2026-07-23 18:30",
+   "end": "2026-07-23 19:30"
+  },
+  {
+   "festival_day": "23/07/2026",
+   "stage": "CAMPINGSTAGE PREPARTY",
+   "artist": "Neptunica",
+   "start": "2026-07-23 19:30",
+   "end": "2026-07-23 20:45"
+  },
+  {
+   "festival_day": "23/07/2026",
+   "stage": "CAMPINGSTAGE PREPARTY",
+   "artist": "Fabian Farell",
+   "start": "2026-07-23 20:45",
+   "end": "2026-07-23 22:00"
+  },
+  {
+   "festival_day": "23/07/2026",
+   "stage": "CAMPINGSTAGE PREPARTY",
+   "artist": "DELIVERZ",
+   "start": "2026-07-23 22:00",
+   "end": "2026-07-23 23:00"
+  },
+  {
+   "festival_day": "23/07/2026",
+   "stage": "CAMPINGSTAGE PREPARTY",
+   "artist": "BassWar x CaoX",
+   "start": "2026-07-23 23:00",
+   "end": "2026-07-24 00:00"
+  },
+  {
+   "festival_day": "24/07/2026",
+   "stage": "CALDERA",
+   "artist": "Lavinia",
+   "start": "2026-07-24 14:00",
+   "end": "2026-07-24 15:00"
+  },
+  {
+   "festival_day": "24/07/2026",
+   "stage": "CALDERA",
+   "artist": "Bovski",
+   "start": "2026-07-24 15:00",
+   "end": "2026-07-24 15:45"
+  },
+  {
+   "festival_day": "24/07/2026",
+   "stage": "CALDERA",
+   "artist": "AXMO",
+   "start": "2026-07-24 15:45",
+   "end": "2026-07-24 16:45"
+  },
+  {
+   "festival_day": "24/07/2026",
+   "stage": "CALDERA",
+   "artist": "Gestört aber Geil",
+   "start": "2026-07-24 16:45",
+   "end": "2026-07-24 17:45"
+  },
+  {
+   "festival_day": "24/07/2026",
+   "stage": "CALDERA",
+   "artist": "NOISETIME",
+   "start": "2026-07-24 17:45",
+   "end": "2026-07-24 18:45"
+  },
+  {
+   "festival_day": "24/07/2026",
+   "stage": "CALDERA",
+   "artist": "Luca-Dante Spadafora",
+   "start": "2026-07-24 18:45",
+   "end": "2026-07-24 19:45"
+  },
+  {
+   "festival_day": "24/07/2026",
+   "stage": "CALDERA",
+   "artist": "Alle Farben",
+   "start": "2026-07-24 19:45",
+   "end": "2026-07-24 20:45"
+  },
+  {
+   "festival_day": "24/07/2026",
+   "stage": "CALDERA",
+   "artist": "Felix Jaehn",
+   "start": "2026-07-24 20:45",
+   "end": "2026-07-24 21:45"
+  },
+  {
+   "festival_day": "24/07/2026",
+   "stage": "CALDERA",
+   "artist": "Opening Show",
+   "start": "2026-07-24 21:45",
+   "end": "2026-07-24 22:00"
+  },
+  {
+   "festival_day": "24/07/2026",
+   "stage": "CALDERA",
+   "artist": "Toby Dean",
+   "start": "2026-07-24 22:00",
+   "end": "2026-07-24 23:00"
+  },
+  {
+   "festival_day": "24/07/2026",
+   "stage": "CALDERA",
+   "artist": "Neelix",
+   "start": "2026-07-24 23:00",
+   "end": "2026-07-25 00:00"
+  },
+  {
+   "festival_day": "24/07/2026",
+   "stage": "CALDERA",
+   "artist": "Timmy Trumpet",
+   "start": "2026-07-25 00:00",
+   "end": "2026-07-25 01:00"
+  },
+  {
+   "festival_day": "24/07/2026",
+   "stage": "CALDERA",
+   "artist": "Sub Zero Project",
+   "start": "2026-07-25 01:00",
+   "end": "2026-07-25 02:00"
+  },
+  {
+   "festival_day": "24/07/2026",
+   "stage": "STONELANDS",
+   "artist": "VISHY",
+   "start": "2026-07-24 15:00",
+   "end": "2026-07-24 16:00"
+  },
+  {
+   "festival_day": "24/07/2026",
+   "stage": "STONELANDS",
+   "artist": "ACINA",
+   "start": "2026-07-24 16:00",
+   "end": "2026-07-24 17:00"
+  },
+  {
+   "festival_day": "24/07/2026",
+   "stage": "STONELANDS",
+   "artist": "Chrissyjeey",
+   "start": "2026-07-24 17:00",
+   "end": "2026-07-24 18:30"
+  },
+  {
+   "festival_day": "24/07/2026",
+   "stage": "STONELANDS",
+   "artist": "Caro van EE",
+   "start": "2026-07-24 18:30",
+   "end": "2026-07-24 20:00"
+  },
+  {
+   "festival_day": "24/07/2026",
+   "stage": "STONELANDS",
+   "artist": "Negitiv",
+   "start": "2026-07-24 20:00",
+   "end": "2026-07-24 21:30"
+  },
+  {
+   "festival_day": "24/07/2026",
+   "stage": "STONELANDS",
+   "artist": "Oguz",
+   "start": "2026-07-24 21:30",
+   "end": "2026-07-24 23:00"
+  },
+  {
+   "festival_day": "24/07/2026",
+   "stage": "STONELANDS",
+   "artist": "POLTERGST",
+   "start": "2026-07-24 23:00",
+   "end": "2026-07-25 00:30"
+  },
+  {
+   "festival_day": "24/07/2026",
+   "stage": "STONELANDS",
+   "artist": "Klofama",
+   "start": "2026-07-25 00:30",
+   "end": "2026-07-25 02:05"
+  },
+  {
+   "festival_day": "24/07/2026",
+   "stage": "Zone III",
+   "artist": "Lil Berlin",
+   "start": "2026-07-24 15:00",
+   "end": "2026-07-24 16:15"
+  },
+  {
+   "festival_day": "24/07/2026",
+   "stage": "Zone III",
+   "artist": "Zelecter",
+   "start": "2026-07-24 16:15",
+   "end": "2026-07-24 17:15"
+  },
+  {
+   "festival_day": "24/07/2026",
+   "stage": "Zone III",
+   "artist": "Coone",
+   "start": "2026-07-24 17:15",
+   "end": "2026-07-24 18:15"
+  },
+  {
+   "festival_day": "24/07/2026",
+   "stage": "Zone III",
+   "artist": "Brennan Heart",
+   "start": "2026-07-24 18:15",
+   "end": "2026-07-24 19:15"
+  },
+  {
+   "festival_day": "24/07/2026",
+   "stage": "Zone III",
+   "artist": "Rooler",
+   "start": "2026-07-24 19:15",
+   "end": "2026-07-24 20:15"
+  },
+  {
+   "festival_day": "24/07/2026",
+   "stage": "Zone III",
+   "artist": "Rebelion",
+   "start": "2026-07-24 20:15",
+   "end": "2026-07-24 21:15"
+  },
+  {
+   "festival_day": "24/07/2026",
+   "stage": "Zone III",
+   "artist": "Aversion",
+   "start": "2026-07-24 21:15",
+   "end": "2026-07-24 22:15"
+  },
+  {
+   "festival_day": "24/07/2026",
+   "stage": "Zone III",
+   "artist": "The Straikerz",
+   "start": "2026-07-24 22:15",
+   "end": "2026-07-24 23:15"
+  },
+  {
+   "festival_day": "24/07/2026",
+   "stage": "Zone III",
+   "artist": "Mutilator",
+   "start": "2026-07-24 23:15",
+   "end": "2026-07-25 00:15"
+  },
+  {
+   "festival_day": "24/07/2026",
+   "stage": "Zone III",
+   "artist": "GPF",
+   "start": "2026-07-25 00:15",
+   "end": "2026-07-25 01:00"
+  },
+  {
+   "festival_day": "24/07/2026",
+   "stage": "Zone III",
+   "artist": "Equal2 b2b Invaderz",
+   "start": "2026-07-25 01:00",
+   "end": "2026-07-25 02:05"
+  },
+  {
+   "festival_day": "24/07/2026",
+   "stage": "Magical Forest",
+   "artist": "Sylvie Miles",
+   "start": "2026-07-24 16:00",
+   "end": "2026-07-24 17:00"
+  },
+  {
+   "festival_day": "24/07/2026",
+   "stage": "Magical Forest",
+   "artist": "Dennis Reif",
+   "start": "2026-07-24 17:00",
+   "end": "2026-07-24 18:00"
+  },
+  {
+   "festival_day": "24/07/2026",
+   "stage": "Magical Forest",
+   "artist": "Karla Blum",
+   "start": "2026-07-24 18:00",
+   "end": "2026-07-24 19:00"
+  },
+  {
+   "festival_day": "24/07/2026",
+   "stage": "Magical Forest",
+   "artist": "Klanglos",
+   "start": "2026-07-24 19:00",
+   "end": "2026-07-24 20:30"
+  },
+  {
+   "festival_day": "24/07/2026",
+   "stage": "Magical Forest",
+   "artist": "A.D.H.S.",
+   "start": "2026-07-24 20:30",
+   "end": "2026-07-24 22:00"
+  },
+  {
+   "festival_day": "24/07/2026",
+   "stage": "Magical Forest",
+   "artist": "Anna Reusch",
+   "start": "2026-07-24 22:00",
+   "end": "2026-07-24 23:00"
+  },
+  {
+   "festival_day": "24/07/2026",
+   "stage": "Magical Forest",
+   "artist": "Pappenheimer",
+   "start": "2026-07-24 23:00",
+   "end": "2026-07-25 00:00"
+  },
+  {
+   "festival_day": "24/07/2026",
+   "stage": "Magical Forest",
+   "artist": "Klaudia Gawlas",
+   "start": "2026-07-25 00:00",
+   "end": "2026-07-25 01:00"
+  },
+  {
+   "festival_day": "24/07/2026",
+   "stage": "Magical Forest",
+   "artist": "Felix Kröcher",
+   "start": "2026-07-25 01:00",
+   "end": "2026-07-25 02:00"
+  },
+  {
+   "festival_day": "24/07/2026",
+   "stage": "Goa Garden",
+   "artist": "GOA Sammelrider",
+   "start": "2026-07-24 14:00",
+   "end": "2026-07-25 14:00"
+  },
+  {
+   "festival_day": "24/07/2026",
+   "stage": "Goa Garden",
+   "artist": "Atopia",
+   "start": "2026-07-24 16:00",
+   "end": "2026-07-24 17:30"
+  },
+  {
+   "festival_day": "24/07/2026",
+   "stage": "Goa Garden",
+   "artist": "Isy",
+   "start": "2026-07-24 17:30",
+   "end": "2026-07-24 18:30"
+  },
+  {
+   "festival_day": "24/07/2026",
+   "stage": "Goa Garden",
+   "artist": "Misstree",
+   "start": "2026-07-24 18:30",
+   "end": "2026-07-24 19:30"
+  },
+  {
+   "festival_day": "24/07/2026",
+   "stage": "Goa Garden",
+   "artist": "Tamborino",
+   "start": "2026-07-24 19:30",
+   "end": "2026-07-24 21:00"
+  },
+  {
+   "festival_day": "24/07/2026",
+   "stage": "Goa Garden",
+   "artist": "Cloud7",
+   "start": "2026-07-24 21:00",
+   "end": "2026-07-24 22:30"
+  },
+  {
+   "festival_day": "24/07/2026",
+   "stage": "Goa Garden",
+   "artist": "Djingis Khan",
+   "start": "2026-07-24 22:30",
+   "end": "2026-07-25 00:00"
+  },
+  {
+   "festival_day": "24/07/2026",
+   "stage": "Goa Garden",
+   "artist": "Chinchilla",
+   "start": "2026-07-25 00:00",
+   "end": "2026-07-25 01:00"
+  },
+  {
+   "festival_day": "24/07/2026",
+   "stage": "Goa Garden",
+   "artist": "Kayara",
+   "start": "2026-07-25 01:00",
+   "end": "2026-07-25 02:00"
+  },
+  {
+   "festival_day": "24/07/2026",
+   "stage": "Darkwoods",
+   "artist": "OSTRAUSCH b2b Düzentrieb",
+   "start": "2026-07-24 16:00",
+   "end": "2026-07-24 17:30"
+  },
+  {
+   "festival_day": "24/07/2026",
+   "stage": "Darkwoods",
+   "artist": "FABITEKK",
+   "start": "2026-07-24 17:30",
+   "end": "2026-07-24 19:00"
+  },
+  {
+   "festival_day": "24/07/2026",
+   "stage": "Darkwoods",
+   "artist": "Tiefundton",
+   "start": "2026-07-24 19:00",
+   "end": "2026-07-24 20:00"
+  },
+  {
+   "festival_day": "24/07/2026",
+   "stage": "Darkwoods",
+   "artist": "OsTEKKE",
+   "start": "2026-07-24 20:00",
+   "end": "2026-07-24 21:00"
+  },
+  {
+   "festival_day": "24/07/2026",
+   "stage": "Darkwoods",
+   "artist": "Kopf & Hörer",
+   "start": "2026-07-24 21:00",
+   "end": "2026-07-24 22:00"
+  },
+  {
+   "festival_day": "24/07/2026",
+   "stage": "Darkwoods",
+   "artist": "KaaCee KomaCasper",
+   "start": "2026-07-24 22:00",
+   "end": "2026-07-24 23:00"
+  },
+  {
+   "festival_day": "24/07/2026",
+   "stage": "Darkwoods",
+   "artist": "Die Gebrüder Brett",
+   "start": "2026-07-24 23:00",
+   "end": "2026-07-25 00:00"
+  },
+  {
+   "festival_day": "24/07/2026",
+   "stage": "Darkwoods",
+   "artist": "TekkSchuster feat. Loco Erno",
+   "start": "2026-07-25 00:00",
+   "end": "2026-07-25 01:00"
+  },
+  {
+   "festival_day": "24/07/2026",
+   "stage": "Darkwoods",
+   "artist": "TekkStreetBoyz",
+   "start": "2026-07-25 01:00",
+   "end": "2026-07-25 02:00"
+  },
+  {
+   "festival_day": "24/07/2026",
+   "stage": "Gruener Stadl",
+   "artist": "Averro",
+   "start": "2026-07-24 14:00",
+   "end": "2026-07-24 15:15"
+  },
+  {
+   "festival_day": "24/07/2026",
+   "stage": "Gruener Stadl",
+   "artist": "DJ OLDE",
+   "start": "2026-07-24 15:15",
+   "end": "2026-07-24 16:15"
+  },
+  {
+   "festival_day": "24/07/2026",
+   "stage": "Gruener Stadl",
+   "artist": "Jey aux Platines",
+   "start": "2026-07-24 16:15",
+   "end": "2026-07-24 17:30"
+  },
+  {
+   "festival_day": "24/07/2026",
+   "stage": "Gruener Stadl",
+   "artist": "Zoom.Like",
+   "start": "2026-07-24 17:30",
+   "end": "2026-07-24 18:45"
+  },
+  {
+   "festival_day": "24/07/2026",
+   "stage": "Gruener Stadl",
+   "artist": "Nancy Franck",
+   "start": "2026-07-24 18:45",
+   "end": "2026-07-24 19:15"
+  },
+  {
+   "festival_day": "24/07/2026",
+   "stage": "Gruener Stadl",
+   "artist": "Malle Anja",
+   "start": "2026-07-24 19:15",
+   "end": "2026-07-24 19:45"
+  },
+  {
+   "festival_day": "24/07/2026",
+   "stage": "Gruener Stadl",
+   "artist": "Anja Bavaria",
+   "start": "2026-07-24 19:45",
+   "end": "2026-07-24 20:15"
+  },
+  {
+   "festival_day": "24/07/2026",
+   "stage": "Gruener Stadl",
+   "artist": "DJ Aaron",
+   "start": "2026-07-24 20:15",
+   "end": "2026-07-24 20:45"
+  },
+  {
+   "festival_day": "24/07/2026",
+   "stage": "Gruener Stadl",
+   "artist": "Alex Hof",
+   "start": "2026-07-24 20:45",
+   "end": "2026-07-24 22:00"
+  },
+  {
+   "festival_day": "24/07/2026",
+   "stage": "Gruener Stadl",
+   "artist": "Hänsel",
+   "start": "2026-07-24 22:00",
+   "end": "2026-07-24 22:45"
+  },
+  {
+   "festival_day": "24/07/2026",
+   "stage": "Gruener Stadl",
+   "artist": "Noisetime",
+   "start": "2026-07-24 22:45",
+   "end": "2026-07-24 23:30"
+  },
+  {
+   "festival_day": "24/07/2026",
+   "stage": "Gruener Stadl",
+   "artist": "Noah Zett feat. NOISETIME",
+   "start": "2026-07-24 23:15",
+   "end": "2026-07-24 23:30"
+  },
+  {
+   "festival_day": "24/07/2026",
+   "stage": "Gruener Stadl",
+   "artist": "Calvin Kleinen",
+   "start": "2026-07-24 23:30",
+   "end": "2026-07-25 00:00"
+  },
+  {
+   "festival_day": "24/07/2026",
+   "stage": "Gruener Stadl",
+   "artist": "Felix Harrer",
+   "start": "2026-07-25 00:00",
+   "end": "2026-07-25 01:00"
+  },
+  {
+   "festival_day": "24/07/2026",
+   "stage": "Gruener Stadl",
+   "artist": "NIKSTER b2b SANE",
+   "start": "2026-07-25 01:00",
+   "end": "2026-07-25 02:00"
+  },
+  {
+   "festival_day": "24/07/2026",
+   "stage": "\"House of Remix\" by IQOS",
+   "artist": "TEZZ",
+   "start": "2026-07-24 14:00",
+   "end": "2026-07-24 15:30"
+  },
+  {
+   "festival_day": "24/07/2026",
+   "stage": "\"House of Remix\" by IQOS",
+   "artist": "Lavinia",
+   "start": "2026-07-24 15:30",
+   "end": "2026-07-24 16:45"
+  },
+  {
+   "festival_day": "24/07/2026",
+   "stage": "\"House of Remix\" by IQOS",
+   "artist": "Salvatore Mancuso",
+   "start": "2026-07-24 16:45",
+   "end": "2026-07-24 18:00"
+  },
+  {
+   "festival_day": "24/07/2026",
+   "stage": "\"House of Remix\" by IQOS",
+   "artist": "Neptunica",
+   "start": "2026-07-24 18:00",
+   "end": "2026-07-24 19:15"
+  },
+  {
+   "festival_day": "24/07/2026",
+   "stage": "\"House of Remix\" by IQOS",
+   "artist": "Fabian Farell",
+   "start": "2026-07-24 19:15",
+   "end": "2026-07-24 20:30"
+  },
+  {
+   "festival_day": "24/07/2026",
+   "stage": "\"House of Remix\" by IQOS",
+   "artist": "Ava Crown",
+   "start": "2026-07-24 20:30",
+   "end": "2026-07-24 21:45"
+  },
+  {
+   "festival_day": "24/07/2026",
+   "stage": "\"House of Remix\" by IQOS",
+   "artist": "Caro van EE",
+   "start": "2026-07-24 21:45",
+   "end": "2026-07-24 23:00"
+  },
+  {
+   "festival_day": "24/07/2026",
+   "stage": "\"House of Remix\" by IQOS",
+   "artist": "AXMO",
+   "start": "2026-07-24 23:00",
+   "end": "2026-07-25 00:00"
+  },
+  {
+   "festival_day": "25/07/2026",
+   "stage": "CALDERA",
+   "artist": "Carpoolboy",
+   "start": "2026-07-25 14:00",
+   "end": "2026-07-25 15:00"
+  },
+  {
+   "festival_day": "25/07/2026",
+   "stage": "CALDERA",
+   "artist": "Paul Keen",
+   "start": "2026-07-25 15:00",
+   "end": "2026-07-25 16:00"
+  },
+  {
+   "festival_day": "25/07/2026",
+   "stage": "CALDERA",
+   "artist": "STVW",
+   "start": "2026-07-25 16:00",
+   "end": "2026-07-25 17:00"
+  },
+  {
+   "festival_day": "25/07/2026",
+   "stage": "CALDERA",
+   "artist": "Ely Oaks",
+   "start": "2026-07-25 17:00",
+   "end": "2026-07-25 18:00"
+  },
+  {
+   "festival_day": "25/07/2026",
+   "stage": "CALDERA",
+   "artist": "Oswald",
+   "start": "2026-07-25 18:00",
+   "end": "2026-07-25 19:00"
+  },
+  {
+   "festival_day": "25/07/2026",
+   "stage": "CALDERA",
+   "artist": "Mausio b2b Trancemaster Krause",
+   "start": "2026-07-25 19:00",
+   "end": "2026-07-25 20:00"
+  },
+  {
+   "festival_day": "25/07/2026",
+   "stage": "CALDERA",
+   "artist": "Stella Bossi",
+   "start": "2026-07-25 20:00",
+   "end": "2026-07-25 21:00"
+  },
+  {
+   "festival_day": "25/07/2026",
+   "stage": "CALDERA",
+   "artist": "Lari Luke",
+   "start": "2026-07-25 21:00",
+   "end": "2026-07-25 22:00"
+  },
+  {
+   "festival_day": "25/07/2026",
+   "stage": "CALDERA",
+   "artist": "REWI",
+   "start": "2026-07-25 22:00",
+   "end": "2026-07-25 23:00"
+  },
+  {
+   "festival_day": "25/07/2026",
+   "stage": "CALDERA",
+   "artist": "Blasterjaxx",
+   "start": "2026-07-25 23:00",
+   "end": "2026-07-26 00:00"
+  },
+  {
+   "festival_day": "25/07/2026",
+   "stage": "CALDERA",
+   "artist": "Will Sparks",
+   "start": "2026-07-26 00:00",
+   "end": "2026-07-26 01:00"
+  },
+  {
+   "festival_day": "25/07/2026",
+   "stage": "CALDERA",
+   "artist": "Da Tweekaz",
+   "start": "2026-07-26 01:00",
+   "end": "2026-07-26 02:00"
+  },
+  {
+   "festival_day": "25/07/2026",
+   "stage": "STONELANDS",
+   "artist": "Sikhaya",
+   "start": "2026-07-25 15:00",
+   "end": "2026-07-25 16:00"
+  },
+  {
+   "festival_day": "25/07/2026",
+   "stage": "STONELANDS",
+   "artist": "Serafina",
+   "start": "2026-07-25 16:00",
+   "end": "2026-07-25 17:00"
+  },
+  {
+   "festival_day": "25/07/2026",
+   "stage": "STONELANDS",
+   "artist": "Kobosil",
+   "start": "2026-07-25 17:00",
+   "end": "2026-07-25 18:30"
+  },
+  {
+   "festival_day": "25/07/2026",
+   "stage": "STONELANDS",
+   "artist": "PRADA2000",
+   "start": "2026-07-25 18:30",
+   "end": "2026-07-25 20:00"
+  },
+  {
+   "festival_day": "25/07/2026",
+   "stage": "STONELANDS",
+   "artist": "Azzle 447 b2b Ueberrest",
+   "start": "2026-07-25 20:00",
+   "end": "2026-07-25 21:30"
+  },
+  {
+   "festival_day": "25/07/2026",
+   "stage": "STONELANDS",
+   "artist": "Ueberrest",
+   "start": "2026-07-25 21:30",
+   "end": "2026-07-25 23:00"
+  },
+  {
+   "festival_day": "25/07/2026",
+   "stage": "STONELANDS",
+   "artist": "Kalte Liebe LIVE",
+   "start": "2026-07-25 23:00",
+   "end": "2026-07-26 00:00"
+  },
+  {
+   "festival_day": "25/07/2026",
+   "stage": "STONELANDS",
+   "artist": "Kølab feat. Anuuk & Don Choppa",
+   "start": "2026-07-26 00:00",
+   "end": "2026-07-26 01:00"
+  },
+  {
+   "festival_day": "25/07/2026",
+   "stage": "STONELANDS",
+   "artist": "Dominique Lamee b2b IGDA",
+   "start": "2026-07-26 01:00",
+   "end": "2026-07-26 02:05"
+  },
+  {
+   "festival_day": "25/07/2026",
+   "stage": "Zone III",
+   "artist": "Anodyze",
+   "start": "2026-07-25 15:00",
+   "end": "2026-07-25 16:00"
+  },
+  {
+   "festival_day": "25/07/2026",
+   "stage": "Zone III",
+   "artist": "Dropixx",
+   "start": "2026-07-25 16:00",
+   "end": "2026-07-25 17:00"
+  },
+  {
+   "festival_day": "25/07/2026",
+   "stage": "Zone III",
+   "artist": "Mandy",
+   "start": "2026-07-25 17:00",
+   "end": "2026-07-25 18:00"
+  },
+  {
+   "festival_day": "25/07/2026",
+   "stage": "Zone III",
+   "artist": "Phuture Noize",
+   "start": "2026-07-25 18:00",
+   "end": "2026-07-25 19:00"
+  },
+  {
+   "festival_day": "25/07/2026",
+   "stage": "Zone III",
+   "artist": "Justin Pollnik",
+   "start": "2026-07-25 19:00",
+   "end": "2026-07-25 20:00"
+  },
+  {
+   "festival_day": "25/07/2026",
+   "stage": "Zone III",
+   "artist": "Jebroer",
+   "start": "2026-07-25 20:00",
+   "end": "2026-07-25 21:00"
+  },
+  {
+   "festival_day": "25/07/2026",
+   "stage": "Zone III",
+   "artist": "The Purge",
+   "start": "2026-07-25 21:00",
+   "end": "2026-07-25 22:00"
+  },
+  {
+   "festival_day": "25/07/2026",
+   "stage": "Zone III",
+   "artist": "D-STURB",
+   "start": "2026-07-25 22:00",
+   "end": "2026-07-25 23:00"
+  },
+  {
+   "festival_day": "25/07/2026",
+   "stage": "Zone III",
+   "artist": "ANIME b2b D-Fence",
+   "start": "2026-07-25 23:00",
+   "end": "2026-07-26 00:00"
+  },
+  {
+   "festival_day": "25/07/2026",
+   "stage": "Zone III",
+   "artist": "Illuszion b2b Opgenkonkerd",
+   "start": "2026-07-26 00:00",
+   "end": "2026-07-26 01:00"
+  },
+  {
+   "festival_day": "25/07/2026",
+   "stage": "Zone III",
+   "artist": "Cyber Gunz",
+   "start": "2026-07-26 01:00",
+   "end": "2026-07-26 02:05"
+  },
+  {
+   "festival_day": "25/07/2026",
+   "stage": "Magical Forest",
+   "artist": "Maja Sammelrider Samstag Magical",
+   "start": "2026-07-25 15:55",
+   "end": "2026-07-25 16:00"
+  },
+  {
+   "festival_day": "25/07/2026",
+   "stage": "Magical Forest",
+   "artist": "Nell",
+   "start": "2026-07-25 16:00",
+   "end": "2026-07-25 17:30"
+  },
+  {
+   "festival_day": "25/07/2026",
+   "stage": "Magical Forest",
+   "artist": "Tye Vie",
+   "start": "2026-07-25 17:30",
+   "end": "2026-07-25 18:30"
+  },
+  {
+   "festival_day": "25/07/2026",
+   "stage": "Magical Forest",
+   "artist": "Maks",
+   "start": "2026-07-25 18:30",
+   "end": "2026-07-25 19:30"
+  },
+  {
+   "festival_day": "25/07/2026",
+   "stage": "Magical Forest",
+   "artist": "Mballa",
+   "start": "2026-07-25 19:30",
+   "end": "2026-07-25 20:30"
+  },
+  {
+   "festival_day": "25/07/2026",
+   "stage": "Magical Forest",
+   "artist": "Jean Philippe b2b Mole",
+   "start": "2026-07-25 20:30",
+   "end": "2026-07-25 22:30"
+  },
+  {
+   "festival_day": "25/07/2026",
+   "stage": "Magical Forest",
+   "artist": "Marasi",
+   "start": "2026-07-25 22:30",
+   "end": "2026-07-26 00:00"
+  },
+  {
+   "festival_day": "25/07/2026",
+   "stage": "Magical Forest",
+   "artist": "Osaro",
+   "start": "2026-07-26 00:00",
+   "end": "2026-07-26 01:00"
+  },
+  {
+   "festival_day": "25/07/2026",
+   "stage": "Magical Forest",
+   "artist": "Lika",
+   "start": "2026-07-26 01:00",
+   "end": "2026-07-26 02:00"
+  },
+  {
+   "festival_day": "25/07/2026",
+   "stage": "Goa Garden",
+   "artist": "Naze",
+   "start": "2026-07-25 16:00",
+   "end": "2026-07-25 17:00"
+  },
+  {
+   "festival_day": "25/07/2026",
+   "stage": "Goa Garden",
+   "artist": "Orso",
+   "start": "2026-07-25 17:00",
+   "end": "2026-07-25 18:30"
+  },
+  {
+   "festival_day": "25/07/2026",
+   "stage": "Goa Garden",
+   "artist": "B yond",
+   "start": "2026-07-25 18:30",
+   "end": "2026-07-25 20:00"
+  },
+  {
+   "festival_day": "25/07/2026",
+   "stage": "Goa Garden",
+   "artist": "Nomos",
+   "start": "2026-07-25 20:00",
+   "end": "2026-07-25 21:30"
+  },
+  {
+   "festival_day": "25/07/2026",
+   "stage": "Goa Garden",
+   "artist": "Grace",
+   "start": "2026-07-25 21:30",
+   "end": "2026-07-25 23:00"
+  },
+  {
+   "festival_day": "25/07/2026",
+   "stage": "Goa Garden",
+   "artist": "Witchislav",
+   "start": "2026-07-25 23:00",
+   "end": "2026-07-26 00:30"
+  },
+  {
+   "festival_day": "25/07/2026",
+   "stage": "Goa Garden",
+   "artist": "Opix",
+   "start": "2026-07-26 00:30",
+   "end": "2026-07-26 02:00"
+  },
+  {
+   "festival_day": "25/07/2026",
+   "stage": "EDEKA CAMPINGSTAGE",
+   "artist": "EDEKA CAMPINGSTAGE ARTISTs",
+   "start": "2026-07-25 14:00",
+   "end": "2026-07-25 15:00"
+  },
+  {
+   "festival_day": "25/07/2026",
+   "stage": "Darkwoods",
+   "artist": "Ill.i.saw",
+   "start": "2026-07-25 16:00",
+   "end": "2026-07-25 17:30"
+  },
+  {
+   "festival_day": "25/07/2026",
+   "stage": "Darkwoods",
+   "artist": "Nocula",
+   "start": "2026-07-25 17:30",
+   "end": "2026-07-25 18:30"
+  },
+  {
+   "festival_day": "25/07/2026",
+   "stage": "Darkwoods",
+   "artist": "Svmrai",
+   "start": "2026-07-25 18:30",
+   "end": "2026-07-25 19:30"
+  },
+  {
+   "festival_day": "25/07/2026",
+   "stage": "Darkwoods",
+   "artist": "Maxxd",
+   "start": "2026-07-25 19:30",
+   "end": "2026-07-25 20:30"
+  },
+  {
+   "festival_day": "25/07/2026",
+   "stage": "Darkwoods",
+   "artist": "Rvolution",
+   "start": "2026-07-25 20:30",
+   "end": "2026-07-25 21:30"
+  },
+  {
+   "festival_day": "25/07/2026",
+   "stage": "Darkwoods",
+   "artist": "Dan Lee",
+   "start": "2026-07-25 21:30",
+   "end": "2026-07-25 22:30"
+  },
+  {
+   "festival_day": "25/07/2026",
+   "stage": "Darkwoods",
+   "artist": "Eskei83",
+   "start": "2026-07-25 22:30",
+   "end": "2026-07-25 23:30"
+  },
+  {
+   "festival_day": "25/07/2026",
+   "stage": "Darkwoods",
+   "artist": "Used",
+   "start": "2026-07-25 23:30",
+   "end": "2026-07-26 00:30"
+  },
+  {
+   "festival_day": "25/07/2026",
+   "stage": "Darkwoods",
+   "artist": "Fishy b2b Iron",
+   "start": "2026-07-26 00:30",
+   "end": "2026-07-26 02:00"
+  },
+  {
+   "festival_day": "25/07/2026",
+   "stage": "Gruener Stadl",
+   "artist": "Richie Lauterbach",
+   "start": "2026-07-25 14:00",
+   "end": "2026-07-25 15:15"
+  },
+  {
+   "festival_day": "25/07/2026",
+   "stage": "Gruener Stadl",
+   "artist": "Julezz",
+   "start": "2026-07-25 15:15",
+   "end": "2026-07-25 16:30"
+  },
+  {
+   "festival_day": "25/07/2026",
+   "stage": "Gruener Stadl",
+   "artist": "Aline Jost",
+   "start": "2026-07-25 16:30",
+   "end": "2026-07-25 17:00"
+  },
+  {
+   "festival_day": "25/07/2026",
+   "stage": "Gruener Stadl",
+   "artist": "Micha Schue",
+   "start": "2026-07-25 17:00",
+   "end": "2026-07-25 17:30"
+  },
+  {
+   "festival_day": "25/07/2026",
+   "stage": "Gruener Stadl",
+   "artist": "Mallotzi Boys",
+   "start": "2026-07-25 17:30",
+   "end": "2026-07-25 18:15"
+  },
+  {
+   "festival_day": "25/07/2026",
+   "stage": "Gruener Stadl",
+   "artist": "lebendestim",
+   "start": "2026-07-25 18:15",
+   "end": "2026-07-25 18:45"
+  },
+  {
+   "festival_day": "25/07/2026",
+   "stage": "Gruener Stadl",
+   "artist": "YAMAS",
+   "start": "2026-07-25 18:45",
+   "end": "2026-07-25 20:00"
+  },
+  {
+   "festival_day": "25/07/2026",
+   "stage": "Gruener Stadl",
+   "artist": "Steve Lima",
+   "start": "2026-07-25 20:00",
+   "end": "2026-07-25 21:15"
+  },
+  {
+   "festival_day": "25/07/2026",
+   "stage": "Gruener Stadl",
+   "artist": "Gregor le Dahl",
+   "start": "2026-07-25 21:15",
+   "end": "2026-07-25 22:15"
+  },
+  {
+   "festival_day": "25/07/2026",
+   "stage": "Gruener Stadl",
+   "artist": "Jerome Molnar",
+   "start": "2026-07-25 22:15",
+   "end": "2026-07-25 23:15"
+  },
+  {
+   "festival_day": "25/07/2026",
+   "stage": "Gruener Stadl",
+   "artist": "Almklausi",
+   "start": "2026-07-25 23:15",
+   "end": "2026-07-25 23:45"
+  },
+  {
+   "festival_day": "25/07/2026",
+   "stage": "Gruener Stadl",
+   "artist": "NoooN",
+   "start": "2026-07-25 23:45",
+   "end": "2026-07-26 01:00"
+  },
+  {
+   "festival_day": "25/07/2026",
+   "stage": "Gruener Stadl",
+   "artist": "Hardstyle Buamz",
+   "start": "2026-07-26 01:00",
+   "end": "2026-07-26 02:00"
+  },
+  {
+   "festival_day": "25/07/2026",
+   "stage": "\"House of Remix\" by IQOS",
+   "artist": "Fabio Plois",
+   "start": "2026-07-25 14:00",
+   "end": "2026-07-25 14:50"
+  },
+  {
+   "festival_day": "25/07/2026",
+   "stage": "\"House of Remix\" by IQOS",
+   "artist": "\"House of Remix Special-Act\"",
+   "start": "2026-07-25 15:00",
+   "end": "2026-07-25 15:30"
+  },
+  {
+   "festival_day": "25/07/2026",
+   "stage": "\"House of Remix\" by IQOS",
+   "artist": "Ely Oaks",
+   "start": "2026-07-25 15:30",
+   "end": "2026-07-25 16:30"
+  },
+  {
+   "festival_day": "25/07/2026",
+   "stage": "\"House of Remix\" by IQOS",
+   "artist": "R2",
+   "start": "2026-07-25 16:30",
+   "end": "2026-07-25 17:30"
+  },
+  {
+   "festival_day": "25/07/2026",
+   "stage": "\"House of Remix\" by IQOS",
+   "artist": "Fät Tony",
+   "start": "2026-07-25 17:30",
+   "end": "2026-07-25 18:30"
+  },
+  {
+   "festival_day": "25/07/2026",
+   "stage": "\"House of Remix\" by IQOS",
+   "artist": "Nina-Sue",
+   "start": "2026-07-25 18:30",
+   "end": "2026-07-25 19:30"
+  },
+  {
+   "festival_day": "25/07/2026",
+   "stage": "\"House of Remix\" by IQOS",
+   "artist": "LIZOT",
+   "start": "2026-07-25 19:30",
+   "end": "2026-07-25 20:45"
+  },
+  {
+   "festival_day": "25/07/2026",
+   "stage": "\"House of Remix\" by IQOS",
+   "artist": "Felicia Bianco",
+   "start": "2026-07-25 20:45",
+   "end": "2026-07-25 22:00"
+  },
+  {
+   "festival_day": "25/07/2026",
+   "stage": "\"House of Remix\" by IQOS",
+   "artist": "Toby Romeo",
+   "start": "2026-07-25 22:00",
+   "end": "2026-07-25 23:00"
+  },
+  {
+   "festival_day": "25/07/2026",
+   "stage": "\"House of Remix\" by IQOS",
+   "artist": "Justin Prince",
+   "start": "2026-07-25 23:00",
+   "end": "2026-07-26 00:00"
+  },
+  {
+   "festival_day": "26/07/2026",
+   "stage": "CALDERA",
+   "artist": "ItaloBrothers",
+   "start": "2026-07-26 14:00",
+   "end": "2026-07-26 15:30"
+  },
+  {
+   "festival_day": "26/07/2026",
+   "stage": "CALDERA",
+   "artist": "2 Engel & Charlie",
+   "start": "2026-07-26 15:30",
+   "end": "2026-07-26 16:30"
+  },
+  {
+   "festival_day": "26/07/2026",
+   "stage": "CALDERA",
+   "artist": "Groove Coveerage",
+   "start": "2026-07-26 16:30",
+   "end": "2026-07-26 17:30"
+  },
+  {
+   "festival_day": "26/07/2026",
+   "stage": "CALDERA",
+   "artist": "Mia Julia",
+   "start": "2026-07-26 20:00",
+   "end": "2026-07-26 20:45"
+  },
+  {
+   "festival_day": "26/07/2026",
+   "stage": "CALDERA",
+   "artist": "HBz",
+   "start": "2026-07-26 20:45",
+   "end": "2026-07-26 21:45"
+  },
+  {
+   "festival_day": "26/07/2026",
+   "stage": "CALDERA",
+   "artist": "Harris & Ford",
+   "start": "2026-07-26 21:45",
+   "end": "2026-07-26 22:45"
+  },
+  {
+   "festival_day": "26/07/2026",
+   "stage": "STONELANDS",
+   "artist": "Luke Madness",
+   "start": "2026-07-26 15:00",
+   "end": "2026-07-26 16:00"
+  },
+  {
+   "festival_day": "26/07/2026",
+   "stage": "STONELANDS",
+   "artist": "Johannes Schuster",
+   "start": "2026-07-26 16:00",
+   "end": "2026-07-26 17:30"
+  },
+  {
+   "festival_day": "26/07/2026",
+   "stage": "STONELANDS",
+   "artist": "KUKO",
+   "start": "2026-07-26 17:30",
+   "end": "2026-07-26 19:00"
+  },
+  {
+   "festival_day": "26/07/2026",
+   "stage": "STONELANDS",
+   "artist": "In Verruf",
+   "start": "2026-07-26 19:00",
+   "end": "2026-07-26 20:30"
+  },
+  {
+   "festival_day": "26/07/2026",
+   "stage": "STONELANDS",
+   "artist": "Winson",
+   "start": "2026-07-26 20:30",
+   "end": "2026-07-26 21:45"
+  },
+  {
+   "festival_day": "26/07/2026",
+   "stage": "STONELANDS",
+   "artist": "Jazzy x Jowi",
+   "start": "2026-07-26 21:45",
+   "end": "2026-07-26 23:00"
+  },
+  {
+   "festival_day": "26/07/2026",
+   "stage": "Zone III",
+   "artist": "ANVEE",
+   "start": "2026-07-26 15:00",
+   "end": "2026-07-26 16:15"
+  },
+  {
+   "festival_day": "26/07/2026",
+   "stage": "Zone III",
+   "artist": "LUNAX",
+   "start": "2026-07-26 16:15",
+   "end": "2026-07-26 17:15"
+  },
+  {
+   "festival_day": "26/07/2026",
+   "stage": "Zone III",
+   "artist": "Aftershock",
+   "start": "2026-07-26 17:15",
+   "end": "2026-07-26 18:15"
+  },
+  {
+   "festival_day": "26/07/2026",
+   "stage": "Zone III",
+   "artist": "Wildstylez",
+   "start": "2026-07-26 18:15",
+   "end": "2026-07-26 19:15"
+  },
+  {
+   "festival_day": "26/07/2026",
+   "stage": "Zone III",
+   "artist": "Vertile",
+   "start": "2026-07-26 19:15",
+   "end": "2026-07-26 20:15"
+  },
+  {
+   "festival_day": "26/07/2026",
+   "stage": "Zone III",
+   "artist": "Sickmode",
+   "start": "2026-07-26 20:15",
+   "end": "2026-07-26 21:00"
+  },
+  {
+   "festival_day": "26/07/2026",
+   "stage": "Zone III",
+   "artist": "KROWDEXX",
+   "start": "2026-07-26 21:00",
+   "end": "2026-07-26 22:00"
+  },
+  {
+   "festival_day": "26/07/2026",
+   "stage": "Zone III",
+   "artist": "Unicorn on K",
+   "start": "2026-07-26 22:00",
+   "end": "2026-07-26 23:00"
+  },
+  {
+   "festival_day": "26/07/2026",
+   "stage": "Magical Forest",
+   "artist": "MBP",
+   "start": "2026-07-26 16:00",
+   "end": "2026-07-26 17:00"
+  },
+  {
+   "festival_day": "26/07/2026",
+   "stage": "Magical Forest",
+   "artist": "Brandon",
+   "start": "2026-07-26 17:00",
+   "end": "2026-07-26 18:00"
+  },
+  {
+   "festival_day": "26/07/2026",
+   "stage": "Magical Forest",
+   "artist": "Gigo'n'Migo",
+   "start": "2026-07-26 18:00",
+   "end": "2026-07-26 19:00"
+  },
+  {
+   "festival_day": "26/07/2026",
+   "stage": "Magical Forest",
+   "artist": "Noel Holler",
+   "start": "2026-07-26 19:00",
+   "end": "2026-07-26 20:00"
+  },
+  {
+   "festival_day": "26/07/2026",
+   "stage": "Magical Forest",
+   "artist": "Lovra",
+   "start": "2026-07-26 20:00",
+   "end": "2026-07-26 21:00"
+  },
+  {
+   "festival_day": "26/07/2026",
+   "stage": "Magical Forest",
+   "artist": "Pretty Pink",
+   "start": "2026-07-26 21:00",
+   "end": "2026-07-26 22:00"
+  },
+  {
+   "festival_day": "26/07/2026",
+   "stage": "Magical Forest",
+   "artist": "Phake",
+   "start": "2026-07-26 22:00",
+   "end": "2026-07-26 23:00"
+  },
+  {
+   "festival_day": "26/07/2026",
+   "stage": "Darkwoods",
+   "artist": "Vero & Sleepwell",
+   "start": "2026-07-26 16:00",
+   "end": "2026-07-26 17:00"
+  },
+  {
+   "festival_day": "26/07/2026",
+   "stage": "Darkwoods",
+   "artist": "Dice",
+   "start": "2026-07-26 17:00",
+   "end": "2026-07-26 18:00"
+  },
+  {
+   "festival_day": "26/07/2026",
+   "stage": "Darkwoods",
+   "artist": "GEORGE RADSPORT b2b NYRA",
+   "start": "2026-07-26 18:00",
+   "end": "2026-07-26 19:00"
+  },
+  {
+   "festival_day": "26/07/2026",
+   "stage": "Darkwoods",
+   "artist": "Bonnie Strange b2b shoki287",
+   "start": "2026-07-26 19:00",
+   "end": "2026-07-26 20:00"
+  },
+  {
+   "festival_day": "26/07/2026",
+   "stage": "Darkwoods",
+   "artist": "DJ Dreckisch",
+   "start": "2026-07-26 20:00",
+   "end": "2026-07-26 21:00"
+  },
+  {
+   "festival_day": "26/07/2026",
+   "stage": "Darkwoods",
+   "artist": "Mika Heggemann",
+   "start": "2026-07-26 21:00",
+   "end": "2026-07-26 22:00"
+  },
+  {
+   "festival_day": "26/07/2026",
+   "stage": "Darkwoods",
+   "artist": "Trancemaster Krause",
+   "start": "2026-07-26 22:00",
+   "end": "2026-07-26 23:00"
+  },
+  {
+   "festival_day": "26/07/2026",
+   "stage": "Gruener Stadl",
+   "artist": "Breakfast Club",
+   "start": "2026-07-26 11:00",
+   "end": "2026-07-26 11:05"
+  },
+  {
+   "festival_day": "26/07/2026",
+   "stage": "Gruener Stadl",
+   "artist": "Heydiz & Zevs",
+   "start": "2026-07-26 11:30",
+   "end": "2026-07-26 13:00"
+  },
+  {
+   "festival_day": "26/07/2026",
+   "stage": "Gruener Stadl",
+   "artist": "Lasse Pex b2b Moderica",
+   "start": "2026-07-26 13:00",
+   "end": "2026-07-26 14:00"
+  },
+  {
+   "festival_day": "26/07/2026",
+   "stage": "Gruener Stadl",
+   "artist": "Choose White b2b Felipe de M.",
+   "start": "2026-07-26 14:00",
+   "end": "2026-07-26 15:30"
+  },
+  {
+   "festival_day": "26/07/2026",
+   "stage": "Gruener Stadl",
+   "artist": "B-Zey b2b S.A.N.D.Y.",
+   "start": "2026-07-26 15:30",
+   "end": "2026-07-26 17:00"
+  },
+  {
+   "festival_day": "26/07/2026",
+   "stage": "Gruener Stadl",
+   "artist": "Tekwantony",
+   "start": "2026-07-26 17:00",
+   "end": "2026-07-26 18:00"
+  },
+  {
+   "festival_day": "26/07/2026",
+   "stage": "Gruener Stadl",
+   "artist": "Blankenheim b2b Lumor",
+   "start": "2026-07-26 18:00",
+   "end": "2026-07-26 19:30"
+  },
+  {
+   "festival_day": "26/07/2026",
+   "stage": "Gruener Stadl",
+   "artist": "Gigo'n'Migo",
+   "start": "2026-07-26 19:30",
+   "end": "2026-07-26 20:30"
+  },
+  {
+   "festival_day": "26/07/2026",
+   "stage": "Gruener Stadl",
+   "artist": "ZAPPA",
+   "start": "2026-07-26 20:30",
+   "end": "2026-07-26 21:30"
+  },
+  {
+   "festival_day": "26/07/2026",
+   "stage": "Gruener Stadl",
+   "artist": "Habama Brothers",
+   "start": "2026-07-26 21:30",
+   "end": "2026-07-26 22:45"
+  },
+  {
+   "festival_day": "26/07/2026",
+   "stage": "\"House of Remix\" by IQOS",
+   "artist": "TEZZ",
+   "start": "2026-07-26 14:00",
+   "end": "2026-07-26 15:30"
+  },
+  {
+   "festival_day": "26/07/2026",
+   "stage": "\"House of Remix\" by IQOS",
+   "artist": "Jo van der Meer",
+   "start": "2026-07-26 15:30",
+   "end": "2026-07-26 16:45"
+  },
+  {
+   "festival_day": "26/07/2026",
+   "stage": "\"House of Remix\" by IQOS",
+   "artist": "MEDUN",
+   "start": "2026-07-26 16:45",
+   "end": "2026-07-26 18:00"
+  },
+  {
+   "festival_day": "26/07/2026",
+   "stage": "\"House of Remix\" by IQOS",
+   "artist": "MBP",
+   "start": "2026-07-26 18:00",
+   "end": "2026-07-26 19:00"
+  },
+  {
+   "festival_day": "26/07/2026",
+   "stage": "\"House of Remix\" by IQOS",
+   "artist": "Jaxomy",
+   "start": "2026-07-26 19:00",
+   "end": "2026-07-26 20:00"
+  },
+  {
+   "festival_day": "26/07/2026",
+   "stage": "\"House of Remix\" by IQOS",
+   "artist": "Brandon",
+   "start": "2026-07-26 20:00",
+   "end": "2026-07-26 21:00"
+  },
+  {
+   "festival_day": "26/07/2026",
+   "stage": "\"House of Remix\" by IQOS",
+   "artist": "Noel Holler",
+   "start": "2026-07-26 21:00",
+   "end": "2026-07-26 22:00"
+  },
+  {
+   "festival_day": "26/07/2026",
+   "stage": "\"House of Remix\" by IQOS",
+   "artist": "George Radsport",
+   "start": "2026-07-26 22:00",
+   "end": "2026-07-26 23:00"
+  },
+  {
+   "festival_day": "26/07/2026",
+   "stage": "Goa Garden",
+   "artist": "Pinus",
+   "start": "2026-07-26 16:00",
+   "end": "2026-07-26 17:30"
+  },
+  {
+   "festival_day": "26/07/2026",
+   "stage": "Goa Garden",
+   "artist": "Porobo",
+   "start": "2026-07-26 17:30",
+   "end": "2026-07-26 19:00"
+  },
+  {
+   "festival_day": "26/07/2026",
+   "stage": "Goa Garden",
+   "artist": "Total Balance",
+   "start": "2026-07-26 19:00",
+   "end": "2026-07-26 20:30"
+  },
+  {
+   "festival_day": "26/07/2026",
+   "stage": "Goa Garden",
+   "artist": "Ennaya",
+   "start": "2026-07-26 20:30",
+   "end": "2026-07-26 21:30"
+  },
+  {
+   "festival_day": "26/07/2026",
+   "stage": "Goa Garden",
+   "artist": "Psychedelika",
+   "start": "2026-07-26 21:30",
+   "end": "2026-07-26 23:00"
+  },
+  {
+   "festival_day": "26/07/2026",
+   "stage": "EDEKA CAMPINGSTAGE",
+   "artist": "Unicorn on K",
+   "start": "2026-07-26 11:45",
+   "end": "2026-07-26 12:15"
+  }
+ ]
+}
