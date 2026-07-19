@@ -3829,3 +3829,103 @@ Absicherung, dass die App weiter laeuft (unabhaengig von dieser Session):
    teilt zu. Das ist der schon vorhandene Motor, unveraendert.
 2. Kopfleiste auf iOS-Geraet: Logo wird nicht mehr von der Statusleiste ueberlagert
    (Safe-Area-Fix 57fbf32, kam vor dieser Session).
+
+---
+
+# Session vom 19.07.2026 (Chat-Interface): Teilpaket A fertiggestellt, verifiziert, committed, gepusht
+
+## Herkunft dieser Session, wichtig für Vertrauenswürdigkeit
+
+Diese Session begann mit einer **kompaktierten Zusammenfassung** eines vorherigen Chats,
+in dem Teilpaket A (Springerlogik/Verfügbarkeit/Team) bereits größtenteils implementiert
+worden war, aber unkommittiert im Working Tree lag. Nach der Regel "dem Opener nicht
+trauen, erst messen" wurde der komplette Stand in dieser Session **frisch nachgemessen**,
+nicht aus der Zusammenfassung übernommen. Ergebnis: die Zusammenfassung war korrekt,
+sogar mehr Bausteine waren schon fertig als die dortige PENDING-Liste vermutete
+(`supabase-schema.sql`, `fromDbDriver`/`toDbDriver`-Passthrough, MissionReturnsTab- und
+MissionDriversTab-Badges waren alle schon im Code, nur noch nicht verifiziert/committed).
+
+## Stand (gemessen)
+
+    Ruecksetzpunkt vor Teilpaket A: Tag pre-teilpaket-A = ea74666 (9124 Zeilen)
+    Neuer Commit:                   72f1b5b (9261 Zeilen, +137 netto)
+    Gepusht nach origin/main:       ea74666..72f1b5b, sauberer Fast-Forward, 0 Divergenz
+
+`matchLoc` (der bekannte, bewusst nicht angefasste Bug) sitzt jetzt bei **Z. 7833**, nicht
+mehr Z. 7676 wie in älterer Doku. Verschiebung durch die 137 neuen/geänderten Zeilen vor
+`evaluateInsertion`. **Immer per grep nachmessen, nie auf die alte Zahl verlassen.**
+
+## Was in dieser Session fertig wurde
+
+1. Vollständige Neuverifikation des kompletten Standes (nicht der Zusammenfassung vertraut):
+   esbuild grün, Dupli-Funktions-Grep leer, JSX-Referenz-Cross-Check aufgelöst (einziger
+   Treffer `MissionControlBoundary` ist eine bestehende `class`, kein Fehlen einer
+   Definition, nicht von Teilpaket A berührt).
+2. `pruefe.mjs`-Diff gegen den Rücksetzpunkt (`ea74666`) gefahren: **0 entfernte
+   Top-Level-Konstrukte**, 7 gezielt geänderte Funktionen (`fromDbDriver`, `toDbDriver`,
+   `evaluateInsertion`, `suggestDrivers`, `AssignModal`, `MissionDriversTab`,
+   `MissionEmergencyTab`), 10 neue Helfer. `computeDriverStats` und `reasonText`
+   unangetastet, wie im Auftrag verlangt.
+3. Volle Regressionspipeline gefahren, alles grün:
+   - `rendertest.mjs`: alle 5 Referenzwerte exakt konstant (App-Root 25053, IssueModal
+     2452, StageIssueModal 2413, GuestIssueModal 2895, Field ohne mc 101).
+   - `test_passengercount_safety.mjs`: 24/24.
+   - `test_onetap_assign.mjs`: 14/14.
+   - `test_ridelist_empty.mjs`: 10/10.
+   - `test_springer_availability.mjs` (neu, aus der Vorsession übernommen): 34/34.
+   - Alle `smoke*.mjs` (smoke, 27b, 27b-guest, 27b-sections, 27b-settings, 27c, 27d, 27e):
+     grün, Classic-Reste überall 0. AssignModal 5852 Zeichen (Baseline 5812, +40 durch die
+     additiven Springer-/Team-Badges, rein additiv).
+   - `kontrast.mjs`: keine FAILs.
+   - `pruefe-fahrerabgleich.mjs`: **bewusst nicht gefahren**, braucht echte Live-DB-Zeilen
+     aus Supabase, die von dieser Umgebung aus nicht abrufbar sind (kein DB-Zugriff aus dem
+     Sandkasten). Bleibt offen für eine Session mit echtem Supabase-Zugriff.
+4. Mapping-Tabelle aller 23 Fahrer neu erzeugt und im Bericht dokumentiert
+   (`/tmp/verify_mapping.mjs`, gleiches Skript wie in der Vorsession). Alle 23 eindeutig
+   über normalisierten Vollnamen gemappt, JSON-IDs (d01-d23) matchen die App-Slugs nicht.
+5. `TEILPAKET-A-Ergebnisbericht.md` neu geschrieben (vollständiger Bericht nach Auftrag
+   Abschnitt 12: Rücksetzpunkt, geänderte Dateien/Funktionen, neue Felder, Mapping-Tabelle,
+   Springerlogik, availableFrom-Behandlung, UI-Änderungen, Testergebnisse, Restrisiken,
+   manuelle Abnahme-Checkliste, GO/NO-GO).
+6. Commit `72f1b5b` erstellt (nur die vier inhaltlichen Dateien gestaged, `package.json`/
+   `package-lock.json` bewusst draußen gelassen, das war nur ein `npm install`-Artefakt
+   vom frischen Klon, keine Teilpaket-A-Änderung).
+7. `git fetch origin main` vor dem Push (Pflicht laut Standing Rule): origin stand noch
+   auf `ea74666`, 0 Commits Divergenz, sauberer Fast-Forward möglich.
+8. Gepusht mit frischem PAT (im Chat-Verlauf erhalten, direkt in der Push-URL verwendet,
+   nicht in `git remote set-url` gespeichert, Config danach nachweislich sauber). Push
+   bestätigt: `ea74666..72f1b5b main -> origin/main`.
+
+## GO/NO-GO-Ergebnis
+
+**GO mit einem Vorbehalt**, siehe `TEILPAKET-A-Ergebnisbericht.md`: vor dem Live-Betrieb
+einmal den DB-Weg gegenprüfen (Schema-Nachtrag einspielen oder bewusst weglassen, dann
+`pruefe-fahrerabgleich.mjs` mit echten DB-Zeilen laufen lassen). Der Code selbst ist
+rückwärtskompatibel und funktioniert auch ohne den Schema-Nachtrag, da er primär aus der
+`DRIVER_PROFILES`-Konstante liest.
+
+## Regressionsrisiken dieser Session
+
+Aus Sicht dieser Session: keine neuen, da nur verifiziert, dokumentiert, committed und
+gepusht wurde, kein zusätzlicher Code geschrieben. Der Code selbst (aus der Vorsession)
+ist ein echter Eingriff in `evaluateInsertion`/`suggestDrivers`, siehe Restrisiken im
+Ergebnisbericht.
+
+## Offen für die nächste Session
+
+- `pruefe-fahrerabgleich.mjs` mit echten Supabase-Live-Zeilen laufen lassen (braucht
+  entweder Zugriff auf die echte DB oder Jordan liefert das SQL-Abfrageergebnis).
+- `matchLoc`-Bug (jetzt Z. 7833) ist weiterhin nicht angefasst, wie vereinbart. Steht laut
+  älterer Doku als "mandatory code fix before festival" auf dem Zettel, aber Jordan sagt
+  nach und nach, was gebaut wird. Nicht von selbst starten.
+- Sessions 28 bis 30 (MC-Migration Shell/PresenceManager-Rest/AuditLog/Report) bleiben wie
+  in der Vorsession entschieden bis nach dem Festival pausiert.
+- Weitere Teilpakete (B, C, ...) für den Vorschlagsmotor: Jordan bestimmt Umfang und
+  Reihenfolge selbst ("ich sage nach und nach was wir bauen"). Nicht vorgreifen.
+- Fahrertest war für Samstag 18.07. angesetzt (liegt zum Zeitpunkt dieser Session bereits
+  einen Tag zurück). Ergebnis/Feedback daraus in dieser Session nicht besprochen, ggf. bei
+  Jordan nachfragen, falls relevant für die nächste Session.
+
+## Zeitfenster, unverändert wichtig
+
+Ab 21.07. keine Löschungen mehr. Festival 23. bis 27.07.2026.
