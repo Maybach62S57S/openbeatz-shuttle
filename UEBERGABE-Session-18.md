@@ -5642,3 +5642,38 @@ Ueberlappungsschutz.
 **Stand nach dieser Session:** Buehne + Set-Zeit fertig, verifiziert,
 committet (`23b3796`). `src/ShuttleLeitstelle.jsx` 13112 Zeilen. Freeze
 auf Jordans Wunsch aufgehoben, keine Loeschung in dieser Session.
+
+---
+
+## Hinweis: veralteter Paralleler Opener (20.07.2026, gleicher Tag)
+
+Jordan hat in diesem Chat zusaetzlich einen Opener-Text aus einem anderen,
+parallel gestarteten Chat gepostet. In jenem anderen Chat wurde nach Jordans
+eigener Aussage nichts mehr umgesetzt, seit hier gearbeitet wird - der Text
+ist also nur ein ungenutzter Zwischenstand, kein zweiter echter Arbeitsstrang.
+
+**Der Text ist inzwischen veraltet und NICHT verwenden:**
+- Er nennt HEAD `d7cf2e1` / Code-Stand `31746ce`, 13067 Zeilen. Der echte
+  aktuelle Stand ist `a053af7` (13112 Zeilen, siehe Session "Buehne +
+  Set-Zeit" oben).
+- Er fuehrt **"matchLoc-Fix (Z. ~7676, hardcodiert auf 4 Orte)"** weiterhin
+  als offenen, mandatory Punkt vor dem Festival. Das ist **falsch/veraltet**:
+  der Fix ist laengst erledigt, Commit `bb868a4` ("matchLoc-/Orts-Fix: echte
+  Orte fuer die 2026-Pickup-Liste"), lange vor dieser Session. Aktuelle
+  `matchLoc()`-Funktion (~Z. 11440) hat echte Orte (Sheraton, Moevenpick,
+  Karl August, Leonardo, HBF, Muenchen, GAT, Nuernberg-Airport) plus die
+  Festival-Zonen-Regel (Caldera/Zone 3/Stonelands, alles andere -> Caldera).
+  Falls dieser Punkt in einem kuenftigen Opener wieder auftaucht: das ist ein
+  Kopierfehler aus einem alten Textbaustein, nicht ein echter offener Bug.
+  Vor dem Glauben immer selbst nachmessen (grep/Zeilennummer pruefen), nicht
+  dem Opener trauen.
+- Die uebrigen "offenen Kandidaten" (Presence-Toggles, unsubscribePush,
+  Setup-Toggles ohne Ergebnispruefung, GuestApp-Poll) stimmen inhaltlich
+  weiterhin mit dem Stand hier ueberein, sind also unproblematisch.
+
+**Massgeblich fuer die naechste Session ist ausschliesslich der Opener am
+Ende des Abschnitts "Session 'Buehne + Set-Zeit'" oben in diesem Dokument**
+(HEAD `a053af7`, 13112 Zeilen). Der NO_CHANGE/dynConflict-Hinweis aus der
+Schreib-Contention-Session (window.__obfWriteStats etc.) bleibt unabhaengig
+davon weiter gueltig fuer kuenftige Mutatoren, der steht bereits im Opener
+der Schreib-Contention-Session weiter oben.
