@@ -37,6 +37,53 @@ const SETUP_KEY = "obf:setup:v5";
 const DYN_KEY = "obf:dyn:v5";
 const POLL_MS = 3000;
 
+/* -------- Nebenlaeufigkeits-Haertung des zentralen Schreibpfads ----------- *
+ * Diese Bausteine machen updateDyn/updateSetup unter vielen gleichzeitigen
+ * Geraeten ruhiger. Sie aendern NICHTS an Datenstruktur, RPC-Signatur oder
+ * Geschaeftslogik. Drei Teile:
+ *
+ * 1. NO_CHANGE / dynConflict(): EXPLIZITER No-change- bzw. Konflikt-Vertrag,
+ *    mit dem ein Mutator sagen kann "fachlich nichts zu tun, nicht schreiben"
+ *    bzw. "erwarteter Zustand ist weg". Rein additiv: gibt ein Mutator wie
+ *    bisher das (evtl. mutierte) Datenobjekt zurueck, laeuft alles unveraendert
+ *    weiter. KEINE Erkennung ueber Objektidentitaet, KEIN Deep-Compare.
+ *
+ * 2. Serialisierung: getrennte Promise-Queues fuer dyn- und setup-Schreibungen
+ *    (in der App als useRef gehalten, siehe updateDyn/updateSetup), damit zwei
+ *    Aktionen desselben Geraets NICHT parallel dieselbe Revision lesen.
+ *
+ * 3. Backoff: kleiner begrenzter Jitter-Backoff NUR bei echtem CAS-Konflikt,
+ *    gegen den Herd-Effekt gleichzeitig schreibender Geraete.                  */
+
+// No-change: ein Mutator gibt GENAU dieses Symbol zurueck, wenn fachlich nichts
+// zu aendern ist. updateDyn/updateSetup schreiben dann nicht und erhoehen die
+// Revision nicht, melden aber { ok:true, unchanged:true } (No-op ist KEIN
+// Fehler). Ein No-op darf keinen Push ausloesen -> die Aufrufer pruefen res.ok
+// UND koennen zusaetzlich res.unchanged auswerten.
+const NO_CHANGE = Symbol("dyn-no-change");
+// Fachlicher Konflikt: erwarteter Zustand ist weg / wurde veraendert. Der
+// Mutator gibt dynConflict(code, message) zurueck -> updateDyn liefert
+// { ok:false, conflict:true, code, error:message } OHNE zu schreiben und OHNE
+// Revision zu erhoehen. Bestehende Aufrufer zeigen weiterhin res.error (eine
+// sachliche Meldung), umgestellte koennen den Code auswerten. NIE technische
+// Rohtexte an Nutzer.
+const DYN_CONFLICT = Symbol("dyn-conflict");
+function dynConflict(code, message) {
+  return { [DYN_CONFLICT]: true, code: code || "CONFLICT", message: message || "Die Aktion ist nicht mehr moeglich, der Stand hat sich geaendert." };
+}
+function isNoChange(v) { return v === NO_CHANGE; }
+function isDynConflict(v) { return !!(v && typeof v === "object" && v[DYN_CONFLICT]); }
+
+// Kleiner Jitter-Backoff, nur bei echtem CAS-Konflikt vor dem naechsten
+// Versuch. attempt ist 0-basiert (0 = erster Konflikt). Werte bewusst klein:
+// UI darf nicht mehrere Sekunden blockieren. Deckel bei 300 ms je Retry.
+function casBackoffMs(attempt) {
+  const base = 25 * 2 ** attempt;      // 25, 50, 100, 200, 400, ...
+  const jitter = Math.random() * 40;   // 0..40 ms
+  return Math.min(base + jitter, 300);
+}
+function sleep(ms) { return new Promise((r) => setTimeout(r, ms)); }
+
 /* ----------------------------- Storage-Helfer ---------------------------- */
 const mem = {}; // Fallback, falls window.storage fehlt (nur zur Vorschau)
 const hasStore = typeof window !== "undefined" && window.storage;
@@ -1074,47 +1121,124 @@ export default function App() {
     setUndoCount(undoStackRef.current.length);
   }, []);
 
-  // Rückgabe jetzt IMMER { ok, value, error }, nicht mehr nur die rohen Daten
-  // (siehe applyChatAction/confirmAction unten, die das jetzt wirklich
-  // auswerten). Wirft NIE ungefangen — sget/sset können bei einem echten
-  // Supabase-/Netzwerkfehler werfen (siehe sget oben), das wird hier zu
-  // einem sprechenden { ok:false, error } statt als unhandled rejection im
-  // Nirgendwo zu landen.
-  const updateDyn = useCallback(async (mutator) => {
+  // ---- Nebenlaeufigkeits-Haertung (siehe Modulkopf: NO_CHANGE etc.) --------
+  // Getrennte Schreib-Queues pro Datensatz, als Ref (NICHT bei jedem Render neu
+  // erzeugt). Grund fuer Ref statt Modulvariable: die Queue-Kette ist an genau
+  // diese App-Instanz gebunden (StrictMode/Remount bekommt eine frische Kette,
+  // Modul-globaler Zustand wuerde ueber Remounts hinweg verkleben). Getrennt fuer
+  // dyn und setup, weil ein langsames Setup-Schreiben sonst schnelle
+  // Dispo-Aktionen unnoetig ausbremst. Reine Leseoperationen laufen NICHT ueber
+  // die Queue.
+  const dynWriteQueueRef = useRef(Promise.resolve());
+  const setupWriteQueueRef = useRef(Promise.resolve());
+  // Leichte lokale Diagnose, kein externes Monitoring, keine DB-Zugriffe, keine
+  // personenbezogenen Daten (nur technische Zaehler). Optional in Dev sichtbar
+  // ueber window.__obfWriteStats.
+  const writeStatsRef = useRef({
+    dynSuccess: 0, dynNoop: 0, dynConflicts: 0, dynFailures: 0, dynMaxAttempts: 0,
+    setupSuccess: 0, setupNoop: 0, setupConflicts: 0, setupFailures: 0, setupMaxAttempts: 0,
+    lastConflictAt: 0,
+  });
+  useEffect(() => {
+    if (typeof window !== "undefined") window.__obfWriteStats = writeStatsRef.current;
+  }, []);
+
+  // Reiht task in die passende Queue ein und gibt dessen Ergebnis-Promise zurueck.
+  // enqueue selbst faengt nichts ab: der Aufrufer bekommt Ergebnis ODER Fehler
+  // des eigenen Tasks unveraendert. Die KETTE wird per .catch entkoppelt, damit
+  // ein Fehler im ersten Task den zweiten nicht blockiert (Queue laeuft weiter).
+  const enqueueWrite = useCallback((queueRef, task) => {
+    const run = queueRef.current.then(task, task);
+    queueRef.current = run.then(() => {}, () => {}); // Kette bleibt fehler-neutral verwendbar
+    return run;
+  }, []);
+
+  // Gemeinsame CAS-Schleife fuer dyn UND setup. Enthaelt: No-op-/Konflikt-
+  // Vertrag, Jitter-Backoff nur bei echtem CAS-Konflikt, kontrollierten
+  // Fehlschlag ohne Retry bei echten Fehlern (Netzwerk/RLS/Validierung werfen
+  // in sset und landen im catch -> KEIN sechsfacher Retry mehr fuer solche
+  // Faelle), und die Diagnosezaehler. onSuccess bekommt (cur, applied) fuer
+  // seiteneffektfreie Nacharbeit im Erfolgsfall (dyn: Undo-Eintrag).
+  const runCasWrite = useCallback(async (key, getEmpty, mutator, kind, onSuccess, onExhausted) => {
+    const stats = writeStatsRef.current;
+    const S = kind; // "dyn" | "setup" — Praefix fuer die Zaehler
     let last = null;
+    let attempts = 0;
     try {
       for (let attempt = 0; attempt < 6; attempt++) {
-        const cur = (await sget(DYN_KEY)) || emptyDyn();
+        attempts = attempt + 1;
+        const cur = (await sget(key)) || getEmpty();
         const baseRev = cur.rev || 0;
-        const next = mutator(structuredClone(cur));
+        const out = mutator(structuredClone(cur));
+        // Expliziter No-op: nicht schreiben, Revision nicht erhoehen.
+        if (isNoChange(out)) {
+          stats[S + "Noop"]++;
+          stats[S + "MaxAttempts"] = Math.max(stats[S + "MaxAttempts"], attempts);
+          return { ok: true, unchanged: true, value: cur };
+        }
+        // Expliziter fachlicher Konflikt: nicht schreiben, Revision nicht
+        // erhoehen, aber unterscheidbaren Grund liefern (kein Retry — der
+        // erwartete Zustand ist weg, ein erneuter Versuch aendert daran nichts).
+        if (isDynConflict(out)) {
+          stats[S + "MaxAttempts"] = Math.max(stats[S + "MaxAttempts"], attempts);
+          return { ok: false, conflict: true, code: out.code, value: cur, error: out.message };
+        }
+        const next = out;
         next.rev = baseRev + 1;
-        const result = await sset(DYN_KEY, next, baseRev);
+        const result = await sset(key, next, baseRev);
         if (result.ok) {
           const applied = result.value || next;
-          pushUndoEntry(cur.rides, applied.rides);
-          setDyn(applied);
+          if (onSuccess) onSuccess(cur, applied);
+          stats[S + "Success"]++;
+          stats[S + "MaxAttempts"] = Math.max(stats[S + "MaxAttempts"], attempts);
           return { ok: true, value: applied };
         }
-        // Konflikt (baseRev stimmt in der DB nicht mehr) -> mit dem
-        // zurückgegebenen, aktuellen Serverstand erneut versuchen
+        // Echter CAS-Konflikt (baseRev in der DB nicht mehr aktuell). Nur HIER
+        // wird wiederholt — mit kleinem Jitter-Backoff gegen den Herd-Effekt.
+        stats[S + "Conflicts"]++;
+        stats.lastConflictAt = Date.now();
         last = result.value;
+        // Kein Backoff nach dem letzten Versuch (danach wird nicht mehr gewartet).
+        if (attempt < 5) {
+          console.warn(`${key === DYN_KEY ? "updateDyn" : "updateSetup"}: CAS-Konflikt`, { attempt: attempts, baseRev, serverRev: last?.rev });
+          await sleep(casBackoffMs(attempt));
+        }
       }
-      // Nach wiederholten Kollisionen (bei wenigen gleichzeitigen Nutzern sehr
-      // unwahrscheinlich): NICHT blind überschreiben, das würde genau die
-      // Race Condition zurückbringen, die dieses CAS verhindern soll. Statt-
-      // dessen den aktuellen Serverstand übernehmen, die Änderung selbst geht
-      // verloren und muss erneut ausgelöst werden (z. B. nochmal klicken).
-      console.error("updateDyn: mehrfacher Schreibkonflikt, Änderung nicht angewendet");
-      if (last) setDyn(last);
-      return { ok: false, value: last, error: "Mehrfacher Schreibkonflikt, bitte erneut versuchen." };
+      stats[S + "Failures"]++;
+      stats[S + "MaxAttempts"] = Math.max(stats[S + "MaxAttempts"], attempts);
+      console.error(`${key === DYN_KEY ? "updateDyn" : "updateSetup"}: mehrfacher Schreibkonflikt, Änderung nicht angewendet`, { attempts, serverRev: last?.rev });
+      // Wie bisher: den aktuellen Serverstand sofort in den App-State ziehen
+      // (statt erst beim naechsten Poll). Die eigene Aenderung geht verloren und
+      // muss erneut ausgeloest werden.
+      if (last && onExhausted) onExhausted(last);
+      return { ok: false, conflict: true, code: "MAX_RETRIES", value: last, error: "Mehrfacher Schreibkonflikt, bitte erneut versuchen." };
     } catch (e) {
-      console.error("updateDyn: Speicherfehler", e);
-      // Slice 6: nie rohen Fehlertext nach oben geben. friendlyError liefert bei
-      // Netzwerk-/Offline-Fehlern eine klare Meldung, sonst null -> die Aufrufstelle
-      // zeigt dann ihren eigenen Kontext-Fallback (res.error || "...").
+      // Echte, nicht-retrybare Fehler (Netzwerk, RLS/Berechtigung, Validierung)
+      // werfen in sset -> hier: KEIN Retry, kontrollierter Fehlschlag.
+      stats[S + "Failures"]++;
+      stats[S + "MaxAttempts"] = Math.max(stats[S + "MaxAttempts"], attempts);
+      console.error(`${key === DYN_KEY ? "updateDyn" : "updateSetup"}: Speicherfehler`, e);
       return { ok: false, value: null, error: friendlyError(e?.message, null) };
     }
-  }, [pushUndoEntry]);
+  }, []);
+
+  // Rückgabe jetzt IMMER { ok, value, error } (+ optional unchanged/conflict/
+  // code), nicht mehr nur die rohen Daten. Wirft NIE ungefangen. Schreibungen
+  // desselben Geraets laufen serialisiert (dynWriteQueueRef), damit zwei
+  // gleichzeitige Aktionen nicht dieselbe Revision lesen und sich unnoetig
+  // gegenseitig in CAS-Konflikte treiben.
+  // WICHTIG: der setDyn-State-Wechsel bleibt am Ende des Tasks, nach
+  // bestaetigtem Save (Session 2: UI-Reset/Push erst nach Erfolg). Ein No-op
+  // faehrt setDyn NICHT (nichts hat sich geaendert), ein Konflikt ebenfalls
+  // nicht.
+  const updateDyn = useCallback((mutator) => {
+    return enqueueWrite(dynWriteQueueRef, () =>
+      runCasWrite(DYN_KEY, emptyDyn, mutator, "dyn", (cur, applied) => {
+        pushUndoEntry(cur.rides, applied.rides);
+        setDyn(applied);
+      }, (last) => setDyn(last))
+    );
+  }, [enqueueWrite, runCasWrite, pushUndoEntry]);
 
   // Nimmt gezielt nur die Fahrten zurück, die die letzte Änderung betraf — nicht
   // den kompletten Datenbestand. Läuft selbst wieder über updateDyn (frischer
@@ -1154,32 +1278,18 @@ export default function App() {
     return res;
   }, [updateDyn]);
 
-  // Gleiche Rückgabe-Form wie updateDyn: { ok, value, error }, nie ungefangen werfen.
-  const updateSetup = useCallback(async (mutator) => {
-    let last = null;
-    try {
-      for (let attempt = 0; attempt < 6; attempt++) {
-        const cur = (await sget(SETUP_KEY)) || setup;
-        const baseRev = cur.rev || 0;
-        const next = mutator(structuredClone(cur));
-        next.rev = baseRev + 1;
-        const result = await sset(SETUP_KEY, next, baseRev);
-        if (result.ok) {
-          const applied = result.value || next;
-          setSetup(applied);
-          return { ok: true, value: applied };
-        }
-        last = result.value;
-      }
-      console.error("updateSetup: mehrfacher Schreibkonflikt, Änderung nicht angewendet");
-      if (last) setSetup(last);
-      return { ok: false, value: last, error: "Mehrfacher Schreibkonflikt, bitte erneut versuchen." };
-    } catch (e) {
-      console.error("updateSetup: Speicherfehler", e);
-      // Slice 6: wie updateDyn, nie roher Fehlertext -> friendlyError oder null.
-      return { ok: false, value: null, error: friendlyError(e?.message, null) };
-    }
-  }, [setup]);
+  // Gleiche Rückgabe-Form wie updateDyn: { ok, value, error } (+ optional
+  // unchanged/conflict/code). Nie ungefangen werfen. Eigene Queue getrennt von
+  // dyn (setupWriteQueueRef), damit langsames Setup-Schreiben schnelle
+  // Dispo-Aktionen nicht ausbremst. Fallback auf den aktuellen setup wie bisher
+  // (leerer sget-Stand -> aktueller App-setup als Basis).
+  const updateSetup = useCallback((mutator) => {
+    return enqueueWrite(setupWriteQueueRef, () =>
+      runCasWrite(SETUP_KEY, () => setup, mutator, "setup", (cur, applied) => {
+        setSetup(applied);
+      }, (last) => setSetup(last))
+    );
+  }, [enqueueWrite, runCasWrite, setup]);
 
   if (loading) return <><BrandStyles /><Splash /></>;
   if (loadError) return <><BrandStyles /><LoadErrorScreen message={loadError} onRetry={retryLoad} /></>;
@@ -2902,7 +3012,12 @@ function DriverApp({ setup, dyn, session, updateDyn, onLogout }) {
     if (!flow || !flow.next) return;
     mitSperre(ride, () => updateDyn((d) => {
       const r = d.rides.find((x) => x.id === ride.id);
-      if (!r || r.status !== from) return d;
+      // Fahrt inzwischen geloescht -> fachlicher Konflikt (nicht schreiben).
+      if (!r) return dynConflict("RIDE_GONE", "Diese Fahrt gibt es nicht mehr.");
+      // Status inzwischen anderswo veraendert -> Konflikt. Frueher schrieb dieser
+      // Pfad still den vollen Datensatz + rev+1, ohne dass sich etwas aenderte.
+      // mitSperre zeigt bei ok:false die Meldung; der Poll (3s) korrigiert den Knopf.
+      if (r.status !== from) return dynConflict("STATUS_CHANGED", "Der Status wurde inzwischen geaendert.");
       setRideStatus(r, flow.next, `driver:${driver.id}`);
       d.driverState[driver.id] = d.driverState[driver.id] || {};
       if (flow.next === "done") d.driverState[driver.id].locationId = ride.toId;
@@ -2920,7 +3035,9 @@ function DriverApp({ setup, dyn, session, updateDyn, onLogout }) {
     if (!prev) return;
     mitSperre(ride, () => updateDyn((d) => {
       const r = d.rides.find((x) => x.id === ride.id);
-      if (!r || r.status !== from) return d; // gleicher Schutz wie in advance()
+      // gleicher Schutz wie in advance(): weg -> Konflikt, Status veraendert -> Konflikt.
+      if (!r) return dynConflict("RIDE_GONE", "Diese Fahrt gibt es nicht mehr.");
+      if (r.status !== from) return dynConflict("STATUS_CHANGED", "Der Status wurde inzwischen geaendert.");
       setRideStatus(r, prev, `driver:${driver.id}`);
       return d;
     }));
@@ -2943,11 +3060,13 @@ function DriverApp({ setup, dyn, session, updateDyn, onLogout }) {
     const at = Date.now();
     const ergebnis = await updateDyn((d) => {
       const r = d.rides.find((x) => x.id === ride.id);
-      if (r) {
-        r.issues = r.issues || [];
-        r.issues.push({ id: issueId, type, note: note || "", at, by: `driver:${driver.id}`, state: "open" });
-        logRide(r, "problem", `driver:${driver.id}`, `${type}${note ? ": " + note : ""}`);
-      }
+      // Fahrt inzwischen weg -> Konflikt statt stillem Schreiben ohne Wirkung
+      // (frueher lief der Mutator durch und erhoehte rev+1, obwohl kein Issue
+      // angehaengt wurde). Push geht dann NICHT raus (ok:false).
+      if (!r) return dynConflict("RIDE_GONE", "Diese Fahrt gibt es nicht mehr.");
+      r.issues = r.issues || [];
+      r.issues.push({ id: issueId, type, note: note || "", at, by: `driver:${driver.id}`, state: "open" });
+      logRide(r, "problem", `driver:${driver.id}`, `${type}${note ? ": " + note : ""}`);
       return d;
     });
     if (!ergebnis || !ergebnis.ok) {
@@ -3347,11 +3466,11 @@ function StageApp({ setup, dyn, updateDyn, onLogout }) {
     setBusy(true); setStageErr("");
     const res = await updateDyn((d) => {
       const r = d.rides.find((x) => x.id === ride.id);
-      if (r) {
-        r.issues = r.issues || [];
-        r.issues.push({ id: issueId, type, note: note || "", at, by: `stage:${label}`, state: "open" });
-        logRide(r, "problem", `stage:${label}`, `${type}${note ? ": " + note : ""}`);
-      }
+      // Fahrt inzwischen weg -> Konflikt statt stillem rev+1 ohne Wirkung.
+      if (!r) return dynConflict("RIDE_GONE", "Diese Fahrt gibt es nicht mehr.");
+      r.issues = r.issues || [];
+      r.issues.push({ id: issueId, type, note: note || "", at, by: `stage:${label}`, state: "open" });
+      logRide(r, "problem", `stage:${label}`, `${type}${note ? ": " + note : ""}`);
       return d;
     });
     setBusy(false);
@@ -3705,11 +3824,10 @@ function GuestApp({ setup, dyn, token, updateDyn, onExitPreview }) {
     if (fallback) {
       const res = await updateDyn((d) => {
         const r = d.rides.find((x) => x.id === ride.id);
-        if (r) {
-          r.issues = r.issues || [];
-          r.issues.push({ id: issueId, type, note: note || "", at, by: `guest:${djName}`, state: "open" });
-          logRide(r, "problem", `guest:${djName}`, `${type}${note ? ": " + note : ""}`);
-        }
+        if (!r) return dynConflict("RIDE_GONE", "This ride no longer exists.");
+        r.issues = r.issues || [];
+        r.issues.push({ id: issueId, type, note: note || "", at, by: `guest:${djName}`, state: "open" });
+        logRide(r, "problem", `guest:${djName}`, `${type}${note ? ": " + note : ""}`);
         return d;
       });
       okSave = !!(res && res.ok);
@@ -3740,11 +3858,17 @@ function GuestApp({ setup, dyn, token, updateDyn, onExitPreview }) {
     if (fallback) {
       const res = await updateDyn((d) => {
         const r = d.rides.find((x) => x.id === ride.id);
-        if (r) { r.guestConfirmedAt = at; logRide(r, "guest_confirm", `guest:${djName}`, "Confirmed pickup info"); }
+        if (!r) return dynConflict("RIDE_GONE", "This ride no longer exists.");
+        // Bereits bestaetigt (Doppeltipp / zweiter Tab) -> echter No-op:
+        // kein rev+1, kein doppelter Log-Eintrag, kein zweiter Push unten.
+        if (r.guestConfirmedAt) return NO_CHANGE;
+        r.guestConfirmedAt = at; logRide(r, "guest_confirm", `guest:${djName}`, "Confirmed pickup info");
         return d;
       });
       okSave = !!(res && res.ok);
-      saved = okSave ? (res.value.rides || []).find((x) => x.id === ride.id) : null;
+      // Push nur, wenn diese Aktion die Bestaetigung WIRKLICH gesetzt hat (nicht
+      // bei No-op) -> saved nur im echten Aenderungsfall belegen.
+      saved = (okSave && !res.unchanged) ? (res.value.rides || []).find((x) => x.id === ride.id) : null;
     } else {
       try {
         const sb = window.__obfSupabase;
@@ -3766,11 +3890,13 @@ function GuestApp({ setup, dyn, token, updateDyn, onExitPreview }) {
     if (fallback) {
       const res = await updateDyn((d) => {
         const r = d.rides.find((x) => x.id === ride.id);
-        if (r) { r.guestAtPickupAt = at; logRide(r, "guest_at_pickup", `guest:${djName}`, "At the pickup point"); }
+        if (!r) return dynConflict("RIDE_GONE", "This ride no longer exists.");
+        if (r.guestAtPickupAt) return NO_CHANGE; // bereits gemeldet -> No-op, kein zweiter Push
+        r.guestAtPickupAt = at; logRide(r, "guest_at_pickup", `guest:${djName}`, "At the pickup point");
         return d;
       });
       okSave = !!(res && res.ok);
-      saved = okSave ? (res.value.rides || []).find((x) => x.id === ride.id) : null;
+      saved = (okSave && !res.unchanged) ? (res.value.rides || []).find((x) => x.id === ride.id) : null;
     } else {
       try {
         const sb = window.__obfSupabase;
@@ -4102,11 +4228,13 @@ async function applyChatAction(setup, dyn, updateDyn, by, action) {
     if (action.driverId && !setup.drivers.some((d) => d.id === action.driverId)) return { ok: false, error: "Unbekannter Fahrer." };
     const res = await updateDyn((d) => {
       const r = d.rides.find((x) => x.id === action.rideId);
-      if (r) {
-        logRide(r, r.assignedDriverId ? "reassigned" : "assigned", by, "Über Chat-Assistent vorgeschlagen, bestätigt");
-        r.assignedDriverId = action.driverId || null;
-        if (r.status !== "planned") setRideStatus(r, "planned", by); else r.updatedAt = Date.now();
-      }
+      // Fahrt zwischen Vorpruefung und (evtl. wiederholtem) Mutator weg -> Konflikt.
+      // Frueher lief der Mutator durch, schrieb rev+1 ohne Wirkung UND meldete
+      // ok:true -> der Push unten waere faelschlich rausgegangen.
+      if (!r) return dynConflict("RIDE_GONE", "Diese Fahrt existiert nicht mehr.");
+      logRide(r, r.assignedDriverId ? "reassigned" : "assigned", by, "Über Chat-Assistent vorgeschlagen, bestätigt");
+      r.assignedDriverId = action.driverId || null;
+      if (r.status !== "planned") setRideStatus(r, "planned", by); else r.updatedAt = Date.now();
       return d;
     });
     if (!res.ok) return { ok: false, error: res.error || "Speichern fehlgeschlagen." };
@@ -4117,12 +4245,11 @@ async function applyChatAction(setup, dyn, updateDyn, by, action) {
     if (!/^\d{1,2}:\d{2}$/.test(action.time || "")) return { ok: false, error: "Ungültige Uhrzeit." };
     const res = await updateDyn((d) => {
       const r = d.rides.find((x) => x.id === action.rideId);
-      if (r) {
-        logRide(r, "time", by, `${r.time} → ${action.time} (Chat-Assistent, bestätigt)`);
-        r.date = dateForNightTime(ride.dayKey, action.time);
-        r.time = action.time;
-        r.updatedAt = Date.now();
-      }
+      if (!r) return dynConflict("RIDE_GONE", "Diese Fahrt existiert nicht mehr.");
+      logRide(r, "time", by, `${r.time} → ${action.time} (Chat-Assistent, bestätigt)`);
+      r.date = dateForNightTime(ride.dayKey, action.time);
+      r.time = action.time;
+      r.updatedAt = Date.now();
       return d;
     });
     if (!res.ok) return { ok: false, error: res.error || "Speichern fehlgeschlagen." };
@@ -4130,13 +4257,13 @@ async function applyChatAction(setup, dyn, updateDyn, by, action) {
     return { ok: true };
   }
   if (action.type === "cancel") {
-    const res = await updateDyn((d) => { const r = d.rides.find((x) => x.id === action.rideId); if (r) setRideStatus(r, "cancelled", by); return d; });
+    const res = await updateDyn((d) => { const r = d.rides.find((x) => x.id === action.rideId); if (!r) return dynConflict("RIDE_GONE", "Diese Fahrt existiert nicht mehr."); setRideStatus(r, "cancelled", by); return d; });
     if (!res.ok) return { ok: false, error: res.error || "Speichern fehlgeschlagen." };
     return { ok: true };
   }
   if (action.type === "note") {
     const note = String(action.note || "").slice(0, 300);
-    const res = await updateDyn((d) => { const r = d.rides.find((x) => x.id === action.rideId); if (r) { logRide(r, "route", by, "Notiz über Chat-Assistent ergänzt"); r.notes = note; r.updatedAt = Date.now(); } return d; });
+    const res = await updateDyn((d) => { const r = d.rides.find((x) => x.id === action.rideId); if (!r) return dynConflict("RIDE_GONE", "Diese Fahrt existiert nicht mehr."); logRide(r, "route", by, "Notiz über Chat-Assistent ergänzt"); r.notes = note; r.updatedAt = Date.now(); return d; });
     if (!res.ok) return { ok: false, error: res.error || "Speichern fehlgeschlagen." };
     return { ok: true };
   }
@@ -7000,7 +7127,9 @@ function MissionMessagesInbox({ dyn, updateDyn, by }) {
     setErrors((e) => { const n = { ...e }; delete n[id]; return n; });
     const res = await updateDyn((d) => {
       const m = (d.messages || []).find((x) => x.id === id);
-      if (m) m.reply = { status, text: text || null, by, at: Date.now() };
+      // Nachricht inzwischen weg -> Konflikt statt stillem rev+1 ohne Wirkung.
+      if (!m) return dynConflict("MSG_GONE", "Diese Nachricht gibt es nicht mehr.");
+      m.reply = { status, text: text || null, by, at: Date.now() };
       return d;
     });
     setSending(null);
@@ -7018,7 +7147,9 @@ function MissionMessagesInbox({ dyn, updateDyn, by }) {
     setErrors((e) => { const n = { ...e }; delete n[id]; return n; });
     const res = await updateDyn((d) => {
       const m = (d.messages || []).find((x) => x.id === id);
-      if (m) m.reply = null;
+      if (!m) return dynConflict("MSG_GONE", "Diese Nachricht gibt es nicht mehr.");
+      if (!m.reply) return NO_CHANGE; // schon zurueckgenommen -> No-op
+      m.reply = null;
       return d;
     });
     setSending(null);
@@ -9130,8 +9261,11 @@ function FlightTab({ setup, dyn, day, updateDyn, by, onErr, onEdit }) {
     const before = (dyn.rides || []).find((x) => x.id === rideId)?.flightStatus;
     const wr = await updateDyn((d) => {
       const r = d.rides.find((x) => x.id === rideId);
-      if (!r) return d;
-      if (r.manualOverride) return d; // manuelle Werte nicht überschreiben
+      if (!r) return dynConflict("RIDE_GONE", "Diese Fahrt gibt es nicht mehr.");
+      // manuelle Werte nicht ueberschreiben -> echter No-op (idempotent, KEIN
+      // Fehler): frueher schrieb dieser Pfad still rev+1, obwohl nichts geaendert
+      // wurde. Ein Auto-Update auf eine manuell gepflegte Fahrt ist bewusst wirkungslos.
+      if (r.manualOverride) return NO_CHANGE;
       const beforeIn = r.flightStatus;
       r.airline = res.airline || r.airline;
       r.terminal = res.terminal || r.terminal;
@@ -9196,12 +9330,11 @@ function FlightTab({ setup, dyn, day, updateDyn, by, onErr, onEdit }) {
   const quickSet = async (rideId, patch) => {
     const res = await updateDyn((d) => {
       const r = d.rides.find((x) => x.id === rideId);
-      if (r) {
-        Object.assign(r, patch);
-        r.manualOverride = true; r.flightUpdateSource = "manuell"; r.lastFlightUpdate = Date.now();
-        if (patch.flightStatus !== undefined) logRide(r, "flight", by, `Flug: ${flightStyle(patch.flightStatus).l}`);
-        if (r.scheduledArrival && (r.actualArrival || r.estimatedArrival)) r.delayMinutes = Math.max(0, sortMin(r.actualArrival || r.estimatedArrival) - sortMin(r.scheduledArrival));
-      }
+      if (!r) return dynConflict("RIDE_GONE", "Diese Fahrt existiert nicht mehr.");
+      Object.assign(r, patch);
+      r.manualOverride = true; r.flightUpdateSource = "manuell"; r.lastFlightUpdate = Date.now();
+      if (patch.flightStatus !== undefined) logRide(r, "flight", by, `Flug: ${flightStyle(patch.flightStatus).l}`);
+      if (r.scheduledArrival && (r.actualArrival || r.estimatedArrival)) r.delayMinutes = Math.max(0, sortMin(r.actualArrival || r.estimatedArrival) - sortMin(r.scheduledArrival));
       return d;
     });
     if (!res || !res.ok) { if (onErr) onErr(res?.error || "Flug-Korrektur konnte nicht gespeichert werden, bitte erneut versuchen."); return; }
@@ -9391,7 +9524,13 @@ function MissionEmergencyTab({ setup, dyn, day, updateDyn, by, onErr, onAssign, 
     setResolving(rideId);
     const res = await updateDyn((d) => {
       const r = d.rides.find((x) => x.id === rideId);
-      if (r) { (r.issues || []).filter(issueOpen).forEach((i) => { i.state = "done"; }); logRide(r, "problem_done", by); }
+      if (!r) return dynConflict("RIDE_GONE", "Diese Fahrt existiert nicht mehr.");
+      const offen = (r.issues || []).filter(issueOpen);
+      // Bereits von jemand anderem erledigt -> echter No-op (idempotent, kein
+      // Fehler, kein rev+1, kein Log-Eintrag doppelt).
+      if (offen.length === 0) return NO_CHANGE;
+      offen.forEach((i) => { i.state = "done"; });
+      logRide(r, "problem_done", by);
       return d;
     });
     setResolving(null);
@@ -9890,11 +10029,13 @@ function MissionTimelinePage({ setup, dyn, day, onEdit, onAssign, updateDyn, by,
     const rideId = selectedRide.id;
     const res = await updateDyn((d) => {
       const r = d.rides.find((x) => x.id === rideId);
-      if (r) {
-        logRide(r, "assigned", by, "Schnellzuteilung über Timeline");
-        r.assignedDriverId = driverId;
-        if (r.status !== "planned") setRideStatus(r, "planned", by); else r.updatedAt = Date.now();
-      }
+      // Fahrt weg -> Konflikt statt stillem rev+1: sonst meldet der Aufrufer
+      // ok:true und der Push unten ginge faelschlich an einen Fahrer fuer eine
+      // nicht mehr existierende Fahrt.
+      if (!r) return dynConflict("RIDE_GONE", "Diese Fahrt existiert nicht mehr.");
+      logRide(r, "assigned", by, "Schnellzuteilung über Timeline");
+      r.assignedDriverId = driverId;
+      if (r.status !== "planned") setRideStatus(r, "planned", by); else r.updatedAt = Date.now();
       return d;
     });
     assignBusyRef.current = false;
@@ -9937,7 +10078,7 @@ function MissionTimelinePage({ setup, dyn, day, onEdit, onAssign, updateDyn, by,
     if (!timeChanged && !driverChanged) return;
     const res = await updateDyn((d) => {
       const r = d.rides.find((x) => x.id === rideId);
-      if (!r) return d;
+      if (!r) return dynConflict("RIDE_GONE", "Diese Fahrt existiert nicht mehr.");
       if (timeChanged) { logRide(r, "time", by, `${r.time} → ${newTime} (Timeline gezogen)`); r.date = dateForNightTime(day, newTime); r.time = newTime; }
       if (driverChanged) {
         logRide(r, newDriverIdOrUndefined ? (cur.assignedDriverId ? "reassigned" : "assigned") : "reassigned", by, "Timeline: Fahrer per Ziehen geändert");
@@ -11956,7 +12097,14 @@ function MissionControl({ setup, dyn, session, updateDyn, updateSetup, onLogout,
             const setIssueState = async (rideId, st) => {
               const res = await updateDyn((d) => {
                 const rr = d.rides.find((x) => x.id === rideId);
-                if (rr) { (rr.issues || []).filter(issueOpen).forEach((i) => { i.state = st; }); logRide(rr, st === "done" ? "problem_done" : "problem_progress", meBy); }
+                if (!rr) return dynConflict("RIDE_GONE", "Diese Fahrt existiert nicht mehr.");
+                // Nur die offenen Issues, deren Zustand sich wirklich aendert.
+                // Sind alle schon im Zielzustand (anderer hat es bereits gesetzt)
+                // -> echter No-op, kein rev+1 und kein doppelter Log-Eintrag.
+                const zuAendern = (rr.issues || []).filter((i) => issueOpen(i) && i.state !== st);
+                if (zuAendern.length === 0) return NO_CHANGE;
+                zuAendern.forEach((i) => { i.state = st; });
+                logRide(rr, st === "done" ? "problem_done" : "problem_progress", meBy);
                 return d;
               });
               if (!res || !res.ok) notifyErr(res?.error || "Problemstatus konnte nicht gespeichert werden, bitte erneut versuchen.");
@@ -12266,14 +12414,17 @@ function MissionControl({ setup, dyn, session, updateDyn, updateSetup, onLogout,
             const beforeDriver = (dyn.rides || []).find((x) => x.id === assignRide.id)?.assignedDriverId ?? null;
             const res = await updateDyn((d) => {
               const r = d.rides.find((x) => x.id === assignRide.id);
-              if (r) {
-                const changed = r.assignedDriverId !== driverId;
-                const drvName = (id) => { const dr = setup.drivers.find((x) => x.id === id); return dr ? `${dr.firstName} ${dr.lastName[0]}. (${dr.vehicleType === "Van" ? "Van" : "Car"})` : "—"; };
-                if (changed) logRide(r, r.assignedDriverId ? "reassigned" : "assigned", meBy, driverId ? `→ ${drvName(driverId)}` : "Zuteilung entfernt");
-                r.assignedDriverId = driverId;
-                if ((!driverId || changed) && r.status !== "planned") setRideStatus(r, "planned", meBy);
-                else r.updatedAt = Date.now();
-              }
+              if (!r) return dynConflict("RIDE_GONE", "Diese Fahrt existiert nicht mehr.");
+              const changed = r.assignedDriverId !== driverId;
+              // Derselbe Fahrer ist bereits zugewiesen -> echter No-op (idempotent):
+              // frueher schrieb dieser Pfad nur r.updatedAt und erhoehte rev+1, ohne
+              // fachliche Aenderung. Jetzt kein Schreiben, kein Push (changed=false).
+              if (!changed) return NO_CHANGE;
+              const drvName = (id) => { const dr = setup.drivers.find((x) => x.id === id); return dr ? `${dr.firstName} ${dr.lastName[0]}. (${dr.vehicleType === "Van" ? "Van" : "Car"})` : "—"; };
+              logRide(r, r.assignedDriverId ? "reassigned" : "assigned", meBy, driverId ? `→ ${drvName(driverId)}` : "Zuteilung entfernt");
+              r.assignedDriverId = driverId;
+              if ((!driverId || changed) && r.status !== "planned") setRideStatus(r, "planned", meBy);
+              else r.updatedAt = Date.now();
               return d;
             });
             if (!res || !res.ok) return res; // Modal bleibt offen, zeigt Fehler, kein Push
@@ -12313,16 +12464,17 @@ function MissionControl({ setup, dyn, session, updateDyn, updateSetup, onLogout,
                 d.rides.push(nr);
               } else {
                 const r = d.rides.find((x) => x.id === editRide.id);
-                if (r) {
-                  const timeChanged = data.time !== r.time || data.date !== r.date;
-                  const routeChanged = data.fromId !== r.fromId || data.toId !== r.toId || data.fromCustom !== r.fromCustom || data.toCustom !== r.toCustom;
-                  const meetChanged = (data.meetingPoint || "") !== (r.meetingPoint || "");
-                  if (timeChanged) logRide(r, "time", meBy, `${r.time} → ${data.time}`);
-                  if (routeChanged) logRide(r, "route", meBy, "Route geändert");
-                  if ((data.flightStatus || "") !== (r.flightStatus || "")) logRide(r, "flight", meBy, `Flug: ${flightStyle(data.flightStatus).l}`);
-                  const { status, assignedDriverId, issues, log, statusHistory, acceptedAt, enrouteAt, onboardAt, doneAt, cancelledAt, plannedAt, id, ...safeData } = data;
-                  Object.assign(r, safeData);
-                }
+                // Fahrt inzwischen komplett geloescht -> Konflikt (die updatedAt-
+                // Vorpruefung oben deckt nur "veraendert", nicht "weg" ab).
+                if (!r) return dynConflict("RIDE_GONE", "Diese Fahrt existiert nicht mehr.");
+                const timeChanged = data.time !== r.time || data.date !== r.date;
+                const routeChanged = data.fromId !== r.fromId || data.toId !== r.toId || data.fromCustom !== r.fromCustom || data.toCustom !== r.toCustom;
+                const meetChanged = (data.meetingPoint || "") !== (r.meetingPoint || "");
+                if (timeChanged) logRide(r, "time", meBy, `${r.time} → ${data.time}`);
+                if (routeChanged) logRide(r, "route", meBy, "Route geändert");
+                if ((data.flightStatus || "") !== (r.flightStatus || "")) logRide(r, "flight", meBy, `Flug: ${flightStyle(data.flightStatus).l}`);
+                const { status, assignedDriverId, issues, log, statusHistory, acceptedAt, enrouteAt, onboardAt, doneAt, cancelledAt, plannedAt, id, ...safeData } = data;
+                Object.assign(r, safeData);
               }
               return d;
             });
@@ -12344,7 +12496,7 @@ function MissionControl({ setup, dyn, session, updateDyn, updateSetup, onLogout,
             return res;
           }}
           onDelete={editRide._new ? null : async () => {
-            const res = await updateDyn((d) => { const r = d.rides.find((x) => x.id === editRide.id); if (r) setRideStatus(r, "cancelled", meBy); return d; });
+            const res = await updateDyn((d) => { const r = d.rides.find((x) => x.id === editRide.id); if (!r) return dynConflict("RIDE_GONE", "Diese Fahrt existiert nicht mehr."); setRideStatus(r, "cancelled", meBy); return d; });
             if (res && res.ok) setEditRide(null);
             return res;
           }} />
@@ -12354,7 +12506,7 @@ function MissionControl({ setup, dyn, session, updateDyn, updateSetup, onLogout,
       {waRide && (
         <div className="mc-modal-fade">
         <WhatsAppModal ride={waRide} setup={setup} onClose={() => setWaRide(null)}
-          onCopied={(which) => updateDyn((d) => { const r = d.rides.find((x) => x.id === waRide.id); if (r) logRide(r, "whatsapp", meBy, which); return d; })} />
+          onCopied={(which) => updateDyn((d) => { const r = d.rides.find((x) => x.id === waRide.id); if (!r) return dynConflict("RIDE_GONE", "Diese Fahrt existiert nicht mehr."); logRide(r, "whatsapp", meBy, which); return d; })} />
         </div>
       )}
 

@@ -5435,3 +5435,74 @@ damit abgeschlossen, nächstes Thema laut Jordan: neue Tests.
 > Thema dieser Session: [hier kurz beschreiben]. Offene Kandidaten aus frueheren Sessions, falls gewuenscht: reine Setup-Toggles ohne Ergebnispruefung (setMatrix, Festival-Tage, Dev-Werkzeuge Seed/Clear - Session 2, geringes Risiko), GuestApp-Poll ohne Ueberlappungsschutz (Poll-Absicherung), matchLoc-Fix (Z. ~7676, hardcodiert auf 4 Orte).
 
 **Stand nach dieser Session:** Schreib-Nebenwirkungen (Session 2) fertig, verifiziert, committet/gepusht (`5949338`, FF-Push `4fae3f0..5949338`). `src/ShuttleLeitstelle.jsx` 12915 Zeilen. Freeze eingehalten, keine Loeschung.
+
+---
+
+## Session "Schreib-Contention-Haertung" (Nebenlaeufigkeit der zentralen CAS-Schicht)
+
+**Thema:** Die zentrale CAS-Schreiblogik (`updateDyn`/`updateSetup`) unter vielen gleichzeitigen Geraeten robuster machen: keine DB-Schreibvorgaenge fuer fachliche No-ops, keine unnoetigen Revisionserhoehungen, keine parallelen Schreibschleifen desselben Clients, kontrollierter Retry mit Backoff/Jitter, bessere Konfliktdiagnose. Geschaeftslogik und Datenstrukturen vollstaendig erhalten. Keine RPC-/Schema-Aenderung.
+
+**Ausgangsstand:** HEAD `5949338`, 12915 Zeilen. Ancestry `7541f0d`->`5949338` verifiziert (`git merge-base --is-ancestor`). Volle Bestandskette gruen. (Waehrend der Session kam auf origin/main der reine Doku-Commit `9d595ee` dazu - Nachtrag des Session-2-Eintrags; darauf sauber rebased, Code-Diff unberuehrt, da `9d595ee` nur die MD-Datei anfasst.)
+
+**Analyse-Kernbefunde (bestimmen die Loesung):**
+- **Konflikt vs. echter Fehler ist bereits sauber trennbar.** Bei Supabase liefert ein CAS-Konflikt `sset -> { ok:false, value:<Serverstand> }` (die RPC `write_dyn_if_unchanged` laeuft durch), ein echter Fehler (Netz/RLS/Validierung) WIRFT (`sbSetDyn: if (error) throw error`) und landet im catch. -> Retry nur bei `ok:false`, kein Retry im catch. KEINE RPC-/Schema-Aenderung noetig.
+- **Kein echtes Nesting** (kein `updateDyn` im Mutator-Body, per Klammerzaehlung ueber alle Aufrufe geprueft). `mitSperre(() => updateDyn(...))` ist sequentiell, kein Reentrance. -> nicht-reentrante Queue ist sicher.
+- 46 Aufrufer (34 dyn + 12 setup), Konsumenten pruefen durchweg `if (!res || !res.ok)`. -> No-op MUSS `ok:true` liefern (sonst falsches "Speichern fehlgeschlagen"), Konflikt liefert `ok:false` + `conflict/code` (bestehende Aufrufer zeigen weiter `res.error`, kein Regress).
+
+**Umgesetzt (nur zentraler Schreibpfad + priorisierte Mutator-Rueckgaben):**
+
+Zentrale Infrastruktur (Modulkopf Z. ~40-89, App-Root Z. ~1121-1295):
+- Sentinels `NO_CHANGE` (Symbol) und `dynConflict(code, message)` + Praedikate `isNoChange`/`isDynConflict`. Explizit, KEINE Objektidentitaets-Erkennung, KEIN Deep-Compare.
+- `casBackoffMs(attempt)` = `min(25*2^attempt + random*40, 300)` ms, nur bei echtem CAS-Konflikt, nie beim ersten Versuch, nie bei Erfolg/Fehler.
+- Getrennte Queues `dynWriteQueueRef`/`setupWriteQueueRef` (`useRef`, nicht Modul-global -> StrictMode/Remount-sicher, an die App-Instanz gebunden). `enqueueWrite` mit fehler-entkoppelter Kette (`.then(()=>{}, ()=>{})`), Fehler blockiert die Queue nicht.
+- Gemeinsame `runCasWrite(key, getEmpty, mutator, kind, onSuccess, onExhausted)`: No-op/Konflikt-Behandlung, Backoff, kontrollierter Fehlschlag ohne Retry im catch, Diagnosezaehler `writeStatsRef` (technisch, keine PII; in Dev als `window.__obfWriteStats`). `onExhausted` faehrt setDyn/setSetup(last) bei max-retries -> bisheriges Verhalten bewusst erhalten.
+- `updateDyn`/`updateSetup` sind jetzt duenne serialisierte Wrapper (gleiche Rueckgabeform `{ ok, value, error }` + optional `unchanged`/`conflict`/`code`).
+
+Auf No-op/Konflikt umgestellte Mutatoren (priorisiert):
+- Fahrer-Status `advance`/`goBack`: weg -> `RIDE_GONE`, Status geaendert -> `STATUS_CHANGED`.
+- Zuteilung zentral (AssignModal): weg -> Konflikt, gleicher Fahrer schon zugewiesen -> `NO_CHANGE`. Timeline-Schnellzuteilung + `applyDrop` + Chat-`assign`: weg -> Konflikt (behebt latenten Bug: rev-Retry mit verschwundener Fahrt meldete `ok:true` und loeste Push faelschlich aus).
+- Problemmeldungen Fahrer/Stage/Gast: weg -> Konflikt.
+- Problemstatus `resolveIssues`/`setIssueState`: weg -> Konflikt, schon im Zielzustand -> `NO_CHANGE`.
+- Gast `confirmPickup`/`atPickup` (Fallback-Zweig): weg -> Konflikt, bereits bestaetigt -> `NO_CHANGE` (kein doppelter Push).
+- Chat-Aktionen assign/reschedule/cancel/note, RideForm-Save (`!r`), Edit-Loeschung, WhatsApp-Copy: weg -> Konflikt.
+- Flug-Auto-Update: weg -> Konflikt, `manualOverride` -> `NO_CHANGE`.
+- Nachrichten beantworten (`!m` -> Konflikt) / zuruecknehmen (`!m` -> Konflikt, `!m.reply` -> `NO_CHANGE`).
+
+Bewusst NICHT umgestellt (dokumentiert): Presence-Toggles `setNoReturn`/`setManualPresence`/`addManualArtist` (erneuter `by`/`at`-Stempel ist fachlich gewollte Bestaetigung, kein toter No-op), GPS-Ping (jeder Ping echte Aktualisierung, Best-Effort ohne Ergebnisauswertung), `unsubscribePush`-Aufraeumung (niedrige Prioritaet, nur beim Logout), Setup-Setzer (PINs/Config/Matrix/Fahrer/Dispatcher/Token -> schreiben immer echte Aenderung), Seed/Beispiel-Buttons, Demo-Seed. (Deckt sich mit den "reinen Setup-Toggles" aus dem Session-2-Nachtrag.)
+
+**Tests:**
+- NEU `smoke-write-contention.mjs` (67/0, stabil ueber 5 Laeufe): Szenarien 1-10 (No-op, Konflikt, Serialisierung, Fehler-blockt-Queue-nicht, CAS-Retry-mit-Backoff, nicht-retrybarer Fehler ohne 6x-Retry, mehrere Clients, No-op-unter-Konkurrenz, Maximalversuche, Session-2-Invarianten) + beide Pflicht-Gegenproben (ohne Queue nachweisbar parallel + Erstkollision; ohne No-op-Vertrag nachweisbar Schreibvorgang + rev+1). Counter-Proof: No-op-Erkennung abschalten kippt S1/S8 (6 Fails) -> Test misst wirklich.
+- Volle Bestandskette unveraendert gruen: esbuild, Duplikat-Grep, Symbol-Cross-Check (jedes neue Symbol def=1/use>1; esbuild faengt undefinierte Refs NICHT, verifiziert per Gegenprobe -> daher ist der Cross-Check das Sicherheitsnetz), rendertest 25053/2452/2413/2895/101 (exakt konstant, reine Logikaenderung), kontrast 0, alle smoke*/gegenprobe*, Session-1-Poll (24/0), Session-2-Sideeffects (39/0), H-Concurrency (21/0). Nach dem Rebase auf `9d595ee` komplett erneut durchlaufen.
+
+**Regressionsrisiken / manuelle Testfaelle:**
+- Zwei schnelle Dispo-Aktionen hintereinander (Fahrt bestaetigen + andere zuweisen): laufen jetzt serialisiert, keine lokale Erstkollision. Erwartung: beide gespeichert, deterministische Reihenfolge.
+- Denselben Fahrer zweimal derselben Fahrt zuweisen: zweites Mal No-op (kein rev+1, kein Push), Modal schliesst normal.
+- Problem "erledigt" tippen, das ein anderer schon erledigt hat: No-op, keine Fehlermeldung, kein doppelter Log.
+- Fahrt-Status tippen, den die Leitstelle zwischenzeitlich zurueckgesetzt hat: Konflikt-Meldung ("Status wurde inzwischen geaendert"), kein stiller rev+1. Der Poll (3s) korrigiert den Knopf.
+- Gast "Confirm pickup" doppelt/zwei Tabs: zweites Mal No-op, kein doppelter Push an den Fahrer.
+
+**Ergebnis:** `src/ShuttleLeitstelle.jsx` 13067 Zeilen (+152). Commit `<HASH_FOLGT>`. Freeze eingehalten, keine Loeschung. Kein Supabase-SQL noetig (reine Client-Logik, RPC-Vertrag unveraendert genutzt).
+
+**Weitere gefundene Punkte fuer spaetere Sessions:**
+- Presence-Toggles koennten optional einen echten No-op bekommen (wenn Wert UND bewusst kein neuer Bestaetigungs-Stempel gewuenscht) - bewusst offen gelassen, da der Stempel fachlich gewollt ist.
+- `unsubscribePush`-Aufraeumung (`!d[stateKey]?.[id]`) koennte No-op werden - sehr geringe Prioritaet (nur Logout).
+- GuestApp-Poll ohne Ueberlappungsschutz (aus der Poll-Absicherung-Session) weiterhin offen.
+
+### Ready-to-paste Opener fuer die naechste Session (nach Schreib-Contention)
+
+> Neue Session, OpenBeatz Shuttle-Leitstelle. Arbeitsverzeichnis MUSS `/home/claude/repo` sein. Erst Schritt 0 komplett:
+>
+> 1. Repo klonen (frischer PAT), nach `/home/claude/repo`, PAT sofort aus der Remote-URL scrubben (`git remote set-url`).
+> 2. `npm ci`, git config (`j.merg@merg-and-more.de` / Jordan Merg).
+> 3. `git log --graph --oneline --all` UND `git fetch`, HEAD == origin/main pruefen. Letzter Commit muss `<HASH_FOLGT>` sein ("Schreib-Contention: No-op-/Konflikt-Vertrag, Schreib-Serialisierung, Backoff, Diagnose").
+> 4. Exakte Zeilenzahl `src/ShuttleLeitstelle.jsx`: 13067.
+> 5. Volle Bestands-Regression, ALLES gruen: esbuild, Duplikat-Grep `[a-zA-Z0-9_]+`. Fuer Teilpaket B/E/G ZUERST `python3 extract-funcs-teilpaket-{b,e,g}.py src/ShuttleLeitstelle.jsx tmp-t{b,e,g}-funcs.mjs`, DANN `smoke-teilpaket-b.mjs` (69/0) + `smoke-teilpaket-e.mjs` (152/0) + `gegenprobe-teilpaket-e.mjs` (8/0) + `smoke-teilpaket-g.mjs` (130/0) + `gegenprobe-teilpaket-g.mjs` (10/0), Extrakte danach loeschen. Weiter: `rendertest.mjs` (25053/2452/2413/2895/101), `kontrast.mjs` (0), `smoke.mjs` + alle `smoke27*.mjs` (Classic-Reste 0), `smoke-teilpaket-c1`/`c1-ui`/`c2`/`c2-ui`/`c3`/`c3-ui`/`d`/`d-ui`/`f`/`f-ui`/`g2-ui` (`f2-ui` laeuft in `f-ui` mit), `smoke-orte-fix.mjs` (47/0), `smoke-nav-url.mjs` (10/0), `smoke-fahrtenliste.mjs` (35/0), `smoke-import-dauer.mjs` (18/0), `smoke-teilpaket-h-concurrency.mjs` (21/0), `gegenprobe-teilpaket-h19-poll.mjs` (15/0), `smoke-poll-absicherung.mjs` (24/0), `smoke-write-sideeffects.mjs` (39/0), `smoke-write-contention.mjs` (67/0, NEU). `gegenprobe-teilpaket-h-rpc-postgres.mjs` NICHT Teil der Standard-Regression.
+>
+> Wenn ein Punkt nicht gruen ist: STOPP, melden, nicht weiterbauen.
+> Regeln unveraendert: rein additiv, kleinstmoeglich, keine Breaking Changes, keine Workflow-/Rollen-/Stage-/DB-Struktur-Aenderungen (ausser zwingend), keine kosmetischen Refactorings/Perf-Opt ausserhalb des Themas. Vor Code-Aenderung: Verdrahtungsplan + Einfuegestelle + Regressionsrisiko + Freigabe. Nach jeder Aenderung: volle Kette + Diff-Beweis + manuelle Testfaelle. Bugs ausserhalb Thema -> "Weitere gefundene Punkte", NICHT fixen. FREEZE seit 21.07.: KEINE LOESCHUNGEN. Festival 23.-27.07. Proaktiv vor zu langem Chat warnen. Nur eine Session gleichzeitig. `git fetch` unmittelbar vor Push. Umlaut-Commits ueber `/tmp/msg.txt` + `git commit -F`. Live-Daten-Aenderung immer mit Supabase-SQL-Nachtrag.
+>
+> Neu nutzbar (fuer kuenftige Mutatoren): `return NO_CHANGE` (fachlich nichts zu tun -> kein Schreiben, kein rev+1, `{ ok:true, unchanged:true }`) oder `return dynConflict("CODE", "sachliche Meldung")` (erwarteter Zustand weg -> kein Schreiben, `{ ok:false, conflict:true, code, error }`). Aufrufer: `res.ok` = Erfolg (auch No-op), `res.unchanged` = nichts geaendert (kein Push), `res.conflict`/`res.code` = fachlicher Konflikt. Diagnose live unter `window.__obfWriteStats`.
+>
+> Thema dieser Session: [beschreiben]. Offene Kandidaten: Presence-Toggles optional No-op, `unsubscribePush`-Aufraeumung No-op, reine Setup-Toggles ohne Ergebnispruefung (Session 2), GuestApp-Poll ohne Ueberlappungsschutz, matchLoc-Fix (Z. ~7676).
+
+**Stand nach dieser Session:** Schreib-Contention-Haertung fertig, verifiziert, committet/gepusht (`<HASH_FOLGT>`). `src/ShuttleLeitstelle.jsx` 13067 Zeilen. Freeze eingehalten, keine Loeschung.
