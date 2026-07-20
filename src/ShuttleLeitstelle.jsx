@@ -493,6 +493,19 @@ const seedLocations = () => [
   // Teilpaket B: Festival-Koordinate korrigiert (49.52728/10.83139, Jordans Vorgabe),
   // Anfahrt VIP-Shuttle ueber Puschendorf (nicht die Besucher-Zufahrt Hoefen).
   { id: "festival", name: "Open Beatz Festival", short: "Festival", address: "Puschendorfer Straße 2, 91074 Herzogenaurach (VIP-Anfahrt über Puschendorf)", venue: true, type: "festival", mapX: 366, mapY: 320, labelDx: 0, labelDy: -24, lat: 49.52728, lng: 10.83139 },
+  // matchLoc-/Orts-Fix (21.07.): echte Orte fuer die 2026-Pickup-Liste. Der echte
+  // Herkunftsort bleibt in Anzeige/Notizen/Fahrer-App sichtbar (Nachverfolgbarkeit),
+  // die Fahrzeit laeuft ueber den vorhandenen Nachbar-Knoten (LOC_MATRIX_NODE):
+  // Leonardo/HBF rechnen wie Sheraton, GAT wie Flughafen NUE, Muenchen eigener
+  // Knoten "muc". Rein additiv, die vier Bestands-Orte oben bleiben unveraendert.
+  { id: "leonardo", name: "Hotel Nürnberg City-Center by Leonardo Hotels", short: "Leonardo", address: "Eilgutstraße 8, 90443 Nürnberg", venue: false, type: "hotel", mapX: 700, mapY: 520, labelDx: -6, labelDy: 22, lat: 49.4460, lng: 11.0850 },
+  { id: "hbf_nue", name: "Nürnberg Hauptbahnhof", short: "HBF", address: "Bahnhofsplatz 9, 90443 Nürnberg", venue: false, type: "hotel", mapX: 690, mapY: 452, labelDx: -10, labelDy: 4, lat: 49.4456, lng: 11.0820 },
+  { id: "gat_nue", name: "GAT / Private Jet Nürnberg", short: "GAT", address: "Flughafenstraße 100, 90411 Nürnberg (General Aviation Terminal)", venue: false, type: "airport", mapX: 812, mapY: 205, labelDx: 22, labelDy: 4, lat: 49.5010, lng: 11.0640 },
+  { id: "airport_muc", name: "Flughafen München", short: "Flughafen MUC", address: "Nordallee 25, 85356 München-Flughafen", venue: false, type: "airport", mapX: 860, mapY: 590, labelDx: 0, labelDy: 24, lat: 48.3538, lng: 11.7861 },
+  // Karl August: eigener Name (Anzeige/Notizen/Fahrer-App), aber KEIN eigener
+  // Kartenpunkt (kein mapX/mapY) -> die Karte routet ihn ueber MAP_NODE_ALIAS am
+  // Sheraton-Knoten. Fahrzeit ueberall gleich lang wie Sheraton (LOC_MATRIX_NODE).
+  { id: "karl_august", name: "Karl August Hotel Nürnberg", short: "Karl August", address: "Karl-August-Straße, Nürnberg", venue: false, type: "hotel", lat: 49.4470, lng: 11.0800 },
 ];
 
 const ZONES = ["Caldera", "Zone 3", "Stonelands"];
@@ -726,9 +739,11 @@ function setRideStatus(r, status, by) {
 
 /* ------------------------ Fahrt: Klassifizierung ------------------------ */
 function classify(fromId, toId, fromTxt, toTxt) {
-  const isAir = (id, t) => id === "airport" || /airport|flughafen/i.test(t || "");
+  // matchLoc-/Orts-Fix (21.07.): die neuen echten Orte mitzaehlen. GAT/Muenchen
+  // sind Flughaefen (arrival), Leonardo/HBF/Karl August sind Hotels (return/toVenue).
+  const isAir = (id, t) => id === "airport" || id === "gat_nue" || id === "airport_muc" || /airport|flughafen/i.test(t || "");
   const isVenue = (id, t) => id === "festival" || /venue|caldera|zone|stonelands|forest|stage|woods/i.test(t || "");
-  const isHotel = (id) => ["sheraton", "moevenpick"].includes(id);
+  const isHotel = (id) => ["sheraton", "moevenpick", "leonardo", "hbf_nue", "karl_august"].includes(id);
   if (isAir(fromId, fromTxt)) return "arrival";
   if (isVenue(fromId, fromTxt) && (isHotel(toId) || isAir(toId, toTxt))) return "return";
   if (isHotel(fromId) && isVenue(toId, toTxt)) return "toVenue";
@@ -1999,6 +2014,12 @@ const MAP_LAYOUT = {
   moevenpick: { x: 858, y: 292, labelDx: 22, labelDy: 4, type: "hotel" },
   sheraton: { x: 760, y: 486, labelDx: 0, labelDy: 28, type: "hotel" },
   festival: { x: 366, y: 320, labelDx: 0, labelDy: -24, type: "festival" },
+  // matchLoc-/Orts-Fix (21.07.): Fallback-Layout, falls ein Ort ohne mapX aus der
+  // DB kommt. Karl August ist bewusst NICHT dabei (kein eigener Kartenpunkt).
+  leonardo: { x: 700, y: 520, labelDx: -6, labelDy: 22, type: "hotel" },
+  hbf_nue: { x: 690, y: 452, labelDx: -10, labelDy: 4, type: "hotel" },
+  gat_nue: { x: 812, y: 205, labelDx: 22, labelDy: 4, type: "airport" },
+  airport_muc: { x: 860, y: 590, labelDx: 0, labelDy: 24, type: "airport" },
 };
 // Festival-Zonen als eigene Punkte (Spokes am Festival).
 const ZONE_LAYOUT = {
@@ -2055,9 +2076,16 @@ function buildMapNodes(setup, dyn, day) {
   return nodes;
 }
 
+// Orte, die einen eigenen Namen in der Anzeige behalten, aber KEINEN eigenen
+// Kartenpunkt bekommen sollen: sie werden auf der Karte am aliasierten Knoten
+// gezeichnet (gleiche Position, geografisch ohnehin identischer Bereich). Karl
+// August -> Sheraton (kein eigener Pin, Fahrer bleibt trotzdem auf der Karte
+// sichtbar). Betrifft NUR die Kartendarstellung, nie Anzeige/Notizen/Fahrzeit.
+const MAP_NODE_ALIAS = { karl_august: "sheraton" };
 // Endpunkt einer Fahrt -> Kartenknoten. Festival+Zone -> Zonenknoten. Custom -> Custom-Knoten.
 function resolveNode(nodes, locId, zone, customText) {
   if (locId === "festival" && zone && nodes[zoneNodeId(zone)]) return zoneNodeId(zone);
+  if (MAP_NODE_ALIAS[locId] && nodes[MAP_NODE_ALIAS[locId]]) return MAP_NODE_ALIAS[locId];
   if (nodes[locId]) return locId;
   if (customText) return customNodeId(customText);
   return null;
@@ -10979,15 +11007,27 @@ function SettingsTab({ setup, dyn, day, updateSetup, updateDyn, onPreviewGuest }
 /* -------------------------- Excel-Zeile parsen --------------------------- */
 function matchLoc(txt) {
   const t = (txt || "").toLowerCase();
+  // matchLoc-/Orts-Fix (21.07.): Reihenfolge = SPEZIFISCH VOR ALLGEMEIN.
+  // Bestands-Reihenfolge bleibt vorne (sheraton, dann moevenpick VOR airport, weil
+  // "Moevenpick Hotel Nuernberg Airport" das Wort Airport enthaelt).
   if (/sheraton/.test(t)) return { id: "sheraton" };
   if (/m(ö|oe|o)venpick/.test(t)) return { id: "moevenpick" };
+  // Neue echte Orte der 2026-Liste. Karl August, Leonardo, HBF -> eigene IDs
+  // (Name bleibt sichtbar, Fahrzeit ueber Nachbar-Knoten). Muenchen und GAT VOR
+  // dem allgemeinen Nuernberg-Airport-Muster, sonst wuerden sie dort gefangen.
+  if (/karl.?august/.test(t)) return { id: "karl_august" };
+  if (/leonardo/.test(t)) return { id: "leonardo" };
+  if (/\bhbf\b|hauptbahnhof|central station/.test(t)) return { id: "hbf_nue" };
+  if (/munich|m(ü|ue)nchen|\bmuc\b/.test(t)) return { id: "airport_muc" };
+  if (/private jet|\bgat\b/.test(t)) return { id: "gat_nue" };
   if (/(airport|flughafen).*(n(ü|u)rnberg|nuremberg)|n(ü|u)rnberg.*(airport|flughafen)|^airport nuremberg|nuremberg - private|private jet gat/.test(t)) return { id: "airport" };
   if (/venue|caldera|zone|stonelands|forest|stage|woods|festival/.test(t)) {
-    let zone = "";
+    // Festival-Zonen-Regel (21.07., Jordan): fuer dieses Festival laufen ALLE
+    // Zonen ausser Caldera/Zone 3/Stonelands unter Caldera (dort Pickup + Absetzung).
+    let zone = "Caldera";
     if (/caldera/.test(t)) zone = "Caldera";
     else if (/zone\s*(iii|3)/.test(t)) zone = "Zone 3";
     else if (/stonelands/.test(t)) zone = "Stonelands";
-    else { const m = (txt || "").match(/venue\s*-\s*(.+)/i); if (m) zone = m[1].trim(); }
     return { id: "festival", zone };
   }
   return { id: "__custom", custom: (txt || "").trim() };
