@@ -4928,3 +4928,103 @@ das Badge-Verhalten in jedem Fall deterministisch abdeckt.
 **Stand nach dieser Session:** G1-Logikkern + G2-Anzeige (MissionReturnsTab Frei-Liste)
 fertig, verifiziert, committet/gepusht. Rein praesentational, keine Logik-/DB-/Rollen-
 Aenderung. Freeze 21.07.
+
+# Session matchLoc-/Orts-Fix (echte Orte fuer die 2026-Pickup-Liste) - ERLEDIGT
+
+**Datum:** 21.07.2026 (Freeze-Tag, KEINE Loeschungen - eingehalten, rein additiv).
+Basis: `d463894` (HEAD==origin/main). Neuer Commit: `bb868a4`. Rollback-Tag
+`pre-orte-fix` = `d463894` (gepusht). Baseline-Kopie beim Start = 12457 Zeilen,
+volle Bestands-Regression vor Beginn gruen.
+
+## Ausloeser / Analyse
+Echte Live-Liste `Gesamtuebersicht_Fahrten_OpenBeatz_5.xlsx` gegen die alte matchLoc
+getestet: ~119 Fahrten fielen auf `__custom` (Leonardo 86, Karl August 13, Muenchen 12,
+HBF 8). Fahrzeit lief zwar schon ueber das B-Modul korrekt, aber Anzeigename, Kartenpunkt
+und GPS-Projektion fehlten. Wichtige Erkenntnis: das vorhandene `resolveLocation`/
+`LOC_ALIASES` matcht EXAKT (n===a), nicht per Teilstring - deshalb reichte es NICHT,
+matchLoc einfach darauf umzustellen (viele reale Schreibweisen wie "Airport Munich",
+"Leonardo City-Center", "Airport Nuremberg - Private Jet GAT" waeren durchgefallen).
+Loesung: matchLoc bekam eigene teilstring-robuste Muster (matchLoc darf beim Import
+grosszuegiger sein als resolveLocation, das fuer die operativen Regeln exakt bleibt).
+
+## Jordans Entscheidungen (umgesetzt)
+- Sammel-Idee verworfen zugunsten Nachverfolgbarkeit: der ECHTE Herkunftsort bleibt
+  ueberall sichtbar (Anzeige/Notizen/Fahrer-App), Fahrzeit laeuft im Hintergrund ueber
+  Nachbar-Knoten. Grund: bei "Gast nicht am Treffpunkt" muss klar sein, ob er aus
+  Leonardo, HBF oder Karl August kommt - nicht nur "Sheraton".
+- Eigene Kartenpunkte: Leonardo, HBF, GAT, Muenchen. GAT ist EIGENER Punkt (nicht
+  unter Flughafen), da eigenes Terminal.
+- Karl August: eigener NAME, aber KEIN eigener Kartenpunkt (sonst zu viel Cluster neben
+  Sheraton). Fahrzeit ueberall gleich lang wie Sheraton.
+- Festival-Zonen: fuer DIESES Festival laufen alle Zonen ausser Caldera/Zone 3/Stonelands
+  unter Caldera (Pickup + Absetzung Caldera). Betrifft Magical Forest, House of Remix,
+  Darkwoods, Gruener Stadl, Camping Stage.
+- Ausreisser (Bahnhof Puschendorf, Flugplatz Herzogenaurach, je 1x) bleiben `__custom`.
+
+## Eingriffe (rein additiv, +44/-4 Zeilen JSX, 12457 -> 12497)
+1. `seedLocations` (Z. ~489): 5 neue Orte. Leonardo/HBF/GAT/Muenchen mit mapX/mapY/lat/lng;
+   Karl August mit lat/lng aber OHNE mapX (kein Pin).
+2. `MAP_NODE_ALIAS = { karl_august: "sheraton" }` (neu) + `resolveNode` (Z. ~2076): Karl
+   August wird auf der Karte am Sheraton-Knoten gezeichnet (Fahrer bleibt sichtbar).
+   Betrifft NUR die Karte, nie Anzeige/Notizen/Fahrzeit.
+3. `MAP_LAYOUT` (Z. ~2014): Fallback-Positionen fuer die 4 Pin-Orte (Karl August bewusst nicht).
+4. `classify` (Z. ~739): isAir += gat_nue/airport_muc; isHotel += leonardo/hbf_nue/karl_august.
+5. `matchLoc` (Z. ~11008): neue Muster (spezifisch vor allgemein): karl.?august ->
+   karl_august; leonardo; \bhbf\b|hauptbahnhof|central station -> hbf_nue; munich|
+   m(ü|ue)nchen|\bmuc\b -> airport_muc; private jet|\bgat\b -> gat_nue (Muenchen+GAT VOR
+   dem Nuernberg-Airport-Muster). Zonen-else -> Caldera statt Freitext.
+
+## Supabase (Pflicht-Nachtrag, wie B-Matrix-Update)
+`orte-nachtrag-update.sql`: haengt die 5 Orte IDEMPOTENT an `settings.locations` an
+(not-exists-Pruefung je id -> kein Duplikat bei Mehrfachlauf, Bestands-Orte unangetastet,
+kein Schema-Eingriff). App und SQL byte-konsistent geprueft (Name/short/address/type/mapX).
+seedLocations greift nur beim lokalen Erststart; im Live-Betrieb MUSS die SQL laufen,
+sonst kennen die Fahrer-Handys die neuen Orte nicht.
+
+## Verifikation (volle Kette, alles gruen)
+esbuild gruen; keine Duplikate; G1 `smoke-teilpaket-g.mjs` 130/0 + `gegenprobe-teilpaket-g.mjs`
+10/0 (Logik unberuehrt); `rendertest` 5 Referenzwerte konstant (25053/2452/2413/2895/101);
+`pruefe` GEAENDERT 5 (seedLocations, classify, MAP_LAYOUT, resolveNode, matchLoc) / NEU 1
+(MAP_NODE_ALIAS) / ENTFERNT 0 / keine undef. CSS-Var; `kontrast` 0; `smoke-teilpaket-g2-ui.mjs`
+51/0. Neu: `smoke-orte-fix.mjs` 46/0 (echte Ortsstrings + Fahrzeit-Knoten + Karten-Alias),
+Gegenproben (Teil 1 + Teil 2) greifen nachweislich.
+
+## Manuelle Testfaelle (nach Deploy + SQL)
+1. Live-Liste frisch importieren -> Leonardo/GAT/Muenchen/Karl August zeigen echten Namen.
+2. Leonardo->Festival oeffnen -> "Abholung: Sheraton (Fahrgast-Ort: Leonardo)", Fahrzeit gesetzt.
+3. Live-Karte -> Leonardo/HBF/GAT/Muenchen eigene Pins; Karl August am Sheraton-Punkt.
+4. "Magical Forest" o.ae. importieren -> landet als Caldera.
+5. "Bahnhof Puschendorf" -> weiterhin "Ort nicht erkannt" (gewollt).
+
+## Weitere gefundene Punkte fuer spaetere Sessions (nicht angefasst)
+- **Extra-Venue-Zonen als eigene Kartenpunkte:** aktuell laufen Magical Forest/House of
+  Remix/Darkwoods/Gruener Stadl/Camping Stage bewusst unter Caldera (Jordan-Entscheid fuer
+  DIESES Festival). Falls spaeter eigene Zonen-Punkte gewuenscht: ZONES + ZONE_LAYOUT + ZONE_STYLE
+  erweitern (eigenes Paket).
+- **11x duplizierte `ln`-Helper** (setup.locations.find(...).short): funktioniert, aber
+  Kandidat fuer spaetere Zentralisierung (kosmetisch, kein Bug, unter Freeze nicht angefasst).
+
+## Ready-to-paste Opener fuer die NAECHSTE Session
+> Neue Session. Arbeitsverzeichnis MUSS `/home/claude/repo` sein. Erst **Schritt 0**
+> komplett: Repo klonen (frischer PAT von mir), nach `/home/claude/repo`, `npm ci`,
+> git config; dann `git log --graph --oneline --all` + `git fetch`, exakte Zeilenzahl
+> `src/ShuttleLeitstelle.jsx` pruefen (nach Orts-Fix = 12497, letzter Commit `bb868a4`)
+> und volle Bestands-Regression: esbuild, Duplikat-Grep, `extract-funcs-teilpaket-g.py` +
+> `smoke-teilpaket-g.mjs` (130/0) + `gegenprobe-teilpaket-g.mjs` (10/0), `rendertest.mjs`
+> (5 Referenzwerte konstant), `pruefe.mjs` gegen eine frische Baseline, `kontrast.mjs` (0),
+> `smoke-teilpaket-g2-ui.mjs` (51/0), `smoke-orte-fix.mjs` (46/0).
+> Regeln unveraendert: rein additiv, kleinstmoeglich, keine Breaking Changes, nach jeder
+> Aenderung volle Kette + Diff-Beweis + Testfaelle, Bau erst nach Freigabe. **Freeze seit
+> 21.07., KEINE Loeschungen.** Festival 23.-27.07.
+>
+> Naechste moegliche Themen (deine Wahl): (a) optionale G2-Primaeranzeige (Rueckstellungs-
+> Badge auch in Fahrerliste/Timeline, war descoped); (b) Extra-Venue-Zonen als eigene
+> Kartenpunkte (aktuell unter Caldera gebuendelt); (c) etwas anderes. Vor jedem JSX-Eingriff
+> Verdrahtungsplan + genaue Stelle + Regressionsrisiko zeigen und Freigabe abwarten.
+> **Wichtig, dauerhaft:** jede Aenderung, die Live-Daten betrifft, kommt mit passendem
+> Supabase-SQL-Nachtrag (nie nur Artifact-Code) - die App laeuft ueber Supabase.
+
+**Stand nach dieser Session:** matchLoc-/Orts-Fix fertig, verifiziert, committet/gepusht
+(`bb868a4`). Supabase-SQL `orte-nachtrag-update.sql` liegt bereit und MUSS im SQL-Editor
+ausgefuehrt werden, damit die Fahrer-Handys die neuen Orte kennen. Freeze eingehalten,
+rein additiv, keine Loeschung.
