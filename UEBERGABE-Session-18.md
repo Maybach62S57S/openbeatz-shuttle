@@ -4621,3 +4621,97 @@ Gegenproben), dann UI (die bestehende GroupSuggestionNote erweitert Dreier
 automatisch, da sie rein über den Kandidaten rendert). Danach volle Regression +
 Commit/Push.
 ```
+
+---
+
+# Session nach F2 (20.07.2026): matchLoc-Status geprüft + zwei Fixes (ABGESCHLOSSEN)
+
+Ausgangspunkt: der alte "matchLoc Pflicht-Fix vor Festival"-Punkt sollte gegen-
+geprüft werden, nicht angenommen. Ergebnis: matchLoc selbst bleibt wie in jeder
+Vorsession vereinbart unangetastet. Der operative Impact (Routing/C3/D/E/F) ist
+seit Teilpaket B bereits ueber die Alias-Auflösung `resolveLocation` entschärft.
+EIN enger, bisher undokumentierter Rest wurde gefunden und (mit Jordans Freigabe,
+da noch nicht importiert war) additiv gefixt.
+
+## Fix 1: Import-Dauer (Commit `76d7cf2`)
+
+`estDurationMin` wurde beim Import über `travelMin(setup.matrix, from.id, to.id)`
+mit der ROHEN matchLoc-ID berechnet, nicht über die B-Auflösung. Custom-Orte
+(München-Flughafen, Leonardo, Karl August, HBF - ca. 108 von 313 Fahrten 2026)
+bekamen `estDurationMin: null` -> `effDur()`-Fallback 20 min statt echter Fahrzeit
+(München real 105 min). Wirkt sich auf GPS-Live-ETA/Verspätungsanzeige und den
+CSV/PDF-Dauer-Export aus; Dispo-Entscheidungen (C3/D/E/F) sind NICHT betroffen,
+die nutzen bereits `resolveOperationalRideLocations`.
+
+Fix additiv in EINER Zeile in `parseRow`: `rideEndpointMatrixNode(id, custom)`
+(bereits bestehend, rückwärtskompatibel) statt der rohen ID. matchLoc selbst
+unangetastet. Bestands-IDs -> identischer Matrix-Knoten (byte-identisch).
+Wichtig: griff nur, WEIL Jordan zum Zeitpunkt des Fixes noch nicht importiert
+hatte - ein Fix nach dem Import hätte nur künftige Importe repariert, nicht die
+bereits gespeicherten Fahrten (kein Backfill gemacht, war nicht nötig).
+
+Verifikation: pruefe GEAENDERT 1 (nur `parseRow`), rendertest/kontrast konstant.
+Neu: `smoke-import-dauer.mjs` (18/18, inkl. differentiellem HEAD-Vergleich: nur
+die 8 gewünschten null->Wert-Fälle ändern sich) + `gegenprobe-import-dauer.mjs`
+(5/5, dauerhaft im Repo). Volle Regression grün.
+
+## Fix 2: Navigations-Ziel (Commit `dd54b27`)
+
+Von Jordan gemeldet: "Route starten" führte Fahrer ein paar Kilometer daneben.
+Ursache: `navUrlForRide` bevorzugte IMMER die hinterlegte `lat/lng`-Koordinate vor
+der Adresse. Orte sind nirgends in der UI editierbar (kein Location-Editor) -
+Koordinaten kommen nur aus dem Erst-Seed und werden von einem Redeploy nie
+nachträglich in der DB aktualisiert.
+
+Zwei getrennte Ursachen, zwei getrennte Fixes:
+- **Festival:** reines DATEN-Problem, kein Code-Bug. In Jordans Live-DB stand
+  `lat: 49.6` statt `49.52728` (lng war schon richtig). Per SQL live korrigiert
+  (`festival-koordinate-update.sql`, im Repo, nach demselben Muster wie
+  `teilpaket-b-matrix-update.sql`). Von Jordan ausgeführt und bestätigt: hat
+  funktioniert.
+- **Sheraton/Mövenpick/Flughafen:** echter Code-Fix. `navUrlForRide` nutzt jetzt
+  für Orte mit `venue !== true` (zusätzlich per `id !== "festival"` abgesichert
+  gegen fehlendes venue-Flag in Altdaten) die Adresse statt der Koordinate -
+  Karten-Apps geocodieren Straße+Hausnummer+PLZ+Ort punktgenau. Festival bleibt
+  bewusst bei der Koordinate (weitläufiges Gelände ohne Hausnummer).
+- **Leonardo/Karl August/HBF:** geprüft, kein eigener Ortseintrag vorhanden (in
+  Live-DB bestätigt: taucht in `settings.locations` nicht auf). Navigation läuft
+  bereits über den Freitext (`ride.toCustom`) als Google-Ortssuche - strukturell
+  nie derselbe Fehler wie bei Sheraton/Mövenpick/Flughafen, da nie eine falsche
+  Koordinate vorhanden war, die eine korrekte Adresse hätte verdrängen können.
+  Durch diesen Fix unverändert.
+
+Live-Adressen vor dem Fix per SQL aus der Produktions-DB exportiert und geprüft
+(nicht angenommen): airport/moevenpick/sheraton vollständig und geocoding-tauglich.
+
+Verifikation: pruefe GEAENDERT 1 (nur `navUrlForRide`), rendertest/kontrast
+konstant. Neu: `smoke-nav-url.mjs` (10/10: Hotels/Flughafen -> Adresse, Festival
+-> weiterhin exakt Koordinate inkl. Robustheitsfall ohne venue-Flag, Custom-Ziel/
+Fallbacks unverändert). Volle Regression grün.
+
+## Neue Proof-Skripte im Repo
+
+`smoke-import-dauer.mjs`, `gegenprobe-import-dauer.mjs`, `smoke-nav-url.mjs`
+(alle brauchen src als argv[2], kein Extract nötig). Plus `festival-koordinate-
+update.sql` (bereits ausgeführt, als Referenz/Muster für ähnliche Live-Fixes
+im Repo belassen).
+
+## Bekannter Rest (dokumentiert, NICHT gefixt)
+
+Wenn in einer Import-Zeile BEIDE Orte unbekannt sind, liefert `travelMin` 0 statt
+null (beide Custom-Orte kollidieren auf denselben `__custom`-Knoten, `travel()`s
+a===b-Regel). Vorbestehendes Verhalten (in HEAD vor Fix 1 identisch, per
+differentiellem Vergleich bestätigt), durch keinen der beiden Fixes verändert.
+Für den Festivalbetrieb irrelevant (Einzelfall bei doppelt unbekanntem Ort),
+bei Bedarf nach dem Festival separat anschauen.
+
+## Rollback-Tags
+
+`pre-import-dauer-fix` = `f0e1f53` (vor Fix 1, auch auf origin gepusht).
+Vor Fix 2 wurde kein separater Tag gesetzt (Fix 1 = `76d7cf2` ist der De-facto-
+Rückfallpunkt für Fix 2).
+
+**Stand nach dieser Session:** F (Sammelfahrt-Vorschläge) weiterhin fertig für
+das Festival, F3 weiterhin bewusst vertagt (siehe Opener oben). Zusätzlich: beide
+in dieser Session gefundenen Orts-/Dauer-Punkte sind bearbeitet. Freeze morgen
+(21.07.), Festival 23.-27.07.
