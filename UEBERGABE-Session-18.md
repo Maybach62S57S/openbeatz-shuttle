@@ -4557,3 +4557,67 @@ Details im `TEILPAKET-F-BERICHT.md`, Abnahme in `TEILPAKET-F-ABNAHME.md`.
 # "airport" faellt auf UNKNOWN (nur Anzeige-Signal sameZone, kein Gate);
 # Leonardo/HBF teilen Matrix-Knoten sheraton -> sameDestination kann bei
 # unterschiedlichen Anzeigezielen operativ korrekt true werden (F aendert nie toId).
+
+# Session F2 (20.07.2026): Teilpaket F2 - UI zu den Sammelfahrt-Vorschlägen (ABGESCHLOSSEN)
+Rein additiv, rein lesend, nur präsentational. Aufsetzend auf F1 (c081e64).
+Details im TEILPAKET-F-BERICHT.md (Abschnitt "Teilpaket F2").
+#
+# Entscheidungen (vor dem Bau geklärt): Hinfahrt-Host in-context inline auf der
+# Fahrtkarte in BEIDE Richtungen (Rückfahrten inline in MissionReturnsTab,
+# Hinfahrten inline im board-Tab) statt eigener Übersicht - konsistent mit dem
+# E-Muster, kein neuer Nav-Eintrag. Severity-Farben ruhig: recommended = Grün
+# (--mc-st-done), possible = Blau (--mc-st-new), kein Alarmrot, Akzentstrich statt
+# gefüllter Box.
+#
+# Was F2 gebaut hat: NEU (3) GroupSuggestionNote / groupDriverHint /
+# GROUP_C3_WARNING_LABEL. GEAENDERT (2) MissionControl (board: groupModel-Memo auf
+# Shell-Ebene wegen Rules of Hooks, Filter-Toggle + Zähler + Leerzustand + Notiz
+# unter toFestival-Karten) und MissionReturnsTab (analog, nutzt vorhandenes
+# ttMatchEntries). Zwei Aktionen "Fahrt öffnen"/"Zuweisung öffnen" über bestehende
+# onEdit/onAssign. KEINE Zusammenlegen-Schaltfläche. Kein neues dyn-Feld, kein
+# Schreibweg. Memo plan-basiert (now spielt keine Rolle -> now:0, stabil).
+#
+# Verifikation grün: esbuild, keine Duplikate, rendertest 25053/2452/2413/2895/101,
+# kontrast 0, pruefe (HEAD 28b62e0 vs Arbeitsstand: GEAENDERT 2, NEU 3, ENTFERNT 0,
+# keine undef. CSS-Var), smoke-teilpaket-f-ui.mjs 48/48 (inkl. echtem Render von
+# MissionReturnsTab UND board-Renderpfad via geseedetem tab="board", Read-only-Spy,
+# Rollen-Gating, kein Merge-Button, 2 Gegenproben, Counter-Proof mit gebrochener
+# Quelle), volle Regression (smoke/b/c1/c1-ui/c2/c2-ui/c3/c3-ui/d/d-ui/e/f/
+# gegenprobe-e/gegenprobe-f/27b*/27c/27d/27e).
+#
+# Neues Proof-Skript: smoke-teilpaket-f-ui.mjs (braucht src als argv[2], KEIN
+# Extract nötig; baut zusätzlich eine zweite, tab-geseedete Kopie fürs board).
+#
+# Bekannte Grenzen (dokumentiert, NICHT gefixt): F1-Grenzen unverändert (Airport-
+# Zone UNKNOWN, Leonardo/HBF teilen Matrix-Knoten, C3-Veto konservativ) - reine
+# Anzeige-Signale. board-Memo läuft über alle Tage (Bucketing filtert intern);
+# unkritisch, bei Bedarf später auf aktiven Tag vorfilterbar.
+#
+# Slicing-Stand: F3 (Dreiergruppen) bleibt bewusst vertagt (Spec 31: Stabilität
+# vor Dreiern; nur nach dem Festival, wenn sauber + performant möglich). Vor dem
+# Festival ist damit alles an Sammelfahrt-Funktionalität geliefert, was geplant war.
+
+### Ready-to-paste Opener für F3 (Dreiergruppen, NACH dem Festival - nur wenn gewünscht)
+
+```
+Teilpaket F3 (Dreiergruppen der Sammelfahrt-Vorschläge), frischer Chat. Erst
+PROJEKT-ANWEISUNGEN.md lesen, dann Repo holen. Repo: Maybach62S57S/openbeatz-shuttle,
+main, letzter Code-Commit = F2-Commit (siehe git log). PAT setze ich unten ein: <PAT>
+Nach Klon: git config user.name/email, npm ci, Schritt 0 komplett grün fahren
+(esbuild, Duplikat-Grep, rendertest 25053/2452/2413/2895/101, kontrast 0, pruefe
+ZWEI Pfade HEAD vs Arbeitsstand, smoke.mjs Classic-Reste 0, alle bestehenden
+smoke-teilpaket-* inkl. -f und -f-ui, gegenprobe-e und -f). Dann
+UEBERGABE-Session-18.md (F1/F2-Einträge) und TEILPAKET-F-BERICHT.md lesen.
+Feste Regeln wie immer: rein lesend, additiv, keine Breaking Changes, nur
+präsentational, keine neuen Schreibwege, kein neues dyn-Feld, Stage/Fahrer/Gast
+unverändert. Nur bestehende WCAG-geprüfte MC-Farbvariablen, kein Alarmrot.
+AUFTRAG F3: maxGroupSize von 2 auf 3 heben - ABER nur, wenn die Erweiterung
+sauber, deterministisch und performant bleibt. VOR dem Bau: ehrliche Einschätzung,
+ob Dreier-Bewertung (Route/Umweg/Kapazität/Fahrer für 3 Fahrten, Kanonisierung,
+Ranking-Overlap) ohne Kombinatorik-Explosion und ohne die F1-Statusleiter zu
+verkomplizieren machbar ist. Wenn nein: dokumentiert als Paar-Beschränkung belassen
+und NICHT bauen. Wenn ja: erst Logik-Kern (analog F1, voll getestet +
+Gegenproben), dann UI (die bestehende GroupSuggestionNote erweitert Dreier
+automatisch, da sie rein über den Kandidaten rendert). Danach volle Regression +
+Commit/Push.
+```

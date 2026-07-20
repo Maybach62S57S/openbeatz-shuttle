@@ -226,3 +226,100 @@ abwarten. Zaehler + optionaler Filter "nur mit Sammelfahrt-Vorschlag", Aktionen 
 smoke-teilpaket-f-ui.mjs (Read-only + Rollen-Gating + Leerzustand) und volle
 Regression, dann Commit/Push.
 ```
+
+
+---
+
+# Teilpaket F2 - UI zu den Sammelfahrt-Vorschlägen (Bericht)
+
+Stand: 20.07.2026. Aufsetzend auf F1 (`c081e64`). Rein lesend, additiv,
+ausschließlich präsentational (className/style + Anzeige). Kein neuer Schreibweg,
+kein neues dyn-Feld, keine Änderung an Rollen/Workflow/DB.
+
+## Entscheidungen (vor dem Bau mit Jordan geklärt)
+
+- **Hinfahrt-Host:** nicht als eigene Übersicht, sondern in-context inline auf der
+  Fahrtkarte, in beide Richtungen. Rückfahrten (`fromFestival`) inline in
+  `MissionReturnsTab`, Hinfahrten (`toFestival`) inline im `board`/Fahrten-Tab.
+  Konsistent mit dem bestehenden E-Muster (Wartefahrt-Vorschlag inline auf der
+  Karte), kein neuer Nav-Eintrag, keine neue Rollen-Gating-Zeile, kein neues
+  Konzept "Hinfahrten vs. Fahrten".
+- **Severity-Farben (ruhig):** `group_recommended` -> Grün (`--mc-st-done`),
+  `group_possible` -> Blau (`--mc-st-new`). Kein Alarmrot (`--mc-st-problem`), kein
+  Amber. Darstellung als schmaler linker Akzentstrich, Farbe nur auf Icon + Label,
+  Detailzeilen in `--mc-text-muted`. Deutlich ruhiger als die gefüllte E-Box.
+
+## Was F2 gebaut hat
+
+- **Neu (3 Bausteine, pruefe NEU):** `GroupSuggestionNote` (rein präsentationale
+  Anzeige-Komponente, zeigt nur `group_recommended`/`group_possible`),
+  `groupDriverHint`, `GROUP_C3_WARNING_LABEL`.
+- **Geändert (2 Hosts, pruefe GEAENDERT):**
+  - `MissionControl` (Shell): rein lesender `groupModel`-Memo (plan-basiert,
+    `now: 0`, stabil auf `[dyn.rides, setup]`), `groupPrimaryByRide`-Lookup,
+    `boardGroupPrimary`/`boardGroupCount`, `onlyGroup`-Filterstate. Im `board`-Tab:
+    Filter-Toggle + Zähler "Sammelfahrt N", Leerzustand für den Filter, Notiz inline
+    unter toFestival-Karten. Der Memo liegt bewusst auf Shell-Ebene (nicht im
+    board-IIFE), um die Rules of Hooks nicht zu verletzen.
+  - `MissionReturnsTab`: analoger `groupModel`-Memo (nutzt das vorhandene
+    `ttMatchEntries`), `groupPrimaryFor`, Zähler, Toggle "nur mit Sammelfahrt",
+    Integration in `passesFilters`/`anyFilter`/Filter-Reset, Notiz inline auf der
+    Rückfahrt-Karte.
+- **Aktionen:** genau zwei, beide über bestehende Wege - "Fahrt öffnen"
+  (`onEdit`/`setEditRide` auf die Partnerfahrt) und "Zuweisung öffnen"
+  (`onAssign`/`setAssignRide` auf die eigene Fahrt). **Keine**
+  Zusammenlegen-Schaltfläche.
+
+## Read-only-Nachweis
+
+`GroupSuggestionNote` enthält keinen `updateDyn`, keinen Supabase-/Storage-Zugriff.
+Beim Render von `MissionReturnsTab` und der board-Shell wird `updateDyn` nie
+aufgerufen (Spy-Zähler = 0). Die Anzeige leitet sich rein aus
+`buildGroupRidePairCandidates` (F1, reine Funktion) ab; die einzige F1-Nutzung ist
+lesend. `pruefe`: GEAENDERT betrifft ausschließlich die zwei Anzeige-Hosts, kein
+bestehender Schreibweg berührt.
+
+## Rollenbegrenzung (Spec 36)
+
+`GroupSuggestionNote` ist modul-eben und wird ausschließlich in `MissionControl`
+(board) und `MissionReturnsTab` referenziert - nicht in `DriverApp`, `StageApp`,
+`GuestApp`. Beide Hosts sind dispo-only (`returns`/`board` sind in `MC_ROLE_TABS`
+für stage/driver nicht enthalten; stage = overview+emergency). Statisch und im
+Smoke geprüft.
+
+## Verifikation
+
+- **esbuild** grün, keine doppelten Funktionen.
+- **rendertest** konstant: 25053 / 2452 / 2413 / 2895 / 101.
+- **kontrast**: 0 Fehler. Genutzte Akzentfarben WCAG-geprüft (done 4.93 / new 3.61
+  Text-auf-soft, groß-AA).
+- **pruefe** (HEAD `28b62e0` vs. Arbeitsstand): GEAENDERT 2 (MissionReturnsTab,
+  MissionControl), NEU 3 (GroupSuggestionNote, groupDriverHint,
+  GROUP_C3_WARNING_LABEL), ENTFERNT 0, keine undefinierte CSS-Variable.
+- **smoke-teilpaket-f-ui.mjs**: 48/48. Deckt ab: ruhige Severity-Farben + kein
+  Alarmrot, Kartentext (Einsparung/Umweg/Kapazität/Fahrer-Hinweis/C3-Warnung),
+  routeReliable=false ohne Einsparungsbehauptung, fehlender Partner, nicht
+  handlungsleitende/null-Kandidaten rendern nichts, echter Render von
+  `MissionReturnsTab` mit gruppierbarem Paar (Notiz + Toggle), Solo/Leerzustand,
+  **board-Renderpfad zur Laufzeit** (Toggle-Trap via geseedetem `tab="board"`),
+  Read-only (updateDyn-Spy = 0 in beiden Hosts), Rollen-Gating, keine
+  Zusammenlegen-Schaltfläche. Plus 2 Gegenproben (injizierter Schreibweg /
+  Merge-Button würden erkannt). Counter-Proof: eine gebrochene Quelle (Alarmrot in
+  der Note) erzeugt 6 gezielte FAILs.
+- **Regression** unverändert grün: smoke.mjs (Classic-Reste 0),
+  b/c1/c1-ui/c2/c2-ui/c3/c3-ui/d/d-ui, e (152), f (120), gegenprobe-e (8/8),
+  gegenprobe-f (8/8), 27b/27b-guest/27b-sections/27b-settings/27c/27d/27e. F1-Kern
+  (120) unangetastet.
+
+## Bekannte Grenzen / bewusst nicht getan
+
+- **F3 (Dreiergruppen) bleibt vertagt.** F1/F2 zeigen nur Paare (`maxGroupSize: 2`).
+- Der board-Memo läuft über alle Tage von `dyn.rides` (Bucketing filtert intern
+  nach Tag+Richtung). Bei ~60-70 Fahrten/Tag und Fenster-Abbruch unkritisch; bei
+  Bedarf ließe sich später auf den aktiven Tag vorfiltern (nicht nötig).
+- Die F1-Grenzen (Airport-Zone als UNKNOWN, Leonardo/HBF teilen Matrix-Knoten,
+  C3-Veto konservativ) gelten unverändert und sind reine Anzeige-Signale.
+
+**GO/NO-GO F2:** GO. Rein lesend, additiv, nur die zwei Anzeige-Hosts geändert,
+48 UI-Tests + 2 Gegenproben + Counter-Proof grün, volle Regression grün,
+geschützte Referenzwerte konstant. Vor dem Freeze (21.07.) sauber fertig.

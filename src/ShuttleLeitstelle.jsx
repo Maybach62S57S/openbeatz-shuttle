@@ -7820,6 +7820,62 @@ function buildGroupRidePairCandidates({ rides, drivers, setup, now, timetableEnt
   return { ranked, actionable, primaries: ranked.filter((c) => c.isPrimary), counts };
 }
 
+/* ---- Teilpaket F2: rein praesentationale Anzeige der Sammelfahrt-Vorschlaege --
+ * Reine Anzeige-Komponente. Kein Schreibweg, kein Handler ausser den beiden
+ * bestehenden Oeffnen-Aktionen (onOpenPartner -> Ride-Editor, onOpenAssign ->
+ * Zuteilung). Zeigt NUR handlungsleitende Status (recommended/possible). Ruhige
+ * Variante: schmaler Akzentstrich, Farbe nur auf Label/Icon, Details gedaempft.
+ * group_recommended -> Gruen (--mc-st-done), group_possible -> Blau (--mc-st-new,
+ * kein Alarmrot). */
+const GROUP_C3_WARNING_LABEL = {
+  c3_buffer_tight: "Zeitpuffer knapp, Ankunft beachten",
+  c3_return_before_set_end: "Abfahrt läge vor Set-Ende, bitte prüfen",
+};
+function groupDriverHint(assignment) {
+  if (assignment === "two_drivers") return "zwei Fahrer zugeteilt, bitte prüfen";
+  if (assignment === "mixed") return "einer zugeteilt, einer offen, bitte prüfen";
+  if (assignment === "same_driver") return "gleicher Fahrer";
+  if (assignment === "both_unassigned") return "beide noch ohne Fahrer";
+  return null;
+}
+function GroupSuggestionNote({ candidate, thisRideId, rides, onOpenPartner, onOpenAssign }) {
+  if (!candidate || !GROUP_RIDE_ACTIONABLE.has(candidate.status)) return null;
+  const c = candidate;
+  const partnerId = (c.rideIds || []).find((id) => id !== thisRideId) || null;
+  const partner = partnerId ? (rides || []).find((r) => r.id === partnerId) : null;
+  const accent = c.status === "group_recommended" ? "var(--mc-st-done)" : "var(--mc-st-new)";
+  const partnerLabel = partner ? `${partner.djName || "Fahrt"} (${partner.time})` : "Partnerfahrt";
+  const savedText = (c.routeReliable && c.estimatedDrivingSavedMin != null)
+    ? `${c.estimatedDrivingSavedMin} Fahrminuten sparbar`
+    : "Fahrzeit unvollständig, keine Einsparung geschätzt";
+  const detourText = (c.routeReliable && c.detourMin != null) ? ` · Umweg ${c.detourMin} min` : "";
+  const capText = c.combinedPassengerCount != null
+    ? `${c.combinedPassengerCount} Pers.${c.fitsFleet ? "" : " (kein Fahrzeug groß genug)"}`
+    : null;
+  const driverHint = groupDriverHint(c.driverAssignment);
+  const c3Warn = (c.warnings || []).map((w) => GROUP_C3_WARNING_LABEL[w]).find(Boolean) || null;
+  return (
+    <div className="mt-2 pl-2.5 text-xs" style={{ borderLeft: `3px solid ${accent}` }}>
+      <div className="inline-flex items-center gap-1.5 font-semibold" style={{ color: accent }}>
+        <Users className="w-3.5 h-3.5 shrink-0" />{c.label} · mit {partnerLabel}
+      </div>
+      <div className="mt-0.5" style={{ color: "var(--mc-text-muted)" }}>{savedText}{detourText}</div>
+      {(capText || driverHint) && (
+        <div style={{ color: "var(--mc-text-muted)" }}>{[capText, driverHint].filter(Boolean).join(" · ")}</div>
+      )}
+      {c3Warn && <div style={{ color: "var(--mc-text-muted)" }}>{c3Warn}</div>}
+      <div className="mt-1 flex items-center gap-3">
+        {onOpenPartner && partner && (
+          <button onClick={() => onOpenPartner(partner)} className="hover:opacity-80" style={{ color: "var(--mc-text-secondary)" }}>Fahrt öffnen</button>
+        )}
+        {onOpenAssign && (
+          <button onClick={onOpenAssign} className="hover:opacity-80" style={{ color: "var(--mc-text-secondary)" }}>Zuweisung öffnen</button>
+        )}
+      </div>
+    </div>
+  );
+}
+
 /* ---- Mission-Control-Variante der Rueckfahrten (Session 7; Teilpaket D) --- *
  * Datenableitung und ALLE Schreib-Handler (Anwesenheit) sind VERBATIM aus der
  * bestehenden Ansicht uebernommen (keine Aenderung an Rueckfahrten-/Zeit-/
@@ -7833,6 +7889,7 @@ function MissionReturnsTab({ setup, dyn, day, updateDyn, by, onErr, onAssign, on
   const [groupFilter, setGroupFilter] = useState("all"); // all | <gruppe> (Teilpaket D)
   const [onlyNoDriver, setOnlyNoDriver] = useState(false); // Teilpaket D
   const [onlyWaitSuggestion, setOnlyWaitSuggestion] = useState(false); // Teilpaket E
+  const [onlyGroupSuggestion, setOnlyGroupSuggestion] = useState(false); // Teilpaket F2
   const [now, setNow] = useState(Date.now());
   // Teilpaket D: Aktualisierung der operativen Einordnung einmal pro Minute
   // (Spec 19). Rein Re-Render: kein Schreibweg, kein DB-Abruf. Beim Unmount weg.
@@ -7929,6 +7986,23 @@ function MissionReturnsTab({ setup, dyn, day, updateDyn, by, onErr, onAssign, on
     return !!(w && w.best && WAIT_RIDE_ACTIONABLE.has(w.best.status));
   };
 
+  // ---- Teilpaket F2: Sammelfahrt-Vorschlaege (rein lesend) -----------------
+  // Nur Rueckfahrten (fromFestival) werden hier gezeigt. Plan-basiert -> now
+  // spielt keine Rolle (C3 ist reine Planbewertung). Kein Schreibweg.
+  const groupModel = useMemo(() => buildGroupRidePairCandidates({
+    rides: dyn.rides, drivers: setup.drivers, setup, now: 0, timetableEntries: ttMatchEntries,
+  }), [dyn.rides, day, setup, ttMatchEntries]);
+  const groupPrimaryByRide = useMemo(() => {
+    const m = new Map();
+    (groupModel.primaries || []).forEach((c) => (c.rideIds || []).forEach((id) => { if (!m.has(id)) m.set(id, c); }));
+    return m;
+  }, [groupModel]);
+  const groupPrimaryFor = (rideId) => {
+    const c = groupPrimaryByRide.get(rideId);
+    return c && GROUP_RIDE_ACTIONABLE.has(c.status) ? c : null;
+  };
+  const groupSuggestionCount = returns.filter((r) => groupPrimaryFor(r.id)).length;
+
   // ---- Ansicht-Filter (rein praesentational) ----
   const matchesQ = (r) => {
     if (!q.trim()) return true;
@@ -7938,8 +8012,9 @@ function MissionReturnsTab({ setup, dyn, day, updateDyn, by, onErr, onAssign, on
   const passesFilters = (vm) => matchesQ(vm.ride)
     && (groupFilter === "all" || vm.op.group === groupFilter)
     && (!onlyNoDriver || !vm.op.driverAssigned)
-    && (!onlyWaitSuggestion || hasActionableWait(vm.ride.id));
-  const anyFilter = q.trim().length > 0 || groupFilter !== "all" || onlyNoDriver || onlyWaitSuggestion;
+    && (!onlyWaitSuggestion || hasActionableWait(vm.ride.id))
+    && (!onlyGroupSuggestion || !!groupPrimaryFor(vm.ride.id));
+  const anyFilter = q.trim().length > 0 || groupFilter !== "all" || onlyNoDriver || onlyWaitSuggestion || onlyGroupSuggestion;
 
   // Gruppierte, sortierte Darstellung. Leere Gruppen fallen raus (Spec 15/29).
   const grouped = RETURN_GROUPS_IN_ORDER.map((g) => ({
@@ -8042,6 +8117,11 @@ function MissionReturnsTab({ setup, dyn, day, updateDyn, by, onErr, onAssign, on
               </div>
             );
           })()}
+
+          {(() => { const gc = groupPrimaryFor(r.id); return gc ? (
+            <GroupSuggestionNote candidate={gc} thisRideId={r.id} rides={dyn.rides}
+              onOpenPartner={(pr) => onEdit(pr)} onOpenAssign={() => onAssign(r)} />
+          ) : null; })()}
 
           <div className="flex items-center flex-wrap gap-2 mt-3">
             {drv ? (
@@ -8178,6 +8258,12 @@ function MissionReturnsTab({ setup, dyn, day, updateDyn, by, onErr, onAssign, on
             <Coffee className="w-3 h-3" />nur mit Wartevorschlag {waitActionableTotal}
           </button>
         )}
+        {groupSuggestionCount > 0 && (
+          <button onClick={() => setOnlyGroupSuggestion((v) => !v)} className="text-xs px-2.5 py-1 rounded-[var(--mc-r-sm)] inline-flex items-center gap-1 transition-colors"
+            style={onlyGroupSuggestion ? { background: "var(--mc-st-new-soft)", color: "var(--mc-st-new)", fontWeight: 500, border: "1px solid var(--mc-st-new)" } : { color: "var(--mc-text-secondary)", border: "1px solid var(--mc-border)" }}>
+            <Users className="w-3 h-3" />nur mit Sammelfahrt {groupSuggestionCount}
+          </button>
+        )}
       </div>
 
       {returns.length === 0 && (
@@ -8187,7 +8273,7 @@ function MissionReturnsTab({ setup, dyn, day, updateDyn, by, onErr, onAssign, on
 
       {returns.length > 0 && anyFilter && shownTotal === 0 && (
         <EmptyState icon={Search} title="Keine Rückfahrten entsprechen den aktuellen Filtern."
-          action={<button onClick={() => { setQ(""); setGroupFilter("all"); setOnlyNoDriver(false); setOnlyWaitSuggestion(false); }} className="text-xs px-3 py-1.5 rounded-[var(--mc-r)]" style={{ background: "var(--mc-hover)", color: "var(--mc-text)", border: "1px solid var(--mc-border)" }}>Filter zurücksetzen</button>} />
+          action={<button onClick={() => { setQ(""); setGroupFilter("all"); setOnlyNoDriver(false); setOnlyWaitSuggestion(false); setOnlyGroupSuggestion(false); }} className="text-xs px-3 py-1.5 rounded-[var(--mc-r)]" style={{ background: "var(--mc-hover)", color: "var(--mc-text)", border: "1px solid var(--mc-border)" }}>Filter zurücksetzen</button>} />
       )}
 
       {returns.length > 0 && !(anyFilter && shownTotal === 0) && (
@@ -10793,6 +10879,28 @@ function MissionControl({ setup, dyn, session, updateDyn, updateSetup, onLogout,
     return true;
   });
 
+  // Teilpaket F2: Sammelfahrt-Vorschlaege (rein lesend). Plan-basiert -> now
+  // spielt keine Rolle (C3 ist reine Planbewertung), daher stabiler Memo ohne
+  // Tick. Nur Anzeige; kein Schreibweg, kein neues dyn-Feld.
+  const [onlyGroup, setOnlyGroup] = useState(false);
+  const ttEntriesMC = useMemo(() => normalizeTimetableEntries(TIMETABLE_RAW), []);
+  const groupModel = useMemo(() => buildGroupRidePairCandidates({
+    rides: dyn.rides, drivers: setup.drivers, setup, now: 0, timetableEntries: ttEntriesMC,
+  }), [dyn.rides, setup, ttEntriesMC]);
+  const groupPrimaryByRide = useMemo(() => {
+    const m = new Map();
+    (groupModel.primaries || []).forEach((c) => (c.rideIds || []).forEach((id) => { if (!m.has(id)) m.set(id, c); }));
+    return m;
+  }, [groupModel]);
+  // Hinfahrt-Vorschlaege fuer den board-Tab: nur toFestival, nur mit
+  // handlungsleitendem Primaervorschlag.
+  const boardGroupPrimary = (r) => {
+    if (!r || rideFestivalDirection(r) !== "toFestival") return null;
+    const c = groupPrimaryByRide.get(r.id);
+    return c && GROUP_RIDE_ACTIONABLE.has(c.status) ? c : null;
+  };
+  const boardGroupCount = dayRides.filter((r) => boardGroupPrimary(r)).length;
+
   const kpi = {
     total: dayRides.filter((r) => r.status !== "cancelled").length,
     unassigned: dayRides.filter((r) => !r.assignedDriverId && r.status !== "cancelled").length,
@@ -11048,6 +11156,7 @@ function MissionControl({ setup, dyn, session, updateDyn, updateSetup, onLogout,
             const narrow = boardWidth > 0 && boardWidth < 560; // Karten stapeln
             const cols = wide ? "minmax(360px,1.7fr) minmax(160px,0.8fr) minmax(360px,1.5fr)" : twoCol ? "minmax(300px,2fr) minmax(160px,1fr)" : "1fr";
             const ridesLoaded = Array.isArray(dyn.rides);
+            const boardRides = onlyGroup ? filtered.filter((r) => boardGroupPrimary(r)) : filtered;
             return (
             <div ref={boardRef} className="grid gap-5" style={{ gridTemplateColumns: cols }}>
               {/* Fahrtenliste */}
@@ -11067,7 +11176,14 @@ function MissionControl({ setup, dyn, session, updateDyn, updateSetup, onLogout,
                       className="mc-input w-full pl-8 pr-8 py-2 text-sm" />
                     {q && <button onClick={() => setQ("")} aria-label="Suche leeren" className="absolute right-2 top-2.5" style={{ color: "var(--mc-text-muted)" }}><X className="w-4 h-4" /></button>}
                   </div>
-                  <span className="text-xs font-mono tabular-nums hidden sm:inline" style={{ color: "var(--mc-text-muted)" }}>{filtered.length}/{dayRides.filter((r) => r.status !== "cancelled").length}</span>
+                  {boardGroupCount > 0 && (
+                    <button onClick={() => setOnlyGroup((v) => !v)} title="Nur Fahrten mit Sammelfahrt-Vorschlag zeigen"
+                      className="text-xs px-2 py-1 rounded-[var(--mc-r-sm)] inline-flex items-center gap-1 transition-colors"
+                      style={onlyGroup ? { background: "var(--mc-hover)", color: "var(--mc-text)", border: "1px solid var(--mc-border)" } : { color: "var(--mc-text-secondary)", border: "1px solid var(--mc-border)" }}>
+                      <Users className="w-3.5 h-3.5" />Sammelfahrt {boardGroupCount}
+                    </button>
+                  )}
+                  <span className="text-xs font-mono tabular-nums hidden sm:inline" style={{ color: "var(--mc-text-muted)" }}>{boardRides.length}/{dayRides.filter((r) => r.status !== "cancelled").length}</span>
                   <button onClick={() => setEditRide({ _new: true, dayKey: day, date: day })}
                     className="mc-btn-primary ml-auto text-sm px-3 py-2 flex items-center gap-1.5">
                     <Plus className="w-4 h-4" />Fahrt
@@ -11079,7 +11195,11 @@ function MissionControl({ setup, dyn, session, updateDyn, updateSetup, onLogout,
 
                 {ridesLoaded && (
                 <div className="space-y-2">
-                  {filtered.length === 0 && (() => {
+                  {boardRides.length === 0 && onlyGroup && (
+                    <EmptyState icon={Users} title="Keine Hinfahrt mit Sammelfahrt-Vorschlag."
+                      action={<button onClick={() => setOnlyGroup(false)} className="text-xs px-3 py-1.5 rounded-[var(--mc-r)]" style={{ background: "var(--mc-hover)", color: "var(--mc-text)", border: "1px solid var(--mc-border)" }}>Filter aufheben</button>} />
+                  )}
+                  {boardRides.length === 0 && !onlyGroup && (() => {
                     const es = rideListEmpty({ total: dayRides.length, query: q, filterLabel: filter === "all" ? null : ({ unassigned: "Offen", active: "Aktiv", done: "Erledigt" }[filter]) });
                     return (
                       <EmptyState icon={Route} title={es.text}
@@ -11090,7 +11210,7 @@ function MissionControl({ setup, dyn, session, updateDyn, updateSetup, onLogout,
                         } />
                     );
                   })()}
-                  {filtered.map((r) => {
+                  {boardRides.map((r) => {
                     const drv = setup.drivers.find((d) => d.id === r.assignedDriverId);
                     const cancelled = r.status === "cancelled";
                     const stripeKey = mcRideStatusKey(r.status, !!r.assignedDriverId);
@@ -11100,7 +11220,8 @@ function MissionControl({ setup, dyn, session, updateDyn, updateSetup, onLogout,
                         style={{ opacity: cancelled ? 0.6 : 1, boxShadow: flashing ? "0 0 0 2px var(--mc-st-new), var(--mc-shadow)" : undefined }}>
                         {/* Statusstreifen */}
                         <span className="w-1 shrink-0 self-stretch" style={{ background: `var(--mc-st-${stripeKey})` }} aria-hidden="true" />
-                        <div className={`flex-1 min-w-0 flex ${narrow ? "flex-wrap" : "items-center"} gap-x-4 gap-y-2 px-4 py-3`}>
+                        <div className="flex-1 min-w-0 px-4 py-3">
+                        <div className={`flex ${narrow ? "flex-wrap" : "items-center"} gap-x-4 gap-y-2`}>
                           {/* Zeit */}
                           <div className="text-center min-w-[52px]">
                             <div className="font-mono text-lg font-semibold leading-none tabular-nums" style={{ color: "var(--mc-text)" }}>{r.time}</div>
@@ -11148,6 +11269,11 @@ function MissionControl({ setup, dyn, session, updateDyn, updateSetup, onLogout,
                             <button onClick={() => setWaRide(r)} title="WhatsApp-Text" className="mc-iconbtn"><MessageSquare className="w-4 h-4" /></button>
                             <button onClick={() => setEditRide(r)} title="Fahrt öffnen" className="mc-iconbtn"><ChevronRight className="w-5 h-5" /></button>
                           </div>
+                        </div>
+                        {(() => { const gc = boardGroupPrimary(r); return gc ? (
+                          <GroupSuggestionNote candidate={gc} thisRideId={r.id} rides={dyn.rides}
+                            onOpenPartner={(pr) => setEditRide(pr)} onOpenAssign={() => setAssignRide(r)} />
+                        ) : null; })()}
                         </div>
                       </div>
                     );
