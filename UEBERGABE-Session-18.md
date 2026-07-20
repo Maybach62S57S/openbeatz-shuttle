@@ -5506,3 +5506,139 @@ Bewusst NICHT umgestellt (dokumentiert): Presence-Toggles `setNoReturn`/`setManu
 > Thema dieser Session: [beschreiben]. Offene Kandidaten: Presence-Toggles optional No-op, `unsubscribePush`-Aufraeumung No-op, reine Setup-Toggles ohne Ergebnispruefung (Session 2), GuestApp-Poll ohne Ueberlappungsschutz, matchLoc-Fix (Z. ~7676).
 
 **Stand nach dieser Session:** Schreib-Contention-Haertung fertig, verifiziert, committet/gepusht (`31746ce`). `src/ShuttleLeitstelle.jsx` 13067 Zeilen. Freeze eingehalten, keine Loeschung.
+
+---
+
+## Session "Buehne + Set-Zeit" (nach Schreib-Contention-Haertung)
+
+**Freeze-Aenderung (Jordan, 20.07.2026):** Die seit dem 21.07. geltende
+"keine Loeschungen mehr"-Regel ist auf Jordans ausdruecklichen Wunsch
+**aufgehoben**. Ab 21.07. sind Loeschungen/Aenderungen wieder erlaubt. Alle
+anderen Arbeitsregeln (rein additiv wo moeglich, kleinstmoeglich,
+Verdrahtungsplan + Freigabe vor Code-Aenderung, volle Kette danach, keine
+Breaking Changes) gelten unveraendert weiter.
+
+**Sicherheitshinweis (fuer kuenftige Sessions wichtig):** In diesem Chat
+wurde erneut ein PAT im Klartext gepostet (Chat-Umgebung, kein Claude Code
+mit lokalem Git). `CLAUDE.md` warnt genau davor (Vorfall vom 16.07.). PAT
+wurde sofort nach dem Clone aus der Remote-URL gescrubbt, Jordan wurde
+gebeten, ihn auf GitHub zu widerrufen. Fuer Sessions in dieser Chat-Umgebung
+(nicht Claude Code) bleibt ein frischer PAT technisch noetig, da kein
+persistentes Git-Login existiert - das ist ein Unterschied zu `CLAUDE.md`s
+"Kein PAT"-Hinweis, der sich auf einen bereits angemeldeten Rechner bezieht.
+
+**Ausgangsstand:** origin/main lag beim Sessionstart bereits einen Schritt
+weiter als der zuerst geclonte Stand (`31746ce`/`d7cf2e1`, Schreib-
+Contention-Haertung war schon gepusht, aber im ersten Clone dieser Session
+noch nicht enthalten). Mit `git fetch` + `git reset --hard origin/main`
+korrigiert, bevor irgendetwas gebaut wurde. Danach: HEAD `d7cf2e1`, Datei
+13067 Zeilen, volle Bestandskette gruen.
+
+**Thema:** Jordan wollte pruefen, ob es fuer 2026 schon eine Regel gibt, die
+Nebenbuehnen (Magical Forest, Darkwoods, Gruener Stadl, House of Remix,
+Campingstage) auf die Zone Caldera abbildet (Abhol-/Abladezone) - ja,
+existiert schon (`matchLoc`, Z. ~11418, Kommentar "Festival-Zonen-Regel
+(21.07., Jordan)"). Gewuenscht: trotzdem sichtbar machen, wo der Act
+*wirklich* spielt und wann sein Set ist, und zwar sowohl fuer die Fahrer als
+auch kompakt in der Zentrale (ohne die Fahrt zu oeffnen).
+
+**Umgesetzt (rein additiv, keine DB-/Workflow-/Rollen-Aenderung):**
+- Neuer Helfer `ttStageSet(ride, timetableEntries, index)` direkt neben
+  `ttSetLine` (~Z. 6150). Nutzt die unveraendert bestehende
+  `matchRideToTimetable`-Logik (Teilpaket C2), liefert bei eindeutigem
+  Treffer `{ stage, start, end }`, sonst `null`. Kein neues Ride-Feld, keine
+  Aenderung an der Zonen-Regel selbst (Fahrt zeigt weiterhin "Caldera" als
+  Zone, das bleibt Absicht).
+- `DriverApp`: neue `StageSet`-Komponente, gerendert unter dem Ziel in der
+  Aktuelle/Naechste-Fahrt-Karte (~Z. 3186) und in der Liste kommender
+  Fahrten (~Z. 3259). Erstmaliger Touch von DriverApp in dieser Session-
+  Reihe, aber nur additiv/darstellend, keine Handler, kein Schreibpfad,
+  keine der Tabu-Kinder (Modal/Field/inp) angefasst.
+- `RidesListTab` (Fahrtenliste, Leitstelle): kleines Buehnen-Badge unter dem
+  Artist-Namen (~Z. 5745), `ttEntries`/`ttIndex` einmal pro Tabelle gebaut,
+  pro Zeile wiederverwendet.
+
+**Tests:**
+- NEU: `smoke-buehne-settime.mjs` (17/0). Testet die echte Funktion
+  (angehaengter Export + esbuild + Import, wie `rendertest.mjs`) gegen
+  reale `TIMETABLE_RAW`-Daten: Magical-Forest-Act, Darkwoods-Act, Caldera-
+  Act (Positivkontrolle), kein Treffer -> null, leerer Artist -> null,
+  Zeitformat HH:MM, Struktur-Anker fuer alle drei Einbaustellen, Pflicht-
+  Gegenprobe (neutralisierte `ttStageSet`-Variante kippt alle Positivfaelle
+  nachweislich).
+- Volle Bestandskette unveraendert gruen: esbuild, Duplikat-Grep
+  (`[a-zA-Z0-9_]+`), JSX-Referenz-Cross-Check (nur die 4 bekannten legitimen
+  Treffer: I/Ic/MissionControlBoundary/SchematicComponent), `rendertest.mjs`
+  (25053/2452/2413/2895/101 konstant, Modal-Komponenten nicht angefasst),
+  `kontrast.mjs` (0), `smoke-teilpaket-c2`/`c2-ui`/`c3` (Matching-Logik
+  selbst unveraendert), `smoke-fahrtenliste.mjs` (35/0), alle 36
+  `smoke*.mjs`/`gegenprobe*.mjs` insgesamt gruen.
+
+**Betriebliches:** Arbeitsverzeichnis musste nach `/home/claude/repo`
+verschoben werden (Rendertest/Smoke-Skripte sind auf diesen Pfad
+verdrahtet) - rein lokal, kein Repo-Effekt.
+
+**Ergebnis:** Datei jetzt 13112 Zeilen. Commit `23b3796` (Feature) auf
+`d7cf2e1` (Schreib-Contention-Haertung). Freigegeben von Jordan vor dem
+Push. Keine Loeschung.
+
+**Weitere gefundene Punkte fuer spaetere Sessions (bewusst nicht
+angefasst):** keine neuen in dieser Session. Weiterhin offen aus frueheren
+Sessions: Presence-Toggles optional No-op, `unsubscribePush`-Aufraeumung
+No-op, reine Setup-Toggles ohne Ergebnispruefung, GuestApp-Poll ohne
+Ueberlappungsschutz.
+
+---
+
+### Ready-to-paste Opener fuer die naechste Session
+
+> Neue Session, OpenBeatz Shuttle-Leitstelle. Arbeitsverzeichnis MUSS
+> `/home/claude/repo` sein. Erst Schritt 0 komplett, bevor irgendetwas
+> Inhaltliches passiert:
+>
+> 1. Repo klonen (frischer PAT von mir), nach `/home/claude/repo`, PAT
+>    sofort danach aus der Remote-URL scrubben (`git remote set-url`).
+>    Hinweis: `CLAUDE.md` sagt "kein PAT noetig" - das gilt fuer Claude Code
+>    mit lokalem Git-Login, NICHT fuer diese Chat-Umgebung. Hier bleibt ein
+>    frischer PAT noetig, danach sofort scrubben.
+> 2. `npm ci`, git config (`j.merg@merg-and-more.de` / Jordan Merg).
+> 3. `git log --graph --oneline --all` UND `git fetch`, pruefen ob HEAD ==
+>    origin/main (Vorsicht: das hat sich in der letzten Session bereits
+>    einmal verschoben, unbedingt selbst pruefen statt dem Opener zu
+>    trauen). Letzter Commit sollte `23b3796` sein ("Buehne + Set-Zeit
+>    sichtbar: Fahrer-App + Fahrtenliste (rein additiv)").
+> 4. Exakte Zeilenzahl `src/ShuttleLeitstelle.jsx` pruefen: 13112.
+> 5. Volle Bestands-Regression, ALLES gruen, bevor irgendwas Neues gebaut
+>    wird: esbuild (gruen), Duplikat-Grep mit `[a-zA-Z0-9_]+`, fuer
+>    Teilpaket B/E/G ZUERST `python3 extract-funcs-teilpaket-{b,e,g}.py
+>    src/ShuttleLeitstelle.jsx tmp-t{b,e,g}-funcs.mjs`, DANN alle
+>    `smoke*.mjs`/`gegenprobe*.mjs` (36 Dateien liefen zuletzt alle gruen,
+>    `gegenprobe-teilpaket-h-rpc-postgres.mjs` NICHT Teil der
+>    Standardregression, braucht echtes Postgres), `rendertest.mjs` (5
+>    Referenzwerte konstant: 25053/2452/2413/2895/101), `kontrast.mjs` (0).
+>    NEU seit dieser Session: `smoke-buehne-settime.mjs` (17/0).
+>
+> Wenn ein Punkt nicht gruen ist: STOPP, mir melden, nicht weiterbauen.
+> Regeln: rein additiv wo moeglich, kleinstmoeglich, keine Breaking
+> Changes, keine Workflow-/Rollen-/Stage-Aenderungen, keine DB-Struktur-
+> Aenderungen (ausser zwingend noetig), keine kosmetischen Refactorings,
+> keine Performance-Optimierungen ausserhalb des Themas. Vor jeder Code-
+> Aenderung: Verdrahtungsplan + genaue Einfuegestelle + Regressionsrisiko
+> zeigen und meine Freigabe abwarten. Nach jeder Aenderung: volle Kette +
+> Diff-Beweis + konkrete manuelle Testfaelle. Bugs ausserhalb des
+> aktuellen Themas -> "Weitere gefundene Punkte fuer spaetere Sessions",
+> NICHT fixen. **FREEZE AUFGEHOBEN seit 20.07.: Loeschungen/Aenderungen
+> sind wieder erlaubt.** Festival laeuft 23.-27.07. Proaktiv warnen, bevor
+> der Chat zu lang wird. Nur eine Session gleichzeitig offen. `git fetch`
+> unmittelbar vor jedem Push. Commit-Messages mit Umlauten immer ueber
+> `/tmp/msg.txt` + `git commit -F`. Jede Aenderung, die Live-Daten
+> betrifft, kommt mit passendem Supabase-SQL-Nachtrag.
+>
+> Thema dieser Session: [hier beschreiben]. Offene Kandidaten aus
+> frueheren Sessions: Presence-Toggles optional No-op,
+> `unsubscribePush`-Aufraeumung No-op, reine Setup-Toggles ohne
+> Ergebnispruefung, GuestApp-Poll ohne Ueberlappungsschutz.
+
+**Stand nach dieser Session:** Buehne + Set-Zeit fertig, verifiziert,
+committet (`23b3796`). `src/ShuttleLeitstelle.jsx` 13112 Zeilen. Freeze
+auf Jordans Wunsch aufgehoben, keine Loeschung in dieser Session.
