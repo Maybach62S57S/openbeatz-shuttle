@@ -4811,6 +4811,10 @@ erzeugt `tmp-tg-funcs.mjs`, 63 Blöcke, keine fehlenden Deps), `smoke-teilpaket-
 > jeder Änderung volle Kette + Diff-Beweis + Testfälle, Bau erst nach Freigabe.
 > **Ab 21.07. keine Löschungen mehr.**
 >
+> **Lies zuerst `TEILPAKET-G2-VORBEREITUNG.md`** (committete Einbau-Kartierung:
+> G1-API, woher die D/E/F-Eingaben kommen, primäre/sekundäre Anzeigeorte,
+> now/Timer, Rollen-Gating, Farbvorschlag mit Kontrast-Pflichtpause, Verifikation).
+>
 > G2 zeigt die G1-Vorschläge NUR an (rein präsentational): Fahrerliste/Timeline
 > primär, MissionReturnsTab sekundär. Nur bestehende MC-Farbvariablen (Van=Amber,
 > Car=Blue, kein Alarmrot; severity `attention`->amber, `neutral`->gedämpft,
