@@ -388,6 +388,30 @@ function mergeDriverLocations(driverState, locs) {
   return changed ? out : base;
 }
 
+// Reine Revisions-Entscheidung fuer den zentralen Poll: eine KLEINERE Revision
+// als die bereits lokal vorhandene wird NIE uebernommen. Das verhindert, dass
+// eine langsame, verspaetet zurueckkehrende alte Antwort (oder ein Poll, der vor
+// einer lokalen erfolgreichen Aktion gestartet wurde) den React-State auf einen
+// aelteren Stand zuruecksetzt. Gleiche oder groessere Revision ist erlaubt.
+// rev ist auf allen Pfaden numerisch (Supabase: row.rev/setup_rev||0; Storage/
+// Seed: emptyDyn rev:0, dynFromData revRaw||0); der ==null-Fall ist rein defensiv.
+function shouldAcceptRevision(currentRev, incomingRev) {
+  if (incomingRev == null) return false;
+  if (currentRev == null) return true;
+  return incomingRev >= currentRev;
+}
+// Kombinierte Poll-Entscheidung fuer dyn: uebernehmen, wenn die Revision echt
+// neuer ist ODER (bei GLEICHER Revision) sich die GPS-Signatur geaendert hat.
+// Eine kleinere Revision wird nie uebernommen. So bleibt der bisherige GPS-
+// Sonderfall erhalten (gleiche rev + frischere Position -> neu rendern), ohne
+// dass ein veralteter Poll den Stand zurueckdreht.
+function shouldAcceptPolledDyn(prevRev, incomingRev, prevSig, incomingSig) {
+  if (!shouldAcceptRevision(prevRev, incomingRev)) return false;
+  if (prevRev == null) return true;
+  if (incomingRev > prevRev) return true;
+  return incomingSig !== prevSig;
+}
+
 async function sget(key) {
   // WICHTIG: der Supabase-Pfad bewusst NICHT in dieses try/catch einschließen.
   // sbGetSetup/sbGetDyn werfen bei einem echten Ladefehler (Netzwerk, RLS,
@@ -927,7 +951,15 @@ export default function App() {
   // löscht das Banner wieder.
   useEffect(() => {
     if (loading || loadError) return;
-    const t = setInterval(async () => {
+    // Rekursives setTimeout statt setInterval: der naechste Poll wird erst NACH
+    // Abschluss des vorigen geplant (im finally) -> zwei Poll-Durchlaeufe koennen
+    // sich nie ueberlappen, auch wenn die Requests laenger als POLL_MS dauern.
+    // cancelled + timer sorgen dafuer, dass bei Unmount/Dep-Wechsel kein weiterer
+    // Poll geplant wird UND ein bereits laufender Poll nach seiner Rueckkehr
+    // keinen State mehr setzt und das Verbindungs-Banner nicht mehr anfasst.
+    let cancelled = false;
+    let timer = null;
+    const runPoll = async () => {
       try {
         const d = await sget(DYN_KEY);
         // Fahrer-Positionen aus der eigenen Tabelle dazuholen (nur Supabase) und
@@ -941,32 +973,52 @@ export default function App() {
           try { locs = await sbGetDriverLocations(); }
           catch (e) { console.error("driver_locations laden fehlgeschlagen (GPS fällt auf Schätzung zurück):", e?.message || e); }
         }
+        if (cancelled) return; // nach Unmount/Dep-Wechsel zurueckgekehrt: keinen State mehr setzen
         if (d) {
           const hasLocs = locs && Object.keys(locs).length > 0;
           const merged = hasLocs ? { ...d, driverState: mergeDriverLocations(d.driverState, locs) } : d;
           const locSig = hasLocs ? Object.keys(locs).sort().map((id) => id + ":" + (locs[id].at || 0)).join("|") : lastLocSigRef.current;
+          // prevSig als Konstante VOR dem Updater festhalten (nicht der Live-Ref):
+          // macht den funktionalen Updater bei StrictMode-Doppelaufruf deterministisch
+          // und idempotent (schreibt lastLocSigRef immer auf denselben Wert oder gar nicht).
           const prevSig = lastLocSigRef.current;
-          lastLocSigRef.current = locSig;
-          // neu rendern, wenn sich entweder dyn_rev ODER die Positions-Signatur geändert hat
-          setDyn((prev) => (prev && prev.rev === merged.rev && locSig === prevSig ? prev : merged));
+          setDyn((prev) => {
+            // Entscheidung im funktionalen Updater, damit prev den frischesten Stand
+            // (inkl. gerade lokal angewendeter Aktionen) sieht. Kleinere rev wird nie
+            // uebernommen; bei gleicher rev nur, wenn sich die GPS-Signatur geaendert hat.
+            const take = shouldAcceptPolledDyn(prev ? prev.rev : null, merged.rev, prevSig, locSig);
+            if (take) lastLocSigRef.current = locSig; // Sig nur bei Uebernahme fortschreiben -> aeltere Sig ueberschreibt keine neuere Ansicht
+            return take ? merged : prev;
+          });
         }
         const s = await sget(SETUP_KEY);
-        // Teil 4: setup vergleicht jetzt über rev statt JSON.stringify des kompletten
+        if (cancelled) return; // s. o.: verspaetete Antwort eines abgebrochenen Polls ignorieren
+        // Teil 4: setup vergleicht über rev statt JSON.stringify des kompletten
         // Setup-Objekts bei jedem 3s-Poll. updateSetup ist im laufenden Betrieb der
         // EINZIGE Schreiber von SETUP_KEY (die beiden anderen sset(SETUP_KEY,...) laufen
         // nur einmalig im Initial-Load, bevor der Poll startet) und zählt rev bei jeder
         // Änderung hoch (Artifact: cur.rev||0 -> +1; Supabase: setup_rev in der
         // write_setup_and_drivers_if_unchanged-RPC, gemappt in sbGetSetup). Damit gilt
         // gleiches rev == inhaltlich gleich -> kein teures Stringify mehr nötig.
-        // prev-Null-Guard wie beim dyn-Poll oben.
-        if (s) setSetup((prev) => (prev && prev.rev === s.rev ? prev : s));
+        // Zusaetzlich Monotonie-Guard: eine kleinere setup.rev als die vorhandene
+        // wird nie uebernommen (verspaeteter alter Poll). prev-Null-Guard wie bisher.
+        if (s) setSetup((prev) => {
+          if (!shouldAcceptRevision(prev ? prev.rev : null, s.rev)) return prev;
+          return (prev && prev.rev === s.rev) ? prev : s;
+        });
         setConnIssue(null);
       } catch (e) {
+        if (cancelled) return; // verspaeteter Fehler eines abgebrochenen Polls: Banner nicht anfassen
         console.error("Polling fehlgeschlagen:", e);
         setConnIssue(e?.message || "Verbindung zu Supabase gerade gestört");
+      } finally {
+        // Naechsten Poll erst jetzt planen (nach Abschluss) -> keine Ueberlappung.
+        if (!cancelled) timer = setTimeout(runPoll, POLL_MS);
       }
-    }, POLL_MS);
-    return () => clearInterval(t);
+    };
+    // Erster Poll nach POLL_MS (identisches Timing zum bisherigen setInterval).
+    timer = setTimeout(runPoll, POLL_MS);
+    return () => { cancelled = true; if (timer) clearTimeout(timer); };
   }, [loading, loadError]);
 
   // Slice 5: Browser-Events für sofortiges Offline-/Online-Signal, ohne 3s auf
