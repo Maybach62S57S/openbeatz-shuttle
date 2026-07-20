@@ -5337,3 +5337,47 @@ committet/gepusht (`d5aba2e`, FF-Push `dad9cbd..d5aba2e` über die Chat-2-
 Commits). Rein additiv (Testdateien + Doku), `src/ShuttleLeitstelle.jsx` in
 ganz H unverändert. Freeze eingehalten, keine Löschung. Teilpaket-Reihe A-H
 damit abgeschlossen, nächstes Thema laut Jordan: neue Tests.
+
+---
+
+## Session "Poll-Absicherung" (nach Teilpaket H)
+
+**Thema:** Zentraler App-Root-Poll gegen Ueberlappung und Revisions-Rueckfall absichern. Erste Session, die seit der Fahrtenliste wieder `src/ShuttleLeitstelle.jsx` (App-Code) anfasst.
+
+**Ausgangsstand:** HEAD `69bcac3`, Datei 12703 Zeilen, volle Bestandskette gruen.
+
+**Umgesetzt (rein additiv, nur Poll-/Revisionsbereich):**
+- Zwei reine Helfer nach `mergeDriverLocations` (Z. ~398/408): `shouldAcceptRevision(currentRev, incomingRev)` und `shouldAcceptPolledDyn(prevRev, incomingRev, prevSig, incomingSig)`. Kleinere rev wird nie uebernommen; bei gleicher rev nur bei GPS-Signatur-Aenderung.
+- Poll-Effect (`[loading, loadError]`, Z. ~955): `setInterval` -> rekursives, abbrechbares `setTimeout`. Naechster Poll erst im `finally` nach Abschluss (kein Overlap). `let cancelled/timer`, `if (cancelled) return` nach dyn-await, nach setup-await und im catch. Cleanup: `cancelled = true; clearTimeout(timer)`.
+- `setDyn`-Updater: Entscheidung ueber `shouldAcceptPolledDyn` im funktionalen Updater (prev = frischester Stand). `lastLocSigRef` nur bei Uebernahme fortgeschrieben; `prevSig` als Konstante vor dem Updater (StrictMode-idempotent).
+- `setSetup`-Updater: vorangestellter `shouldAcceptRevision`-Guard, danach unveraendertes Verhalten.
+- Timing (erster Poll nach POLL_MS) und Banner-Semantik 1:1 erhalten. Kein Touch an updateDyn/updateSetup/RPCs/DB-Schema/UI/Rollen. Kein Supabase-SQL noetig (reine Client-Logik).
+
+**Tests:**
+- NEU: `smoke-poll-absicherung.mjs` (24/0) - Szenarien a-e, Overlap-Schutz-Struktur, Banner-Semantik, setup-Monotonie, Pflicht-Gegenprobe (kaputter Helfer kippt a+b).
+- `gegenprobe-teilpaket-h19-poll.mjs` umgestellt von "beweist den Bug" auf "beweist den Fix" (15/0). Ankert jetzt an die neuen Helfer + reale Aufrufstelle im setDyn/setSetup-Updater.
+- Volle Bestandskette unveraendert gruen (esbuild, Duplikat-Grep, rendertest 25053/2452/2413/2895/101, kontrast 0, alle smoke*/gegenprobe* Exit 0, alle 31 Testdateien).
+
+**Ergebnis:** Datei jetzt 12755 Zeilen. Commit `7541f0d`, FF-Push `69bcac3..7541f0d` auf main. Freeze eingehalten, keine Loeschung.
+
+**Weitere gefundene Punkte fuer spaetere Sessions:**
+- `GuestApp` (Z. ~3581) hat einen eigenen `setInterval(loadSupabase, POLL_MS)`-Poll ohne Ueberlappungsschutz. Anders gelagert (ersetzt nur den lokalen `session`-State komplett, keine rev-Logik, kein Rueckfall-Risiko), daher geringes Risiko. Nicht in dieser Session gefixt. Falls gewuenscht: derselbe rekursive-setTimeout-Umbau, isoliert auf diese Komponente.
+
+---
+
+### Ready-to-paste Opener fuer die naechste Session
+
+> Neue Session, OpenBeatz Shuttle-Leitstelle. Arbeitsverzeichnis MUSS `/home/claude/repo` sein. Erst Schritt 0 komplett, bevor irgendetwas Inhaltliches passiert:
+>
+> 1. Repo klonen (frischer PAT von mir), nach `/home/claude/repo`, PAT sofort danach aus der Remote-URL scrubben (`git remote set-url`).
+> 2. `npm ci`, git config (`j.merg@merg-and-more.de` / Jordan Merg).
+> 3. `git log --graph --oneline --all` UND `git fetch`, pruefen ob HEAD == origin/main. Letzter Commit muss `7541f0d` sein ("Poll-Absicherung: zentraler Poll ueberlappungsfrei + Revisions-Monotonie").
+> 4. Exakte Zeilenzahl `src/ShuttleLeitstelle.jsx` pruefen: 12755.
+> 5. Volle Bestands-Regression, ALLES gruen, bevor irgendwas Neues gebaut wird: esbuild (gruen), Duplikat-Grep mit `[a-zA-Z0-9_]+`, fuer Teilpaket B/E/G ZUERST `python3 extract-funcs-teilpaket-{b,e,g}.py src/ShuttleLeitstelle.jsx tmp-t{b,e,g}-funcs.mjs` laufen lassen, DANN `smoke-teilpaket-b.mjs` (69/0) + `smoke-teilpaket-e.mjs` (152/0) + `gegenprobe-teilpaket-e.mjs` (8/0) + `smoke-teilpaket-g.mjs` (130/0) + `gegenprobe-teilpaket-g.mjs` (10/0), Extrakte danach wieder loeschen (nicht committen). Weiter: `rendertest.mjs` (5 Referenzwerte konstant: 25053/2452/2413/2895/101), `kontrast.mjs` (0), `smoke.mjs` + alle `smoke27*.mjs` (Classic-Reste 0), `smoke-teilpaket-c1.mjs`/`c1-ui`/`c2`/`c2-ui`/`c3`/`c3-ui`/`d`/`d-ui`/`f`/`f-ui`/`f2-ui`/`g2-ui`, `smoke-orte-fix.mjs` (47/0), `smoke-nav-url.mjs` (10/0), `smoke-fahrtenliste.mjs` (35/0), `smoke-import-dauer.mjs` (18/0), `smoke-teilpaket-h-concurrency.mjs` (21/0), `gegenprobe-teilpaket-h19-poll.mjs` (15/0, seit der Poll-Absicherung auf Fix-Nachweis umgestellt), `smoke-poll-absicherung.mjs` (24/0, NEU aus der Poll-Absicherung: Szenarien a-e + Overlap + Banner + setup-Monotonie + Gegenprobe). `gegenprobe-teilpaket-h-rpc-postgres.mjs` NICHT Teil der Standard-Regression (braucht echtes Postgres + `npm install pg` im Scratch-Verzeichnis) - nur bei Bedarf.
+>
+> Wenn ein Punkt nicht gruen ist: STOPP, mir melden, nicht weiterbauen.
+> Regeln unveraendert (binden die ganze Session): rein additiv, kleinstmoeglich, keine Breaking Changes, keine Workflow-/Rollen-/Stage-Aenderungen, keine DB-Struktur-Aenderungen (ausser zwingend noetig), keine kosmetischen Refactorings, keine Performance-Optimierungen ausserhalb des Themas. Vor jeder Code-Aenderung: Verdrahtungsplan + genaue Einfuegestelle + Regressionsrisiko zeigen und meine Freigabe abwarten. Nach jeder Aenderung: volle Kette + Diff-Beweis (`git diff`) + konkrete manuelle Testfaelle. Bugs ausserhalb des aktuellen Themas -> unter "Weitere gefundene Punkte fuer spaetere Sessions" notieren, NICHT fixen. FREEZE seit 21.07.: KEINE LOESCHUNGEN. Festival laeuft 23.-27.07. Proaktiv warnen, bevor der Chat zu lang wird. Nur eine Session gleichzeitig offen. `git fetch` unmittelbar vor jedem Push. Commit-Messages mit Umlauten immer ueber `/tmp/msg.txt` + `git commit -F`. Dauerhaft wichtig: jede Aenderung, die Live-Daten betrifft, kommt mit passendem Supabase-SQL-Nachtrag (nie nur Artifact-Code).
+>
+> Thema dieser Session: [hier kurz beschreiben]. Offene Kandidaten aus frueheren Sessions, falls gewuenscht: GuestApp-Poll ohne Ueberlappungsschutz (Poll-Absicherung-Session), matchLoc-Fix (Z. ~7676, hardcodiert auf 4 Orte), KRITISCH/MITTEL-Liste aus H (One-Tap-Zuweisung, Drag-and-Drop, Stage-Problemmeldung, siehe `TEILPAKET-H-MIGRATION.md`).
+
+**Stand nach dieser Session:** Poll-Absicherung fertig, verifiziert, committet/gepusht (`7541f0d`, FF-Push `69bcac3..7541f0d`). `src/ShuttleLeitstelle.jsx` 12755 Zeilen. Freeze eingehalten, keine Loeschung.
