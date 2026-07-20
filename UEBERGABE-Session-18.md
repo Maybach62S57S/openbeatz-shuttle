@@ -5677,3 +5677,139 @@ Ende des Abschnitts "Session 'Buehne + Set-Zeit'" oben in diesem Dokument**
 Schreib-Contention-Session (window.__obfWriteStats etc.) bleibt unabhaengig
 davon weiter gueltig fuer kuenftige Mutatoren, der steht bereits im Opener
 der Schreib-Contention-Session weiter oben.
+
+---
+
+## Session "GuestApp-/Gast-RPC-Haertung" (20.07.2026)
+
+**Thema:** Die oeffentliche GuestApp und alle Gast-RPC-Aktionen gegen
+Doppelklick, Netzwerkfehler, ungueltige/abgelaufene Tokens, uneindeutige
+RPC-Ergebnisse, Poll-Ueberlappung und Poll-vs-Mutation-Rennen absichern. Rein
+additiv/minimal, kein SQL, keine Workflow-/Rollen-Aenderung.
+
+**Code-Commit:** `a2d91c0`. `src/ShuttleLeitstelle.jsx` jetzt **13177 Zeilen**
+(vorher 13112). Neuer Test `smoke-guest-rpc-hardening.mjs`.
+
+### Vorpruefung onExhausted-Revisionsrueckfall (Ergebnis)
+Der Erschoepfungspfad in `runCasWrite` (`setDyn(last)` Z. ~1239,
+`setSetup(last)` Z. ~1291) benutzte einen **direkten Wert** und umging damit den
+Monotonie-Guard, den Poll/Uebernahmen sonst per `shouldAcceptRevision` nutzen.
+Das exakte Zahlenbeispiel (Rueckfall auf 104) ist so nicht moeglich (`last` aus
+einem CAS-Konflikt ist immer > baseRev), **aber** der allgemeine Rueckfall ist
+auf langsamem Netz real: ein schnellerer Poll uebernimmt zwischenzeitlich eine
+neuere `rev`, danach ueberschreibt `setDyn(last)` sie mit dem aelteren Konflikt-
+Stand. Fix: funktionaler Guard mit `shouldAcceptRevision` (kein Duplikat der
+Logik), auf beiden Pfaden. Heilte sich vorher erst beim naechsten Poll (<=3s).
+
+### Umgesetzt (5 Client-Aenderungen, kein SQL)
+- **Ae1** onExhausted-Monotonie-Guard (dyn + setup).
+- **Ae2** `guest_session`: Netz-/RPC-Fehler wird NICHT mehr als "Link ungueltig"
+  dargestellt. Neuer `loadErr`-State + eigene Verbindungs-Fehlerseite
+  ("Connection problem", retrybar durch weiterlaufenden Poll). Nur ein
+  erfolgreicher RPC mit `valid:false` heisst "Link ungueltig". Log nur
+  `error.message`, kein Token/rohes Objekt.
+- **Ae3** confirm/at_pickup/report: `{ data: ok, error }` destrukturiert, `error`
+  kontrolliert behandelt, `okSave = ok === true` (null/undefined ist KEIN
+  Erfolg mehr; vorher `!!ok`).
+- **Ae4** `inFlightRef` (useRef) zusaetzlich zum `busy`-State: faengt sehr
+  schnellen Doppelklick synchron ab (React-State ist da noch nicht sichtbar).
+  Reset an der bestehenden `setBusy(false)`-Stelle.
+- **Ae5** GuestApp-Poll: `setInterval(loadSupabase)` -> rekursiver, abbrechbarer
+  `setTimeout` (keine Ueberlappung), `mountedRef` (kein setState nach Unmount),
+  `pollGenRef` (Generationszaehler). Nach erfolgreicher Mutation
+  `pollGenRef.current++` + Reload mit neuer Generation -> ein alter, noch
+  fliegender Poll wird verworfen statt den frisch bestaetigten Stand
+  zurueckzudrehen (Block G). Sequenzzaehler bewusst NICHT noetig: rekursives
+  Scheduling serialisiert Polls, die Generation deckt die Mutations-Race ab.
+
+### RPC-Vertraege (aus supabase-schema.sql verifiziert)
+- `guest_session(text)` -> **jsonb** (`{valid:false}` | `{valid:true,djName,rides}`)
+- `guest_confirm_pickup(text,text)` -> **boolean** (via `_guest_patch_ride`)
+- `guest_at_pickup(text,text)` -> **boolean** (via `_guest_patch_ride`)
+- `guest_report_issue(text,text,text,text)` -> **boolean** (Issue-ID serverseitig)
+
+### Restrisiken (dokumentiert, NICHT gefixt - braucht separate SQL-Session)
+- **Server-Idempotenz confirm/at_pickup:** die Boolean-RPC signalisiert kein
+  "unchanged". Ein zweiter Aufruf (2. Fenster ODER Retry nach verlorener
+  Antwort, Block D/H) patcht erneut -> `rev+1`, zusaetzlicher Log-Eintrag,
+  **zweiter Push** im Supabase-Pfad. Der Fallback-Pfad ist ueber `NO_CHANGE`
+  bereits idempotent. Fix braucht RPC-Rueckgabe "unchanged" -> SQL.
+- **report_issue Duplikat:** Issue-ID wird serverseitig aus `now()` erzeugt.
+  Retry nach verlorener Antwort legt ein zweites Issue an. Fix braucht
+  Idempotency-Key-Parameter -> SQL-Signaturaenderung.
+- Beide sind im neuen Test als S5/S11 explizit festgehalten (damit es nicht
+  unbemerkt "gruen" aussieht). **Vorschlag: eigene minimale SQL-Session**, die
+  (a) `_guest_patch_ride` bei bereits gesetztem Feld ein "unchanged" signalisiert
+  und (b) `guest_report_issue` einen optionalen `p_issue_id` akzeptiert und bei
+  vorhandener ID nicht doppelt anlegt. Erst danach ist der Lost-Response-Fall
+  serverseitig sauber.
+
+### Verifikation (alles gruen)
+esbuild gruen, Duplikat-Grep leer, alle 37 smoke/gegenprobe (36 alt + neu)
+gruen, `smoke-guest-rpc-hardening.mjs` 52 OK / 3 Pflicht-Gegenproben kippen wie
+erwartet, Anker-Gegenprobe gegen absichtlich kaputte Kopie kippt (3 FAIL),
+rendertest 25053/2452/2413/2895/101 konstant, kontrast 0 FAIL.
+
+### Geaenderte Bereiche (ca.)
+`runCasWrite`-onExhausted Z. ~1239 + ~1291; GuestApp-Kopf (State/Refs +
+`loadSupabase` + Poll-Effect) Z. ~3795-3850; Render Verbindungs-Fehlerseite
+Z. ~3858; die drei Aktionen `reportIssue`/`confirmPickup`/`atPickup` Z. ~3890-3994.
+
+### Weitere gefundene Punkte fuer spaetere Sessions
+- Server-Idempotenz der drei Gast-Aktionen (siehe Restrisiken) -> SQL-Session.
+- Offene Kandidaten unveraendert offen: Presence-Toggles optional No-op,
+  `unsubscribePush`-Aufraeumung No-op, reine Setup-Toggles ohne Ergebnispruefung
+  (setMatrix, Festival-Tage, Dev-Seed/Clear).
+
+### Ready-to-paste Opener fuer die naechste Session
+
+> Neue Session, OpenBeatz Shuttle-Leitstelle. Arbeitsverzeichnis MUSS
+> `/home/claude/repo` sein. Erst Schritt 0 komplett, bevor irgendetwas
+> Inhaltliches passiert:
+>
+> 1. Repo klonen (frischer PAT von mir), nach `/home/claude/repo`, PAT sofort
+>    danach aus der Remote-URL scrubben (`git remote set-url`). `CLAUDE.md`
+>    "kein PAT noetig" gilt NUR fuer Claude Code, nicht fuer diese Chat-Umgebung.
+> 2. `npm ci`, git config (`j.merg@merg-and-more.de` / Jordan Merg).
+> 3. `git log --graph --oneline --all` UND `git fetch`, HEAD == origin/main.
+>    Letzter Commit ist der Doku-Commit dieser Session (siehe
+>    `git log --oneline -1`). Letzter CODE-Commit ist `a2d91c0`
+>    ("GuestApp-/Gast-RPC-Haertung ...").
+> 4. Exakte Zeilenzahl `src/ShuttleLeitstelle.jsx` pruefen: **13177**.
+> 5. Volle Bestands-Regression, ALLES gruen, bevor irgendwas Neues gebaut wird:
+>    esbuild (gruen), Duplikat-Grep mit `[a-zA-Z0-9_]+`. Fuer Teilpaket B/E/G
+>    ZUERST `python3 extract-funcs-teilpaket-{b,e,g}.py src/ShuttleLeitstelle.jsx
+>    tmp-t{b,e,g}-funcs.mjs`, DANN alle `smoke*.mjs`/`gegenprobe*.mjs` (37
+>    Dateien liefen zuletzt alle gruen, inkl. NEU `smoke-guest-rpc-hardening.mjs`
+>    52/0). Achtung: die aelteren `smoke.mjs`/`smoke27*.mjs`/`smoke-*` mit
+>    `process.argv[2]` brauchen den Dateipfad als Argument. Extrakte danach
+>    wieder loeschen (nicht committen). Weiter: `rendertest.mjs` (5 Referenzwerte
+>    konstant: 25053/2452/2413/2895/101), `kontrast.mjs` (0).
+>    `gegenprobe-teilpaket-h-rpc-postgres.mjs` NICHT Teil der Standard-Regression.
+>
+> Wenn ein Punkt nicht gruen ist: STOPP, mir melden, nicht weiterbauen.
+> Regeln: rein additiv wo moeglich, kleinstmoeglich, keine Breaking Changes,
+> keine Workflow-/Rollen-/Stage-Aenderungen, keine DB-Struktur-Aenderungen
+> (ausser zwingend noetig), keine kosmetischen Refactorings, keine Performance-
+> Optimierungen ausserhalb des Themas. Vor jeder Code-Aenderung: Verdrahtungsplan
+> + genaue Einfuegestelle + Regressionsrisiko zeigen und meine Freigabe abwarten.
+> Nach jeder Aenderung: volle Kette + Diff-Beweis + konkrete manuelle Testfaelle.
+> Bugs ausserhalb des aktuellen Themas -> "Weitere gefundene Punkte fuer spaetere
+> Sessions", NICHT fixen. FREEZE AUFGEHOBEN seit 20.07. Festival laeuft
+> 23.-27.07. Proaktiv warnen, bevor der Chat zu lang wird. Nur eine Session
+> gleichzeitig offen. `git fetch` unmittelbar vor jedem Push. Commit-Messages
+> mit Umlauten immer ueber `/tmp/msg.txt` + `git commit -F`. Jede Aenderung, die
+> Live-Daten betrifft, kommt mit passendem Supabase-SQL-Nachtrag.
+> `return NO_CHANGE` / `return dynConflict("CODE","...")` weiter nutzbar fuer
+> neue Mutatoren; Diagnose live unter `window.__obfWriteStats`.
+>
+> Thema dieser Session: [hier eintragen]. Naheliegender Kandidat: die separate
+> **SQL-Session fuer Gast-Idempotenz** (confirm/at_pickup "unchanged"-Signal +
+> `guest_report_issue` optionaler `p_issue_id` gegen Duplikate) - loest die in
+> der GuestApp-Haertung dokumentierten Server-Restrisiken. Weitere offene
+> Kandidaten: Presence-Toggles optional No-op, `unsubscribePush`-Aufraeumung
+> No-op, reine Setup-Toggles ohne Ergebnispruefung.
+
+**Stand nach dieser Session:** GuestApp-/Gast-RPC-Haertung fertig, verifiziert,
+committet (`a2d91c0`). `src/ShuttleLeitstelle.jsx` 13177 Zeilen. Kein SQL
+geaendert; Server-Idempotenz als naechster (separater) Schritt vorgemerkt.
