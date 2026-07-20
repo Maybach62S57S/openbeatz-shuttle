@@ -3084,6 +3084,22 @@ function DriverApp({ setup, dyn, session, updateDyn, onLogout }) {
 
   const loc = (id, txt) => setup.locations.find((l) => l.id === id)?.short || txt || "—";
 
+  // Echte Buehne + Set-Zeit des Artists (rein lesend, nur bei eindeutigem
+  // Timetable-Treffer). Gleiche Quelle wie die Leitstelle. Die Fahrt selbst zeigt
+  // als Zone weiterhin "Caldera" (21.07.-Regel) - diese Zeile ergaenzt nur, WO der
+  // Artist wirklich spielt und WANN sein Set ist.
+  const ttEntries = useMemo(() => normalizeTimetableEntries(TIMETABLE_RAW), []);
+  const StageSet = ({ ride }) => {
+    const s = ttStageSet(ride, ttEntries);
+    if (!s) return null;
+    return (
+      <div className="mt-1 text-sm text-stone-400 flex items-center gap-1.5">
+        <Clock className="w-3.5 h-3.5 shrink-0" />
+        <span>Bühne <span className="text-stone-200 font-medium">{s.stage}</span>{s.start ? ` · Set ${s.start}${s.end ? "–" + s.end : ""}` : ""}</span>
+      </div>
+    );
+  };
+
   // Punkt 12: nächste relevante Fahrt (aktiv oder als Nächstes anstehend)
   const nowMin = stats.now;
   const upcoming = rides.filter((r) => r.status !== "done" && r.status !== "cancelled");
@@ -3170,6 +3186,7 @@ function DriverApp({ setup, dyn, session, updateDyn, onLogout }) {
               <span className="font-medium text-base">{loc(nextRide.toId, nextRide.toCustom)}</span>
               {nextRide.zone && <ZoneChip zone={nextRide.zone} />}
             </div>
+            <StageSet ride={nextRide} />
             <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1 text-sm text-stone-300">
               <span className="flex items-center gap-1"><Users className="w-3.5 h-3.5" />{nextRide.passengerCount} Pers.</span>
               {nextRide.flightNo && <span className={`flex items-center gap-1 ${flightDelayed(nextRide) ? "text-red-400 font-medium" : "text-sky-300"}`}><Plane className="w-3.5 h-3.5" />{nextRide.flightNo}{nextRide.flightStatus ? ` · ${flightStyle(nextRide.flightStatus).l}` : ""}</span>}
@@ -3241,6 +3258,8 @@ function DriverApp({ setup, dyn, session, updateDyn, onLogout }) {
                 <span className="text-stone-100 font-medium">{loc(r.toId, r.toCustom)}</span>
                 {r.zone && <ZoneChip zone={r.zone} className="ml-1" />}
               </div>
+
+              <StageSet ride={r} />
 
               <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1 text-sm text-stone-400">
                 <span className="flex items-center gap-1"><Users className="w-3.5 h-3.5" />{r.passengerCount}</span>
@@ -5576,6 +5595,11 @@ function RidesListTab({ setup, dyn, day }) {
     return d ? (d.vehicleType === "Van" ? "Van" : "Car") : "";
   };
 
+  // Echte Buehne (nur bei eindeutigem Timetable-Treffer). Index einmal bauen und
+  // je Zeile wiederverwenden. Rein lesend, keine neue Ride-/DB-Struktur.
+  const ttEntries = useMemo(() => normalizeTimetableEntries(TIMETABLE_RAW), []);
+  const ttIndex = useMemo(() => buildTimetableMatchIndex(ttEntries), [ttEntries]);
+
   const allRides = dyn.rides || [];
 
   // Tag-Liste dynamisch aus den echten Fahrten (sortiert), mit Wochentagslabel.
@@ -5717,12 +5741,19 @@ function RidesListTab({ setup, dyn, day }) {
                     const stKey = RIDESLIST_STATUS_ST[r.status] || "idle";
                     const fahrer = drvName(r.assignedDriverId);
                     const veh = drvVehicle(r.assignedDriverId);
+                    const ttSet = ttStageSet(r, ttEntries, ttIndex);
                     return (
                       <tr key={r.id} style={{ borderTop: "1px solid var(--mc-border)" }}>
                         <td className="px-3 py-2 align-top font-mono tabular-nums whitespace-nowrap" style={{ color: "var(--mc-text)" }}>{r.time || "—"}</td>
                         <td className="px-3 py-2 align-top" style={{ color: "var(--mc-text)" }}>
                           <div className="font-medium break-words" title={r.djName}>{r.djName || "—"}</div>
                           <span className="mc-badge text-[10px] mt-0.5 inline-block" style={{ background: `var(--mc-st-${dir.st}-soft)`, color: `var(--mc-st-${dir.st})` }}>{dir.label}</span>
+                          {ttSet && (
+                            <div className="text-[11px] mt-0.5 flex items-center gap-1" style={{ color: "var(--mc-text-muted)" }}>
+                              <Clock className="w-3 h-3 shrink-0" />
+                              <span>{ttSet.stage}{ttSet.start ? ` · ${ttSet.start}${ttSet.end ? "–" + ttSet.end : ""}` : ""}</span>
+                            </div>
+                          )}
                         </td>
                         <td className="px-3 py-2 align-top whitespace-nowrap" style={{ color: "var(--mc-text-secondary)" }}>{ln(r.fromId, r.fromCustom)} → {ln(r.toId, r.toCustom)}</td>
                         <td className="px-3 py-2 align-top tabular-nums" style={{ color: "var(--mc-text-secondary)" }}>{r.passengerCount != null && r.passengerCount !== "" ? r.passengerCount : "—"}</td>
@@ -6114,6 +6145,20 @@ function ttSetLine(setup, cand) {
   const s = cand.startAt ? cand.startAt.slice(11) : "?";
   const en = cand.endAt ? cand.endAt.slice(11) : "?";
   return `${day ? day + " · " : ""}${cand.stage} · ${s}–${en}`;
+}
+
+/* Rein lesend: liefert fuer eine Fahrt NUR bei eindeutigem Timetable-Treffer die
+ * echte Buehne + Set-Zeit ({ stage, start, end }), sonst null. Baut auf der schon
+ * vorhandenen matchRideToTimetable-Logik auf (kein neues Matching, kein neues
+ * Feld, keine Schreibaktion). Bewusst null bei mehreren/ohne Treffer, damit die
+ * Fahrer-Ansicht nicht mit Mehrdeutigkeiten verwirrt wird. Genutzt in Fahrer-App
+ * und Leitstellen-Fahrtenliste; matchRideToTimetable bleibt unveraendert. */
+function ttStageSet(ride, timetableEntries, index) {
+  const m = matchRideToTimetable({ ride, timetableEntries, index });
+  if (!m || !m.selected || !m.selected.stage) return null;
+  const s = m.selected.startAt ? m.selected.startAt.slice(11) : "";
+  const en = m.selected.endAt ? m.selected.endAt.slice(11) : "";
+  return { stage: m.selected.stage, start: s, end: en };
 }
 
 function TimetableMatchInfo({ ride, entries, match: matchProp }) {
