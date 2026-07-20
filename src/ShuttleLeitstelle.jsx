@@ -10651,7 +10651,14 @@ function parseRow(setup, row, matchDrivers) {
   const notes = String(get("notes", "note", "bemerkung", "notiz") || "").trim();
   const meeting = String(get("meetingpoint", "meeting", "treffpunkt") || "").trim();
   const flight = extractFlight(notes) || extractFlight(meeting) || String(get("flight", "flightno", "flug", "flugnummer") || "").trim();
-  const durMin = travelMin(setup.matrix, from.id, to.id); // null wenn unbekannt (Punkt 10)
+  // Fahrzeit ueber die B-Ortsaufloesung (rideEndpointMatrixNode), NICHT ueber die
+  // rohe matchLoc-ID: bekannte Bestands-IDs -> identischer Matrix-Knoten (byte-
+  // identisch), Custom-Orte wie Muenchen/Leonardo/Karl August loesen jetzt auf
+  // ihren Knoten (muc/sheraton) auf statt als "__custom" auf null zu fallen.
+  // matchLoc bleibt unberuehrt; echt unbekannter Ort -> weiterhin null (Punkt 10).
+  const durFromNode = rideEndpointMatrixNode(from.id, from.custom);
+  const durToNode = rideEndpointMatrixNode(to.id, to.custom);
+  const durMin = travelMin(setup.matrix, durFromNode, durToNode); // null wenn unbekannt (Punkt 10)
   const driverId = matchDrivers ? matchDriver(setup, get("driver", "fahrer")) : null;
   const srcId = String(get("id", "rowid", "ridenumber") || "").trim(); // Punkt 14: optionale Zeilen-ID
   const passengersTxt = String(get("passengers", "passagiere", "namen", "gäste", "gaeste") || "").trim();
