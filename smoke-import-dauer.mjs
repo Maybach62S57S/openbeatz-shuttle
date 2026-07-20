@@ -58,11 +58,14 @@ eq("14. voellig unbekannter Ort -> null", dur("Irgendein Zufallsort XYZ 999", "F
 // identisch, siehe diff-import) und wird durch diesen Fix NICHT veraendert.
 eq("15. beide unbekannt -> 0 (vorbestehend, unveraendert)", dur("Wildfremd A", "Wildfremd B"), 0);
 
-// --- matchLoc UNVERAENDERT: die 4 harten IDs kommen wie eh und je -------------
+// --- matchLoc: die 4 urspruenglichen harten IDs bleiben stabil ---------------
 const ml = (t) => matchLoc(t).id;
 eq("16. matchLoc Sheraton unveraendert", ml("Sheraton Carlton"), "sheraton");
-eq("17. matchLoc Muenchen weiterhin __custom (nicht angefasst)", ml("Flughafen München"), "__custom");
-eq("18. matchLoc Leonardo weiterhin __custom (nicht angefasst)", ml("Leonardo"), "__custom");
+// 17/18 seit Commit bb868a4 (matchLoc-/Orts-Fix) absichtlich GEAENDERT: matchLoc
+// erkennt Muenchen/Leonardo jetzt echt (vorher __custom). Referenzwerte hier an
+// smoke-orte-fix.mjs (aktuelle Suite fuer diesen Fix) angeglichen, keine App-Aenderung.
+eq("17. matchLoc Muenchen erkannt (seit Orts-Fix)", ml("Flughafen München"), "airport_muc");
+eq("18. matchLoc Leonardo erkannt (seit Orts-Fix)", ml("Leonardo"), "leonardo");
 
 console.log(`\nImport-Dauer Smoke: ${ok} OK, ${fail} FAIL`);
 fs.rmSync(out, { force: true });
