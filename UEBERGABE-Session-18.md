@@ -5381,3 +5381,57 @@ damit abgeschlossen, nächstes Thema laut Jordan: neue Tests.
 > Thema dieser Session: [hier kurz beschreiben]. Offene Kandidaten aus frueheren Sessions, falls gewuenscht: GuestApp-Poll ohne Ueberlappungsschutz (Poll-Absicherung-Session), matchLoc-Fix (Z. ~7676, hardcodiert auf 4 Orte), KRITISCH/MITTEL-Liste aus H (One-Tap-Zuweisung, Drag-and-Drop, Stage-Problemmeldung, siehe `TEILPAKET-H-MIGRATION.md`).
 
 **Stand nach dieser Session:** Poll-Absicherung fertig, verifiziert, committet/gepusht (`7541f0d`, FF-Push `69bcac3..7541f0d`). `src/ShuttleLeitstelle.jsx` 12755 Zeilen. Freeze eingehalten, keine Loeschung.
+
+---
+
+## Session "Schreib-Nebenwirkungen" (Session 2, nach Poll-Absicherung)
+
+**Thema:** Reine Stabilitaets-/Konsistenzkorrektur. Alle geschaeftskritischen Schreibvorgaenge muessen ihr bestaetigtes Ergebnis abwarten; Push, Erfolgs-/UI-Reset und Modal-Schliessen erst NACH `{ ok:true }`. `updateDyn`/`updateSetup`-Mutatoren nebenwirkungsfrei (laufen bei CAS-Retry mehrfach). Keine neuen Features, kein Design, kein Refactor, keine DB-/RPC-/RLS-Aenderung.
+
+**Ausgangsstand:** HEAD `5949338`s Vorgaenger `7541f0d`, Datei 12755 Zeilen, volle Bestandskette gruen.
+
+**Audit:** Alle 46 Schreibaufrufe (34x `updateDyn`, 12x `updateSetup`) im Quelltext gelesen und klassifiziert (korrekt / awaitet-aber-ungeprueft / nicht-awaitet / bewusst fire-and-forget / Nebenwirkung im Mutator). Die Datenschicht-Hooks (enable/unsubscribePush, MessageComposer, advance/goBack via mitSperre, applyChatAction, resolveIssues, setIssueState, Settings-Saves, reply/undoReply) waren aus Session 24d bereits korrekt.
+
+**Umgesetzt:**
+- **Push aus dem Mutator gezogen** (feuerte bei CAS-Retry mehrfach), Empfaenger/Text jetzt aus dem bestaetigten `res.value` statt aus veraltetem UI-State: GuestApp `reportIssue`/`confirmPickup`/`atPickup` (Fallback-Zweig ohne Supabase), FlightTab `applyResult` (Auto) + `quickSet` (manuell), `AssignModal.onAssign`, `RideForm.onSave`. `logRide`/`setRideStatus` bleiben im Mutator (reine Datenaenderung); nur `triggerPush`/`triggerDispatcherPush` raus.
+- **Nicht awaitet -> awaitet + geprueft, Push/Reset nur bei Erfolg:** `StageApp.reportIssue` (war Problemstelle 1), Timeline `quickAssign` (Problemstelle 2), `applyDrop` (Problemstelle 3). Der "Verschoben/Rueckgaengig"-Hinweis (`recentlyMoved`) erscheint jetzt nur nach bestaetigtem Save (`confirmPendingDrop` awaitet `applyDrop`).
+- **Ergebnis ignoriert -> geprueft:** `doImport` (`setImp`/`setWb` nur bei Erfolg, stabile IDs vorgezogen), `savePhone`, `PushSettingsSection.save`, Gast-Token-`persist`-Fallback (`updateSetup` wirft NICHT bei Konflikt -> `{ok:false}` wird jetzt erkannt und rollt zurueck), `addManualArtist`.
+- **Fehlerkanaele:** `onErr=notifyErr` (bestehender Toast-Kanal des MC-Shell) an `MissionTimelinePage` durchgereicht (bekam als einzige Tab keinen). Kleine lokale Fehler-Toasts in `StageApp` (`stageErr`) und `GuestApp` (`guestErr`, englisch); `importErr`/`phoneErr`/`saveErr` an den betroffenen Feldern. Alle Fehler-States default leer -> Default-Render unveraendert, Modal-Komponenten NICHT angefasst.
+- **Doppelklick-Schutz:** `busy` (Stage/Guest), `assignBusyRef` (Timeline-Schnellzuteilung). AssignModal/RideForm hatten schon `assigning`/`saving`.
+- **CAS-stabile IDs/Zeitstempel** vor den Mutator gezogen: alle drei `reportIssue`-Varianten (Driver/Stage/Guest), `doImport`, `RideForm._new`.
+
+**Entscheidungen (von Jordan an Claude delegiert):** (1) Fehlerkanaele wie oben. (2) Bestehende Push-Konvention beibehalten - Push nach Save, Push-Fehler nur in die Konsole, KEIN `triggerPush`-Rueckgabewert-Umbau; das haelt die Aenderung klein und konsistent zu applyChatAction/DriverApp.reportIssue/MessageComposer. (3) Reine Setup-Toggles ohne Push/ohne falschen Erfolg als "spaeter" notiert statt invasiv umzubauen.
+
+**Tests:**
+- NEU: `smoke-write-sideeffects.mjs` (39/0). Verhaltensbezogen (NICHT nur Grep): Mock-`updateDyn` mit CAS-Retry (fuehrt Mutator mehrfach, persistiert nur letzten Lauf), Zaehler fuer Push/Dispatcher-Push/UI-Reset/Fehler. 6 Szenarien (Speicherfehler / Erfolg / CAS-Retry mit stabiler ID / Erfolg-aber-Push-fehlgeschlagen / Doppelklick / Push aus bestaetigtem statt veraltetem Stand) + Quelltext-Anker (Push steht in jedem gefixten Handler nach dem Mutator-Ende bzw. der ok-Pruefung) + Pflicht-Gegenprobe (alte Reihenfolge Push-im-Mutator/vor-Save kippt Szenario 1 und 3 nachweislich).
+- Volle Bestandskette unveraendert gruen: esbuild, Duplikat-Grep, Teilpaket B/E/G (+Gegenproben), rendertest 25053/2452/2413/2895/101 (Modal-Komponenten bewusst nicht angefasst), kontrast 0, alle smoke27*, C/D/F/G2-UI, orte-fix/nav-url/fahrtenliste/import-dauer, H-concurrency, H19-poll, poll-absicherung. Voller JSX-Referenz-Cross-Check sauber (die 4 Regex-Treffer I/Ic/MissionControlBoundary/SchematicComponent sind bestehende legitime Muster: dynamische Icon-Variablen, class, Komponente-als-Prop).
+
+**Ergebnis:** Datei jetzt 12915 Zeilen. Commit `5949338`, FF-Push `4fae3f0..5949338` auf main. Kein Freeze-Verstoss (rein additive Logik, keine Loeschung).
+
+**Damit abgehakt (waren offene KRITISCH/MITTEL-Kandidaten aus Teilpaket H):** Stage-Problemmeldung, Timeline-One-Tap-Zuweisung, Timeline-Drag-and-Drop - alle drei jetzt save-vor-Nebenwirkung korrekt.
+
+**Weitere gefundene Punkte fuer spaetere Sessions (bewusst nicht angefasst):**
+- Rein praesentative Setup-Toggles ohne Push und ohne falsche Erfolgsmeldung: `setMatrix` (Fahrzeit-Matrix), Festival-Tage aendern/entfernen/hinzufuegen, Dev-Werkzeuge "Beispieldaten laden"/"Alle Fahrten loeschen". Nicht awaitet bzw. Ergebnis ungeprueft, aber kein Push und keine irrefuehrende Erfolgsanzeige -> geringes Risiko. Sauberer Fix braucht neue Fehler-States in bisher zustandslosen Sektionen.
+- `GuestApp`-Poll ohne Ueberlappungsschutz (aus Poll-Absicherung, weiterhin offen).
+- `smoke-teilpaket-f2-ui.mjs` existiert NICHT als eigene Datei - der F2-Teil laeuft in `smoke-teilpaket-f-ui.mjs` mit ("Teilpaket F2 UI-Smoke: 48 OK"). Im Opener entsprechend korrigiert.
+
+**Restrisiko:** Der "Vorher"-Zustand fuer die Push-Vergleiche (Flugstatus-Wechsel in applyResult, Fahrerwechsel-Erkennung in AssignModal, Zeit/Route/Treffpunkt in RideForm) wird aus dem gerenderten `dyn`-Prop gebildet statt aus dem frischen DB-`before` im Mutator. Funktional nahezu gleichwertig; im Extremfall eines veralteten `dyn` koennte ein Push ausbleiben oder doppelt kommen - deutlich harmloser als der vorherige Zustand (Push im Mutator, feuerte je CAS-Lauf). Die `logRide`-Entscheidungen nutzen weiterhin den frischen DB-`before` im Mutator.
+
+---
+
+### Ready-to-paste Opener fuer die naechste Session
+
+> Neue Session, OpenBeatz Shuttle-Leitstelle. Arbeitsverzeichnis MUSS `/home/claude/repo` sein. Erst Schritt 0 komplett, bevor irgendetwas Inhaltliches passiert:
+>
+> 1. Repo klonen (frischer PAT von mir), nach `/home/claude/repo`, PAT sofort danach aus der Remote-URL scrubben (`git remote set-url`).
+> 2. `npm ci`, git config (`j.merg@merg-and-more.de` / Jordan Merg).
+> 3. `git log --graph --oneline --all` UND `git fetch`, pruefen ob HEAD == origin/main. Letzter Commit muss `5949338` sein ("Schreibaktionen: erst bestaetigt speichern, dann Nebenwirkungen"). Der Commit davor ist `4fae3f0` (Doku Poll-Absicherung).
+> 4. Exakte Zeilenzahl `src/ShuttleLeitstelle.jsx` pruefen: 12915.
+> 5. Volle Bestands-Regression, ALLES gruen, bevor irgendwas Neues gebaut wird: esbuild (gruen), Duplikat-Grep mit `[a-zA-Z0-9_]+`, fuer Teilpaket B/E/G ZUERST `python3 extract-funcs-teilpaket-{b,e,g}.py src/ShuttleLeitstelle.jsx tmp-t{b,e,g}-funcs.mjs` laufen lassen, DANN `smoke-teilpaket-b.mjs` (69/0) + `smoke-teilpaket-e.mjs` (152/0) + `gegenprobe-teilpaket-e.mjs` (8/0) + `smoke-teilpaket-g.mjs` (130/0) + `gegenprobe-teilpaket-g.mjs` (10/0), Extrakte danach wieder loeschen (nicht committen). Weiter: `rendertest.mjs` (5 Referenzwerte konstant: 25053/2452/2413/2895/101), `kontrast.mjs` (0), `smoke.mjs` + alle `smoke27*.mjs` (Classic-Reste 0), `smoke-teilpaket-c1.mjs`/`c1-ui`/`c2`/`c2-ui`/`c3`/`c3-ui`/`d`/`d-ui`/`f`/`f-ui`/`g2-ui` (Hinweis: `f2-ui` ist KEINE eigene Datei, laeuft in `f-ui` mit), `smoke-orte-fix.mjs` (47/0), `smoke-nav-url.mjs` (10/0), `smoke-fahrtenliste.mjs` (35/0), `smoke-import-dauer.mjs` (18/0), `smoke-teilpaket-h-concurrency.mjs` (21/0), `gegenprobe-teilpaket-h19-poll.mjs` (15/0), `smoke-poll-absicherung.mjs` (24/0), `smoke-write-sideeffects.mjs` (39/0, NEU aus Session 2: 6 Szenarien + Anker + Gegenprobe). `gegenprobe-teilpaket-h-rpc-postgres.mjs` NICHT Teil der Standard-Regression (braucht echtes Postgres + `npm install pg` im Scratch-Verzeichnis) - nur bei Bedarf.
+>
+> Wenn ein Punkt nicht gruen ist: STOPP, mir melden, nicht weiterbauen.
+> Regeln unveraendert (binden die ganze Session): rein additiv, kleinstmoeglich, keine Breaking Changes, keine Workflow-/Rollen-/Stage-Aenderungen, keine DB-Struktur-Aenderungen (ausser zwingend noetig), keine kosmetischen Refactorings, keine Performance-Optimierungen ausserhalb des Themas. Vor jeder Code-Aenderung: Verdrahtungsplan + genaue Einfuegestelle + Regressionsrisiko zeigen und meine Freigabe abwarten. Nach jeder Aenderung: volle Kette + Diff-Beweis (`git diff`) + konkrete manuelle Testfaelle. Bugs ausserhalb des aktuellen Themas -> unter "Weitere gefundene Punkte fuer spaetere Sessions" notieren, NICHT fixen. FREEZE seit 21.07.: KEINE LOESCHUNGEN. Festival laeuft 23.-27.07. Proaktiv warnen, bevor der Chat zu lang wird. Nur eine Session gleichzeitig offen. `git fetch` unmittelbar vor jedem Push. Commit-Messages mit Umlauten immer ueber `/tmp/msg.txt` + `git commit -F`. Dauerhaft wichtig: jede Aenderung, die Live-Daten betrifft, kommt mit passendem Supabase-SQL-Nachtrag (nie nur Artifact-Code).
+>
+> Thema dieser Session: [hier kurz beschreiben]. Offene Kandidaten aus frueheren Sessions, falls gewuenscht: reine Setup-Toggles ohne Ergebnispruefung (setMatrix, Festival-Tage, Dev-Werkzeuge Seed/Clear - Session 2, geringes Risiko), GuestApp-Poll ohne Ueberlappungsschutz (Poll-Absicherung), matchLoc-Fix (Z. ~7676, hardcodiert auf 4 Orte).
+
+**Stand nach dieser Session:** Schreib-Nebenwirkungen (Session 2) fertig, verifiziert, committet/gepusht (`5949338`, FF-Push `4fae3f0..5949338`). `src/ShuttleLeitstelle.jsx` 12915 Zeilen. Freeze eingehalten, keine Loeschung.
