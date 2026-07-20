@@ -5178,3 +5178,162 @@ Anzeigekomponente auf vorhandenen Daten).
 committet/gepusht (`65a50ca`, FF-Push `e098b99..65a50ca`). Rein additiv, rein
 lesend, dispo-only, keine DB-/Rollen-/Workflow-Änderung, kein Supabase-Nachtrag
 nötig. Freeze eingehalten, keine Löschung.
+
+# Session Teilpaket H (Härtetest der Schreibwege) - ERLEDIGT
+
+**Datum:** 20.07.2026. Zwei Chats. Basis Chat 1: `b1c6bf3` (HEAD==origin/main),
+Rücksetz-Tag `pre-teilpaket-H` (gesetzt+gepusht). Neue Commits insgesamt:
+`dad9cbd` (Chat 1), `0b1b60c`/`8de5534`/`d5aba2e` (Chat 2). Hauptdatei
+**12703 Zeilen, in beiden Chats an keiner Stelle verändert** - ganz Teilpaket H
+ist rein additiv (Testdateien + Doku), kein einziger Diff an
+`src/ShuttleLeitstelle.jsx`.
+
+## Ziel / Prämisse
+H sollte prüfen, ob die Schreibwege wirklich CAS-sicher sind (kein verlorenes
+Update, kein blindes Überschreiben, sichtbare Fehler). Ursprüngliche Annahme
+(zentrale Absicherung müsse erst gebaut werden) traf nicht zu - die beiden
+zentralen RPCs (`write_dyn_if_unchanged`, `write_setup_and_drivers_if_unchanged`)
+existierten schon mit CAS/Whitelist/security definer. H lief deshalb als
+**Härtetest + Nachweis**, nicht als Neubau.
+
+## Chat 1 - Inventur + Client-Nebenläufigkeit
+34 `updateDyn`-Aufrufstellen inventarisiert, alle sicheren Wege bestätigt.
+5 fire-and-forget-Schwachstellen gefunden (One-Tap-Zuweisung KRITISCH,
+Drag-and-Drop KRITISCH, Stage-Problemmeldung MITTEL, Gast-Aktionen
+MITTEL/NIEDRIG, Dev-Löschfunktion NIEDRIG) - **keine gefixt**, nur
+klassifiziert (Freeze/Freigabe-Regel). `smoke-teilpaket-h-concurrency.mjs`
+21/0, 3 Gegenproben.
+
+## Chat 2 - RPC-Goldstandard, Poll-Pfad, Doku, Fixentscheidung
+- **(a) SQL-RPC-Verifikation, echtes Postgres statt nur statisch:** Postgres 16
+  lokal installiert, `supabase-schema.sql` unverändert eingespielt (inkl.
+  `anon`/`authenticated`-Rollen + `pgcrypto`), lief fehlerfrei durch. Mit
+  echtem Node-`pg`-Client und echten parallelen Verbindungen angegriffen: 20
+  Parallelschreiber -> genau 1 Gewinner, Rest korrekt `ok=false`; stale rev
+  gewinnt nie; Retry-Schleife verliert nichts; Transaktions-Rollback bei
+  kaputtem Fahrer-Teil erfasst auch `settings`; Gegenprobe (nicht-atomare
+  Variante) verliert nachweislich Updates. **20/20 grün.**
+  `gegenprobe-teilpaket-h-rpc-postgres.mjs` - kein Teil der Standard-
+  Regression (braucht echtes Postgres + npm-Paket "pg", nicht in
+  package.json), Reproduktionsschritte im Dateikopf.
+- **(b) Poll-Pfad H19:** kann eine ältere rev beim 3s-Poll eine neuere lokale
+  überschreiben? Mit zeilengetreu extrahiertem Code (Anker Z. 951) bestätigt:
+  ja, in einem Race-Fall (verspätete Poll-Antwort nach frischerem lokalem
+  Schreiben). Kein Datenverlust in der DB, rein UI-seitig in diesem einen
+  Tab, selbstheilend binnen einem Poll-Zyklus (≤3s). Gegenprobe zeigt: ein
+  monotoner Schutz würde greifen, ohne den Normalfall zu brechen. **Jordans
+  Entscheidung: nicht fixen, Selbstheilung reicht für den Festivalzeitraum.**
+  `gegenprobe-teilpaket-h19-poll.mjs`, 6/0.
+- **(c) Doku:** `TEILPAKET-H-BERICHT.md`, `-ABNAHME.md`, `-MIGRATION.md`
+  geschrieben. Migration-Doku ist ein Bauplan für die vertagten Punkte
+  (H19-Fix mit fertigem Codevorschlag, die drei fire-and-forget-Fixe mit
+  Umsetzungsmuster, Per-Ride-rev-Architekturmigration als Post-Festival-Thema).
+- **(d) Fixentscheidung:** alle drei offenen fire-and-forget-Fixe (One-Tap,
+  Drag-and-Drop, Stage-Meldung) **bewusst auf später vertagt**, keiner in H
+  umgesetzt.
+
+## Nebenbefunde in Chat 2 (mit Freigabe behoben bzw. für künftige Sessions wichtig)
+- **Betriebswissen für Schritt 0:** die Smoke-Suiten für Teilpaket B/E/G
+  brauchen einen Extraktionsschritt VOR dem eigentlichen Test
+  (`python3 extract-funcs-teilpaket-{b,e,g}.py src/ShuttleLeitstelle.jsx
+  tmp-t{b,e,g}-funcs.mjs`), sonst schlagen sie mit `ERR_MODULE_NOT_FOUND`
+  fehl - das sieht wie ein Regressionsfehler aus, ist aber nur ein fehlender
+  Zwischenschritt. Nach dem Testlauf wieder löschen (nicht committen, sind
+  reine Testartefakte, siehe `.gitignore`-Alternative unten).
+- **Duplikat-Check-Regex-Gotcha:** der Standard-Kurzbefehl
+  `grep -oE '^function [a-zA-Z]+' | sort | uniq -d` meldet bei
+  Funktionsnamen mit Ziffern (z. B. `c3RideStartAbsMin`, Teilpaket-C3-
+  Konvention) falsche Duplikate, weil `[a-zA-Z]+` bei der ersten Ziffer
+  abbricht. Für künftige Sessions: `[a-zA-Z0-9_]+` verwenden, dann stimmt's.
+- **`smoke-import-dauer.mjs` war veraltet:** Fälle 17/18 gingen noch vom
+  Stand vor `bb868a4` (matchLoc-/Orts-Fix) aus. Mit Freigabe korrigiert
+  (Commit `0b1b60c`, nur Testdatei, kein App-Code). Jetzt 18/18.
+
+## Verifikation (Chat 2, zusätzlich zu Chat 1)
+Volle Bestands-Regression zu Sessionbeginn grün nachgezogen (inkl. der drei
+o. g. Extrakte), esbuild grün, keine echten Duplikate,
+`smoke-teilpaket-h-concurrency.mjs` weiterhin 21/0 unverändert, die beiden
+neuen H-Beweis-Skripte grün. `src/ShuttleLeitstelle.jsx` in ganz H kein
+einziges Mal verändert.
+
+## Weitere gefundene Punkte für spätere Sessions (nicht angefasst)
+Siehe `TEILPAKET-H-BERICHT.md` Abschnitt "Weitere gefundene Punkte" und
+`TEILPAKET-H-MIGRATION.md` für Details:
+1. One-Tap-Zuweisung `quickAssign` async/await + sichtbarer Fehler (KRITISCH)
+2. Drag-and-Drop `applyDrop` async/await + sichtbarer Fehler (KRITISCH)
+3. Stage-Problemmeldung `reportIssue` async/await + sichtbarer Fehler (MITTEL)
+4. Gast-Aktionen, gleiche Klasse (MITTEL/NIEDRIG, nach Deploy über guest-RPCs)
+5. Dev "alle Fahrten löschen" fire-and-forget (NIEDRIG)
+6. H19 monotoner Poll-Schutz (NIEDRIG, Codevorschlag fertig in der Migration-Doku)
+7. Per-Ride-rev-Architekturmigration (Post-Festival, kein H-Thema, kein Freeze-Verstoß)
+
+## Wichtig: Teilpaket-Ära vorerst abgeschlossen
+Jordan hat Teilpaket H als letztes in dieser Reihe bestätigt ("Teilpakete
+hast du damit erstmal abgeschlossen"). Die nächste Session hat ein anderes
+Thema: **neue Tests** (von Jordan zu Sessionbeginn genauer zu beschreiben,
+in diesem Chat nicht weiter spezifiziert). Die "Weitere gefundene Punkte"-
+Liste oben (v. a. Punkte 1-3, KRITISCH/MITTEL) bleibt unabhängig davon offen
+für eine spätere Session.
+
+## Ready-to-paste Opener für die NÄCHSTE Session
+> Neue Session, OpenBeatz Shuttle-Leitstelle. Arbeitsverzeichnis MUSS
+> `/home/claude/repo` sein. Erst **Schritt 0** komplett, bevor irgendetwas
+> Inhaltliches passiert:
+>
+> 1. Repo klonen (frischer PAT von mir), nach `/home/claude/repo`, PAT sofort
+>    danach aus der Remote-URL scrubben (`git remote set-url`).
+> 2. `npm ci`, git config (`j.merg@merg-and-more.de` / Jordan Merg).
+> 3. `git log --graph --oneline --all` UND `git fetch`, prüfen ob HEAD ==
+>    origin/main. Letzter Commit muss `d5aba2e` sein ("Doku:
+>    Teilpaket-H-Bericht/Abnahme/Migration (Chat 1+2 zusammengefuehrt)").
+> 4. Exakte Zeilenzahl `src/ShuttleLeitstelle.jsx` prüfen: **12703** (seit
+>    Fahrtenliste-Session unverändert, ganz Teilpaket H hat keine einzige
+>    Zeile App-Code angefasst).
+> 5. Volle Bestands-Regression, ALLES grün, bevor irgendwas Neues gebaut wird:
+>    esbuild (grün), Duplikat-Grep **mit `[a-zA-Z0-9_]+`** (nicht `[a-zA-Z]+`,
+>    sonst falsche Duplikate bei Namen wie `c3RideStartAbsMin`), für
+>    Teilpaket B/E/G ZUERST `python3 extract-funcs-teilpaket-{b,e,g}.py
+>    src/ShuttleLeitstelle.jsx tmp-t{b,e,g}-funcs.mjs` laufen lassen, DANN
+>    `smoke-teilpaket-b.mjs` (69/0) + `smoke-teilpaket-e.mjs` (152/0) +
+>    `gegenprobe-teilpaket-e.mjs` (8/0) + `smoke-teilpaket-g.mjs` (130/0) +
+>    `gegenprobe-teilpaket-g.mjs` (10/0), Extrakte danach wieder löschen
+>    (Testartefakte, nicht committen). Weiter: `rendertest.mjs` (5
+>    Referenzwerte konstant: 25053/2452/2413/2895/101), `kontrast.mjs` (0),
+>    `smoke.mjs` + alle `smoke27*.mjs` (Classic-Reste 0),
+>    `smoke-teilpaket-c1.mjs`/`c1-ui`/`c2`/`c2-ui`/`c3`/`c3-ui`/`d`/`d-ui`/
+>    `f`/`f-ui`/`f2-ui`/`g2-ui` (alle grün laut letztem Lauf), `smoke-orte-
+>    fix.mjs` (47/0), `smoke-nav-url.mjs` (10/0), `smoke-fahrtenliste.mjs`
+>    (35/0), `smoke-import-dauer.mjs` (**18/0**, seit Chat 2 korrigiert),
+>    `smoke-teilpaket-h-concurrency.mjs` (21/0), `gegenprobe-teilpaket-h19-
+>    poll.mjs` (6/0). `gegenprobe-teilpaket-h-rpc-postgres.mjs` NICHT Teil
+>    der Standard-Regression (braucht echtes Postgres + `npm install pg` in
+>    einem Scratch-Verzeichnis, Anleitung im Dateikopf) - nur bei Bedarf.
+>
+> Wenn ein Punkt nicht grün ist: STOPP, mir melden, nicht weiterbauen.
+>
+> Regeln unverändert (binden die ganze Session): rein additiv, kleinstmöglich,
+> keine Breaking Changes, keine Workflow-/Rollen-/Stage-Änderungen, keine
+> DB-Struktur-Änderungen (außer zwingend nötig), keine kosmetischen
+> Refactorings, keine Performance-Optimierungen außerhalb des Themas. Vor jeder
+> Code-Änderung: Verdrahtungsplan + genaue Einfügestelle + Regressionsrisiko
+> zeigen und meine Freigabe abwarten. Nach jeder Änderung: volle Kette + Diff-
+> Beweis (`git diff`) + konkrete manuelle Testfälle. Bugs außerhalb des
+> aktuellen Themas -> unter "Weitere gefundene Punkte für spätere Sessions"
+> notieren, NICHT fixen. **FREEZE seit 21.07.: KEINE LÖSCHUNGEN.** Festival
+> läuft 23.-27.07. Proaktiv warnen, bevor der Chat zu lang wird. Nur eine
+> Session gleichzeitig offen. `git fetch` unmittelbar vor jedem Push. Commit-
+> Messages mit Umlauten immer über `/tmp/msg.txt` + `git commit -F`. Dauerhaft
+> wichtig: jede Änderung, die Live-Daten betrifft, kommt mit passendem
+> Supabase-SQL-Nachtrag (nie nur Artifact-Code).
+>
+> **Teilpaket-Reihe (A-H) ist damit erstmal abgeschlossen.** Thema dieser
+> Session: **neue Tests** [Jordan beschreibt genauer, was getestet werden
+> soll]. Die offene KRITISCH/MITTEL-Liste aus H (One-Tap-Zuweisung,
+> Drag-and-Drop, Stage-Problemmeldung, siehe `TEILPAKET-H-MIGRATION.md`)
+> bleibt unabhängig davon für eine spätere Session bereit, falls gewünscht.
+
+**Stand nach dieser Session:** Teilpaket H fertig, verifiziert,
+committet/gepusht (`d5aba2e`, FF-Push `dad9cbd..d5aba2e` über die Chat-2-
+Commits). Rein additiv (Testdateien + Doku), `src/ShuttleLeitstelle.jsx` in
+ganz H unverändert. Freeze eingehalten, keine Löschung. Teilpaket-Reihe A-H
+damit abgeschlossen, nächstes Thema laut Jordan: neue Tests.
