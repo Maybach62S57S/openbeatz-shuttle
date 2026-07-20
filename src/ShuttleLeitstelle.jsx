@@ -640,7 +640,15 @@ function nowHM() { const d = new Date(); return `${pad(d.getHours())}:${pad(d.ge
 function navUrlForRide(setup, ride) {
   const loc = setup.locations.find((l) => l.id === ride.toId);
   let dest = null;
-  if (loc && loc.lat != null && loc.lng != null) dest = `${loc.lat},${loc.lng}`;
+  // Hotels/Flughafen (venue !== true) haben eine echte Strassenadresse -> die
+  // geocodiert die Karten-App punktgenau. Deshalb Adresse VOR der hand-eingetragenen
+  // Koordinate (die lag bei einigen Orten daneben und schickte Fahrer fehl). Das
+  // Festival (venue === true bzw. id "festival") ist ein weitlaeufiges Feld ohne
+  // sinnvolle Hausnummer -> dort bleibt die exakte Koordinate massgeblich. Die
+  // id-Pruefung schuetzt zusaetzlich, falls das venue-Flag in Altdaten fehlt.
+  const isVenue = loc && (loc.venue === true || loc.id === "festival");
+  if (loc && !isVenue && loc.address) dest = loc.address;
+  else if (loc && loc.lat != null && loc.lng != null) dest = `${loc.lat},${loc.lng}`;
   else if (loc && loc.address) dest = loc.address;
   else if (loc && loc.name) dest = loc.name;
   else if (ride.toCustom) dest = ride.toCustom;
