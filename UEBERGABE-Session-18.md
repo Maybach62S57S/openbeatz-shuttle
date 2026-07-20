@@ -5028,3 +5028,153 @@ Gegenproben (Teil 1 + Teil 2) greifen nachweislich.
 (`bb868a4`). Supabase-SQL `orte-nachtrag-update.sql` liegt bereit und MUSS im SQL-Editor
 ausgefuehrt werden, damit die Fahrer-Handys die neuen Orte kennen. Freeze eingehalten,
 rein additiv, keine Loeschung.
+
+# Session Fahrtenliste (rein lesende Live-Übersicht aller Fahrten) - ERLEDIGT
+
+**Datum:** 21.07.2026 (Freeze-Tag, KEINE Löschungen - eingehalten, rein additiv).
+Basis: `e098b99` (HEAD==origin/main). Neuer Commit: `65a50ca`. Rollback-Tag
+`pre-fahrtenliste` = `e098b99` (lokal gesetzt, nicht gepusht). Baseline-Kopie beim
+Start = 12497 Zeilen, volle Bestands-Regression vor Beginn grün.
+
+## Auslöser / Analyse
+Ursprünglicher Session-Auftrag ("Import-Scheibe": 294 Fahrten aus
+`Gesamtuebersicht_Fahrten_OpenBeatz_5.xlsx` als echte Live-Fahrten importieren +
+matchLoc-Fix) wurde in Schritt 0 zweimal korrigiert:
+1. **matchLoc-Fix war bereits erledigt** (Vorsession, Commit `bb868a4`/`e098b99`).
+   Der mitgegebene Opener beschrieb einen veralteten Stand. Entfällt.
+2. **Der reine Import-Auftrag hätte nicht funktioniert:** `parseDate` gegen alle
+   294 echten Zeilen getestet, 294/294 scheitern ("Do 23.07" hat kein Jahr, Format
+   passt nicht). Zusätzlich 7 Spalten ohne Alias-Treffer (u. a. "Artist / DJ"
+   selbst). Kein Blocker für heute, aber unter "weitere Punkte" notiert.
+
+Jordan hat den Auftrag daraufhin bewusst umgestellt: keine Live-Import-Funktion,
+sondern eine **rein lesende Übersichtsliste** der bereits vorhandenen Live-Fahrten
+(`dyn.rides`), live mitlaufend mit dem, was ohnehin in der App passiert. Damit
+entfielen die beiden strukturell heiklen Punkte (neues Ride-Feld für erforderlichen
+Fahrzeugtyp/Gruppe, Massenschreibvorgang in die Produktions-DB unter Freeze)
+komplett. Vorbild/Muster: der bestehende `TimetableTab` (Teilpaket C1, rein
+lesend, gebackene Konstante). Geprüft, dass es noch keine durchsuchbare Live-
+Fahrtenliste gab (`MissionOverviewTab` ist ein KPI-Dashboard, kein Listentab) -
+kein Duplikat.
+
+## Jordans Entscheidungen (umgesetzt)
+- Tab-Name: **"Fahrtenliste"**, Position direkt neben Timetable.
+- Sichtbarkeit: **nur Leitstelle** (wie Timetable).
+- Datenquelle: **live** aus `dyn.rides`, nicht statisch/eingebacken - Änderungen
+  in der App (Zuteilen, Status) spiegeln sich sofort in der Liste.
+- Spalten: Zeit, Artist, Von→Nach, Personen, Fahrzeug, Fahrer (**nur Name**, keine
+  Kontaktdaten), Status, **Flug**, **Notiz**.
+- Fahrer-Kontakt (private Handynummer) bewusst NICHT in der Liste, nur der Name.
+
+## Eingriffe (rein additiv, +206/-0 Zeilen JSX, 12497 -> 12701 vor Smoke-Test,
+### +2 mit Testdatei im Repo)
+1. Neue Komponente `RidesListTab` + Helfer `ridesListDirection` (Typ->Hin/Rück/
+   Transfer-Ableitung aus dem bestehenden `classify()`-Ergebnis) + Konstante
+   `RIDESLIST_STATUS_ST` (Status->mc-st-Farbschlüssel). Eingefügt direkt nach
+   `TimetableTab`, vor dem Teilpaket-C2-Block. Nur lokaler UI-State (Suche,
+   Tag-Filter, Typ-Filter). Kein `updateDyn`, kein `onEdit`/`onAssign`, kein
+   Schreibpfad irgendeiner Art.
+2. `MC_NAV`: neuer Eintrag `{ tab: "rideslist", label: "Fahrtenliste", icon: Eye,
+   group: "PLANUNG & KOMMUNIKATION" }` direkt hinter `timetable`. Icon `Eye` war
+   bereits importiert, kein neuer Import nötig. Da `MC_ROLE_TABS.dispo = null`
+   (= alle MC_NAV-Tabs) und stage/driver explizite Allow-Listen ohne
+   `"rideslist"` sind, ist der Tab automatisch dispo-only, ohne Eingriff in die
+   Rollenlogik selbst.
+3. Eine Render-Zeile in der MissionControl-Hülle neben
+   `{tab === "timetable" && <TimetableTab />}`.
+
+## Verifikation (volle Kette, alles grün)
+esbuild grün; keine Duplikate; alle genutzten Bezeichner aufgelöst (JSX-Referenz-
+Check); neuer `smoke-fahrtenliste.mjs` **35 OK, 0 FAIL** (rendert alle Spalten mit
+Beispiel-Fahrten inkl. Flug/Notiz/offen-Fall, Gegenprobe leere Liste ->
+EmptyState, Gegenprobe nicht vorhandener Name fehlt im HTML, Gegenprobe dass der
+Test wirklich greift, plus Read-only-Nachweis direkt am Quelltext-Block: kein
+`updateDyn`/`updateSetup`/`onEdit`/`onAssign`/`window.storage`/`supabase`/
+`logRide` im Komponenten-Block); `rendertest` 5 Referenzwerte konstant
+(25053/2452/2413/2895/101, App-Root misst den Login-Screen vor Rollenwahl, davon
+unberührt); `pruefe` GEÄNDERT 2 (`MissionControl`, `MC_NAV`) / NEU 3
+(`ridesListDirection`, `RIDESLIST_STATUS_ST`, `RidesListTab`) / ENTFERNT 0 / keine
+undefinierte CSS-Variable; `kontrast` 0. Bestands-Regression unverändert:
+`smoke-teilpaket-g.mjs` 130/0, `gegenprobe-teilpaket-g.mjs` 10/0,
+`smoke-teilpaket-g2-ui.mjs` 51/0, `smoke-orte-fix.mjs` 47/0.
+
+Kein Supabase-SQL-Nachtrag nötig (keine Struktur-/Feldänderung, reine
+Anzeigekomponente auf vorhandenen Daten).
+
+## Manuelle Testfälle
+1. Als Leitstelle einloggen -> Tab "Fahrtenliste" erscheint neben Timetable. Als
+   Fahrer/Stage Manager einloggen -> Tab nicht sichtbar.
+2. Mit befüllten Fahrten: Tabelle nach Tag gruppiert, chronologisch. Zugeteilte
+   Fahrt zeigt Fahrername + Fahrzeug; unbesetzte zeigt "offen"/"—".
+3. Suche z. B. "Leonardo" -> nur passende Fahrten. Typ-Chip "Rückfahrt" -> nur
+   Rückfahrten. Tag-Chip -> nur dieser Tag. "Zurücksetzen" -> volle Liste.
+4. Im Board/bei der Zuteilung etwas ändern -> in der Fahrtenliste sofort
+   sichtbar (gleiche Datenquelle, kein eigener Zustand).
+5. Fahrt mit Flugnummer/Notiz -> beide Spalten gefüllt; ohne -> "—".
+
+## Weitere gefundene Punkte für spätere Sessions (nicht angefasst)
+- **Import-Format-Lücke:** Der bestehende Excel-Import (`parseRow`/`parseDate`)
+  passt NICHT zum "Gesamtuebersicht"-Exportformat der Fahrereinteilung: Datum
+  ohne Jahr ("Do 23.07"), sowie "Artist / DJ", "Pers.", "Fahrzeug", "Gruppe",
+  "Fahrer-Kontakt", "Hinweis" ohne Alias-Treffer. Getestet gegen alle 294 echten
+  Zeilen: 294/294 Datums-Fehler. Kein Bug im Sinne einer Regression, sondern ein
+  Formatunterschied. Falls später ein echter Live-Import aus genau diesem
+  Listenformat gewünscht ist (nicht nur Anzeige): eigene Session, Optionen
+  waren (A) Excel vor dem Hochladen anpassen (Header umbenennen, Datum mit
+  Jahr), (B) eigene Mapping-Schicht im Code für dieses Format, (C) Supabase-
+  SQL-Seeding statt UI-Import. Braucht dann ggf. neue Ride-Felder für
+  "erforderlicher Fahrzeugtyp" (Bedarf) und "Gruppe" (Sammelfahrt/Konvoi),
+  aktuell nicht im Ride-Modell vorhanden.
+- **Rein kosmetisch:** Fahrtenliste zeigt aktuell keine Uhrzeit-Filterung/kein
+  Live-Jetzt-Marker wie die Timeline. War nicht verlangt, könnte optionale
+  spätere Ergänzung sein.
+
+## Ready-to-paste Opener für die NÄCHSTE Session
+> Neue Session, OpenBeatz Shuttle-Leitstelle. Arbeitsverzeichnis MUSS
+> `/home/claude/repo` sein. Erst **Schritt 0** komplett, bevor irgendetwas
+> Inhaltliches passiert:
+>
+> 1. Repo klonen (frischer PAT von mir), nach `/home/claude/repo`, PAT sofort
+>    danach aus der Remote-URL scrubben (`git remote set-url`).
+> 2. `npm ci`, git config (`j.merg@merg-and-more.de` / Jordan Merg).
+> 3. `git log --graph --oneline --all` UND `git fetch`, prüfen ob HEAD ==
+>    origin/main. Letzter Commit muss `65a50ca` sein ("Fahrtenliste: rein
+>    lesende Live-Uebersicht aller Fahrten (dispo-only, additiv)").
+> 4. Exakte Zeilenzahl `src/ShuttleLeitstelle.jsx` prüfen (nach Fahrtenliste,
+>    inkl. Testdatei-Commit).
+> 5. Volle Bestands-Regression, ALLES grün, bevor irgendwas Neues gebaut wird:
+>    esbuild, Duplikat-Grep, `extract-funcs-teilpaket-g.py` +
+>    `smoke-teilpaket-g.mjs` (130/0) + `gegenprobe-teilpaket-g.mjs` (10/0),
+>    `rendertest.mjs` (5 Referenzwerte konstant: 25053/2452/2413/2895/101),
+>    frische Baseline-Kopie ziehen + `pruefe.mjs` dagegen, `kontrast.mjs` (0),
+>    `smoke-teilpaket-g2-ui.mjs` (51/0), `smoke-orte-fix.mjs` (47/0),
+>    `smoke-fahrtenliste.mjs` (35/0).
+>
+> Wenn ein Punkt nicht grün ist: STOPP, mir melden, nicht weiterbauen.
+>
+> Regeln unverändert (binden die ganze Session): rein additiv, kleinstmöglich,
+> keine Breaking Changes, keine Workflow-/Rollen-/Stage-Änderungen, keine
+> DB-Struktur-Änderungen (außer zwingend nötig), keine kosmetischen
+> Refactorings, keine Performance-Optimierungen außerhalb des Themas. Vor jeder
+> Code-Änderung: Verdrahtungsplan + genaue Einfügestelle + Regressionsrisiko
+> zeigen und meine Freigabe abwarten. Nach jeder Änderung: volle Kette + Diff-
+> Beweis (`git diff`) + konkrete manuelle Testfälle. Bugs außerhalb des
+> aktuellen Themas -> unter "Weitere gefundene Punkte für spätere Sessions"
+> notieren, NICHT fixen. **FREEZE seit 21.07.: KEINE LÖSCHUNGEN.** Festival
+> läuft 23.-27.07. Proaktiv warnen, bevor der Chat zu lang wird. Nur eine
+> Session gleichzeitig offen. `git fetch` unmittelbar vor jedem Push. Commit-
+> Messages mit Umlauten immer über `/tmp/msg.txt` + `git commit -F`. Dauerhaft
+> wichtig: jede Änderung, die Live-Daten betrifft, kommt mit passendem
+> Supabase-SQL-Nachtrag (nie nur Artifact-Code).
+>
+> **Bereits bekannt, nicht neu analysieren:** Import-Format-Lücke der
+> "Gesamtuebersicht"-Excel (Datum ohne Jahr, Header-Aliase) ist dokumentiert,
+> siehe "Weitere gefundene Punkte" oben - nur relevant, falls Jordan einen
+> echten Live-Import aus diesem Format will.
+>
+> Thema dieser Session: [Jordan beschreibt die neue Sache].
+
+**Stand nach dieser Session:** Fahrtenliste-Tab fertig, verifiziert,
+committet/gepusht (`65a50ca`, FF-Push `e098b99..65a50ca`). Rein additiv, rein
+lesend, dispo-only, keine DB-/Rollen-/Workflow-Änderung, kein Supabase-Nachtrag
+nötig. Freeze eingehalten, keine Löschung.
