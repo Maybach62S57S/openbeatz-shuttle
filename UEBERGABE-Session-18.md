@@ -4715,3 +4715,112 @@ Rückfallpunkt für Fix 2).
 das Festival, F3 weiterhin bewusst vertagt (siehe Opener oben). Zusätzlich: beide
 in dieser Session gefundenen Orts-/Dauer-Punkte sind bearbeitet. Freeze morgen
 (21.07.), Festival 23.-27.07.
+
+---
+
+# Session Teilpaket G1 (Rückstellungs-/Leerfahrt-Vorschläge, Logik-Kern)
+
+**Datum:** 20.07.2026 (Tag vor Freeze). **Commit-Basis:** `b49c3b7`.
+**Rollback-Tag:** `pre-teilpaket-G` = `7e797e3` (auf `b49c3b7`, gepusht).
+
+## Was G ist
+
+Rein lesende Empfehlung an die Leitstelle: wenn ein Fahrer nach Plan an einem
+operativ ungünstigen Ort frei wird, zeigt G, ob eine Leerfahrt zur nächsten
+zugeteilten Fahrt oder eine Rückstellung zu offenem Festival-Bedarf sinnvoll
+wäre. **Kein** neuer Ride, kein Typ, kein gespeicherter Status, keine DB-Schreibung,
+keine automatische Umsetzung. Alles zur Laufzeit aus Bestandsdaten.
+
+## Scope-Schnitt (mit Jordan geklärt)
+
+G wurde in zwei Scheiben zerlegt, je eigener Chat:
+- **G1 = reiner Logik-Kern (diese Session, FERTIG):** unsichtbar, nirgends im JSX
+  eingebunden, additiv. Status: `direct_to_next_pickup`, `reposition_to_festival`,
+  `stay_at_current_location`, `not_evaluable`.
+- **G2 = UI (nächste Session, OFFEN):** Anzeige in Fahrerliste/Timeline (+ sekundär
+  MissionReturnsTab), Rollen-Gating via `MC_ROLE_TABS`, bestehende MC-Farbvariablen,
+  keine Erstellen-Schaltfläche.
+
+**Bewusst vertagt (nicht in G1, nicht in G2 vor Freeze):** `reposition_to_demand_zone`
+(Rückstellung in Nicht-Festival-Bedarfszonen). Braucht eine zweite Bedarfsquelle
+(offene Hinfahrten aus `dyn.rides`) + heikle now-Abs-Umrechnung. Das Status-Feld
+existiert im Code, feuert in G1 aber nie.
+
+## Fünf Design-Entscheidungen (mit Jordan bestätigt)
+
+1. Position/Fahrtende über die verbindliche Matrix (`c3OperationalNodes` + `travelMin`),
+   NICHT über `estDurationMin`. Fehlende Kante -> `null`, kein Fallback, nie 0.
+2. Erreichbarkeit/Konflikt über `evaluateInsertion` (Bestandsmotor, unverändert).
+3. D-Rückfahrt-Viewmodels (`op.group` overdue/driver_missing/due_soon) als EINGABE,
+   nicht neu gebaut. E (`wait_recommended`) hat Vorrang; F nur neutraler Hinweis.
+4. `now` nur durchgereicht, Absolutminuten via `c3RideStartAbsMin`; kein zweiter Timer.
+5. **KEINE Basis.** `baseLocationId="sheraton"` ist nur Positions-Fallback in
+   `computeDriverStats`, für G NICHT Position/Ziel. Fahrer ohne relevante Fahrt =
+   Position unbekannt = `not_evaluable`. Kein `return_to_base`, Sheraton nie Basis.
+
+## Umgesetzt (18 neue, rein additive Bausteine)
+
+Nach `buildGroupRidePairCandidates` eingefügt (+388 Z., Datei 12055 -> 12443).
+`REPOSITION_CONFIG` (Schwellen), `REPOSITION_STATUS_LABEL/ORDER/ACTIONABLE`,
+`REPOSITION_DEMAND_GROUPS/WEIGHT`, `repositionLocLabel`, `repositionRideEndAbs`,
+`deriveDriverPlannedPosition`, `repositionNextAssignedRide`, `repositionDemandScore`,
+`repositionFreeDriverCoverage`, `repositionReachableOpenRides`,
+`REPOSITION_ACTIONABLE_GROUP`, `evaluateDriverRepositionSuggestion`,
+`repositionCompare`, `rankRepositionSuggestions`, `buildRepositionSuggestions`.
+
+Schwellen (`REPOSITION_CONFIG`): minArrivalBuffer 15, preferredBuffer 25,
+demandLookahead 90, maxRepositionTravel 35, minDemandScoreForReposition 2,
+Demand-Gewichte overdue 3 / driver_missing 2 / due_soon 1 (+1 Bonus ab 2 Fahrten).
+
+## Verifikation (alles grün)
+
+- esbuild OK, keine doppelten Funktions-/Const-Namen.
+- rendertest **25053 / 2452 / 2413 / 2895 / 101** konstant.
+- `pruefe` HEAD vs Stand: **GEAENDERT 0, NEU 18 (exakt die G-Bausteine), ENTFERNT 0,
+  394/394 byte-identisch** -> kein Bestandsbaustein berührt.
+- kontrast 0 Fehler.
+- Volle Bestands-Regression unverändert grün (smoke Classic-Reste 0, b/c1/c1-ui/
+  c2/c2-ui/c3/c3-ui/d/d-ui/e/f/f-ui, import-dauer, nav-url, Gegenproben e/f/import-dauer).
+- **Neu:** `smoke-teilpaket-g.mjs` **130 OK / 0 FAIL** (Testmatrix: Position,
+  Fahrtende, nächste Fahrt, Leerfahrt-Puffer 15/14, stay, reposition, Demand Score,
+  Coverage, Erreichbarkeit, Konflikte, Leonardo/HBF/Sheraton-Pickup, E/F/D-Integration,
+  Mitternacht, not_evaluable, Ranking, Read-only via Deep-Freeze).
+- **Neu:** `gegenprobe-teilpaket-g.mjs` **10 OK / 0 FAIL** (jede Mutation der echten
+  Quelle kippt das erwartete Verhalten -> Tests messen wirklich).
+
+Testdeterminismus-Trick: aktive Position via explizitem `onboard`-Status
+(uhrunabhängig), `planned_ride_end` via vergangenem dayKey (`dayNowMin`=99999),
+Rückstellung/Leerfahrt via Zukunftstag (`dayNowMin`=-99999) + onboard-Positionsfahrt.
+`estDurationMin` im Harness = Matrixzeit, damit `effDur`==Matrix (keine Divergenz).
+
+## Neue Dateien
+
+`extract-funcs-teilpaket-g.py` (E-Order + `GROUP_RIDE_ACTIONABLE` + G-Deklarationen,
+erzeugt `tmp-tg-funcs.mjs`, 63 Blöcke, keine fehlenden Deps), `smoke-teilpaket-g.mjs`,
+`gegenprobe-teilpaket-g.mjs`, `TEILPAKET-G-BERICHT.md`, `TEILPAKET-G-ABNAHME.md`.
+
+## Ready-to-paste Opener für die NÄCHSTE Session (G2, UI)
+
+> Neue Session, Teilpaket **G2** (UI zu G1). Arbeitsverzeichnis MUSS `/home/claude/repo`
+> sein. Erst **Schritt 0** komplett: Repo klonen (frischer PAT von mir), nach
+> `/home/claude/repo` verschieben, `npm ci`, git config; dann `git log --graph
+> --oneline --all` + `git fetch`, exakte Zeilenzahl `src/ShuttleLeitstelle.jsx`
+> prüfen (Basis-Commit trägt den G1-Logikkern), volle Bestands-Regression fahren
+> (inkl. `extract-funcs-teilpaket-g.py` + `smoke-teilpaket-g.mjs` + `gegenprobe-teilpaket-g.mjs`).
+> Regeln unverändert: rein additiv, kleinstmöglich, keine Breaking Changes, nach
+> jeder Änderung volle Kette + Diff-Beweis + Testfälle, Bau erst nach Freigabe.
+> **Ab 21.07. keine Löschungen mehr.**
+>
+> G2 zeigt die G1-Vorschläge NUR an (rein präsentational): Fahrerliste/Timeline
+> primär, MissionReturnsTab sekundär. Nur bestehende MC-Farbvariablen (Van=Amber,
+> Car=Blue, kein Alarmrot; severity `attention`->amber, `neutral`->gedämpft,
+> `info`->informativ, `not_evaluable`->zurückhaltend). Rollen-Gating über
+> `MC_ROLE_TABS` (dispo alles, stage/driver eingeschränkt). `now`-Tick des Boards
+> wiederverwenden, KEIN zweiter Timer. Keine Erstellen-/Umsetzen-Schaltfläche.
+> `buildRepositionSuggestions` ist der einzige Einstieg; nichts an der Logik ändern.
+> Vor dem Einbau ins JSX: Verdrahtungsplan + Regressionsrisiko + genaue Stelle
+> zeigen und meine Freigabe abwarten.
+
+**Stand nach dieser Session:** G1-Logikkern fertig, verifiziert, committet/gepusht.
+Unsichtbar (nirgends eingebunden) -> null Laufzeitrisiko fürs Festival. G2 (Anzeige)
+offen für die nächste Session. F weiterhin fertig, F3 vertagt. Freeze 21.07.

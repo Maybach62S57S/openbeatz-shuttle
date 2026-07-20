@@ -7828,6 +7828,394 @@ function buildGroupRidePairCandidates({ rides, drivers, setup, now, timetableEnt
   return { ranked, actionable, primaries: ranked.filter((c) => c.isPrimary), counts };
 }
 
+/* =========================================================================
+   Teilpaket G1: Sichere Rueckstellungs- und Leerfahrt-Vorschlaege (Kern)
+   (REIN LESEND, additiv, keine Schreibwege, kein neues dyn-Feld, keine DB).
+   -------------------------------------------------------------------------
+   Idee (Spec 1/2): der Leitstelle rein lesend zeigen, wenn ein Fahrer nach
+   Plan an einem operativ unguenstigen Ort frei wird und eine Leerfahrt zur
+   naechsten zugeteilten Fahrt bzw. eine Rueckstellung zu offenem Festival-
+   Bedarf sinnvoll waere. KEIN neuer Ride, kein Typ, kein gespeicherter
+   Status, keine automatische Umsetzung. Alles zur Laufzeit aus Bestandsdaten.
+
+   Wiederverwendung (kein zweiter Motor, Spec 7/21/31):
+   - Position: computeDriverStats (UNVERAENDERT) fuer aktive/vergangene Fahrten.
+   - Operative Orte/Fahrzeit: c3OperationalNodes + travelMin + c3RideStartAbsMin
+     (Teilpaket B/C3; Sheraton-Pickup fuer Leonardo/HBF -> Festival, Rueckfahrt
+     behaelt echtes Ziel; Matrixzeit verbindlich, nie 0/geschaetzt).
+   - Erreichbarkeit/Konflikt/Kapazitaet: evaluateInsertion (Bestandsmotor, UNVERAENDERT).
+   - Bedarf: D-Zustaende (op.group overdue/driver_missing/due_soon) als EINGABE
+     (returnRideViewModels), nicht neu gebaut.
+   - E-Vorrang: wait_recommended pro Fahrer als EINGABE (Spec 22).
+   - F: nur optionaler neutraler Hinweis, nie positionsbestimmend (Spec 23).
+
+   Scope-Entscheidung (mit Jordan geklaert, 20.07.2026):
+   - Voll umgesetzt: direct_to_next_pickup, reposition_to_festival,
+     stay_at_current_location, not_evaluable.
+   - reposition_to_demand_zone (Nicht-Festival-Zonen) BEWUSST VERTAGT: braucht
+     eine zweite Bedarfsquelle (offene Hinfahrten aus dyn.rides) + eine
+     now-Abs-Umrechnung, die vor dem Festival-Freeze nicht ueberhastet gebaut
+     wird. Das Status-Feld existiert, feuert in G1 aber nicht.
+
+   Basis-Entscheidung (mit Jordan geklaert): es gibt KEINE verbindliche
+   Fahrerbasis. baseLocationId ("sheraton") ist nur Positions-Fallback in
+   computeDriverStats und wird fuer G NICHT als Position/Ziel angenommen ->
+   Fahrer ohne relevante Fahrt = Position unbekannt = not_evaluable. Kein
+   return_to_base, Sheraton nie als pauschale Basis (Spec 8/11/16).
+========================================================================= */
+const REPOSITION_CONFIG = {
+  minMovementBenefitMin: 10,       // Mindestnutzen einer Bewegung (Spec 9)
+  minArrivalBufferMin: 15,         // Mindestpuffer am naechsten Abholort (Spec 9/27)
+  preferredArrivalBufferMin: 25,   // bevorzugter Puffer (nur Info)
+  demandLookaheadMin: 90,          // Bedarfsfenster fuer Rueckstellungen (Spec 9/14)
+  maxRepositionTravelMin: 35,      // max. Fahrzeit einer allgemeinen Rueckstellung (Spec 9/14)
+  minDemandScoreForReposition: 2,  // Mindestbedarf fuer positive Rueckstellung (Spec 9/10)
+  sameLocationToleranceMin: 0,     // gleicher Ort = keine Bewegung
+  stalePastRideGraceMin: 15,       // Toleranz fuer knapp vergangene Fahrten
+};
+
+const REPOSITION_STATUS_LABEL = {
+  direct_to_next_pickup: "Leerfahrt zum nächsten Abholort sinnvoll",
+  reposition_to_festival: "Rückstellung zum Festival prüfen",
+  reposition_to_demand_zone: "Rückstellung in Bedarfszone prüfen",
+  stay_at_current_location: "Keine Bewegung nötig",
+  not_evaluable: "Nicht sicher bewertbar",
+};
+// Prioritaet (Spec 26): kleiner = wichtiger.
+const REPOSITION_STATUS_ORDER = {
+  direct_to_next_pickup: 0, reposition_to_festival: 1, reposition_to_demand_zone: 2,
+  stay_at_current_location: 3, not_evaluable: 4,
+};
+// handlungsleitende Status (fuer Zaehler/Filter in G2).
+const REPOSITION_ACTIONABLE = new Set(["direct_to_next_pickup", "reposition_to_festival", "reposition_to_demand_zone"]);
+// D-Gruppen, die als offener Bedarf zaehlen (Spec 10/24). completed/cancelled/
+// in_progress/driver_assigned/not_due/needs_review zaehlen NICHT.
+const REPOSITION_DEMAND_GROUPS = new Set(["overdue", "driver_missing", "due_soon"]);
+// Gewicht je Bedarfsgruppe (Spec 10).
+const REPOSITION_DEMAND_WEIGHT = { overdue: 3, driver_missing: 2, due_soon: 1 };
+
+// Ortslabel fuer die Anzeige (aus setup.locations, sonst Custom-Text/id).
+function repositionLocLabel(setup, id, custom) {
+  if (custom && String(custom).trim()) return String(custom).trim();
+  const l = setup && Array.isArray(setup.locations) ? setup.locations.find((x) => x.id === id) : null;
+  return (l && (l.short || l.name)) || id || "unbekannt";
+}
+
+/* Geplantes Fahrtende EINER Fahrt als Absolutminute ueber die verbindliche
+   Matrixzeit (wie C3/E/F), NICHT ueber estDurationMin (Spec 18). Fehlt die
+   Kante -> reliable:false, abs:null (nie 0, nie 20-min-Fallback). Rein. */
+function repositionRideEndAbs(ride, setup) {
+  const startAbs = c3RideStartAbsMin(ride.date, ride.time);
+  if (startAbs == null) return { abs: null, reliable: false, node: null };
+  const nodes = c3OperationalNodes(ride, setup);
+  const t = travelMin(setup.matrix, nodes.fromNode, nodes.toNode);
+  if (t == null) return { abs: null, reliable: false, node: nodes.toNode || null };
+  return { abs: startAbs + t, reliable: true, node: nodes.toNode || null };
+}
+
+/* Reine Planungsposition eines Fahrers (Spec 6/7). Position AUSSCHLIESSLICH aus
+   dem Fahrplan des Fahrers (aktive oder zuletzt planmaessig beendete Fahrt),
+   NIE aus baseLocationId, State oder GPS -> keine Live-Position behauptet, kein
+   Basis-Assumption. Ohne relevante Fahrt = confidence "unknown". Nutzt
+   computeDriverStats unveraendert und veraendert selbst nichts. */
+function deriveDriverPlannedPosition({ driver, dyn, setup, now, dayKey }) {
+  const reasons = [];
+  const out = {
+    driverId: driver && driver.id ? driver.id : null,
+    locationId: null, locationLabel: null, locationNode: null,
+    availableAt: null, sourceRideId: null, sourceType: "unknown",
+    confidence: "unknown", reasons,
+  };
+  if (!driver || !driver.id) { reasons.push("driver_invalid"); return out; }
+  const stats = computeDriverStats(setup, dyn, driver.id, dayKey);
+  // (a) Aktive Fahrt: Position = deren ECHTES Ziel, frei ab deren Matrix-Ende.
+  if (stats.active) {
+    const r = stats.active;
+    const end = repositionRideEndAbs(r, setup);
+    out.sourceRideId = r.id; out.sourceType = "active_ride_end"; out.confidence = "active";
+    out.locationId = r.toId || null; out.locationLabel = repositionLocLabel(setup, r.toId, r.toCustom);
+    out.locationNode = end.node; out.availableAt = end.abs;
+    if (!end.reliable) reasons.push("ride_end_not_reliable");
+    if (!out.locationNode) reasons.push("location_unknown");
+    return out;
+  }
+  // (b) Sonst: zuletzt planmaessig beendete, nicht stornierte Fahrt.
+  const nowMinOfDay = stats.now;
+  const past = (stats.rides || []).filter((r) =>
+    r.status !== "cancelled" && (sortMin(r.time) + effDur(setup.config, r)) <= nowMinOfDay);
+  // stabile Auswahl: spaeteste Planzeit zuerst, Tie-Break id (Spec 6).
+  past.sort((a, b) => (sortMin(a.time) - sortMin(b.time)) || String(a.id || "").localeCompare(String(b.id || "")));
+  const last = past[past.length - 1];
+  if (last) {
+    const end = repositionRideEndAbs(last, setup);
+    out.sourceRideId = last.id; out.sourceType = "planned_ride_end"; out.confidence = "planned";
+    out.locationId = last.toId || null; out.locationLabel = repositionLocLabel(setup, last.toId, last.toCustom);
+    out.locationNode = end.node; out.availableAt = end.abs;
+    if (!end.reliable) reasons.push("ride_end_not_reliable");
+    if (!out.locationNode) reasons.push("location_unknown");
+    return out;
+  }
+  // (c) Keine relevante Fahrt -> Position unbekannt (KEIN Basis-Fallback, Spec 8/16).
+  reasons.push("no_plan_position");
+  return out;
+}
+
+/* Naechste diesem Fahrer zugeteilte Fahrt nach seiner geplanten Verfuegbarkeit
+   (Spec 17). Nur zugeteilt, nicht storniert/erledigt/laufend, Start-Abs >=
+   availableAt. Stabil: frueheste Start-Abs, Tie-Break id. Rein. */
+function repositionNextAssignedRide({ driver, dyn, setup, dayKey, availableAt }) {
+  if (availableAt == null) return null;
+  const mine = driverDay(dyn.rides, driver.id, dayKey).filter((r) =>
+    r.assignedDriverId === driver.id &&
+    r.status !== "cancelled" &&
+    !RETURN_STATUS_COMPLETED.has(r.status || "") &&
+    !RETURN_STATUS_ACTIVE.has(r.status || ""));
+  const withAbs = mine.map((r) => ({ r, abs: c3RideStartAbsMin(r.date, r.time) }))
+    .filter((x) => x.abs != null && x.abs >= availableAt);
+  withAbs.sort((a, b) => (a.abs - b.abs) || String(a.r.id || "").localeCompare(String(b.r.id || "")));
+  return withAbs.length ? withAbs[0].r : null;
+}
+
+/* Deterministischer Bedarfsscore fuer einen Ziel-Matrix-Knoten (Spec 10). Zaehlt
+   NUR unbesetzte offene Fahrten am Knoten innerhalb des Lookahead-Fensters,
+   gewichtet nach D-Gruppe. needs_review/assigned/completed/cancelled/in_progress
+   zaehlen NICHT (Spec 24). Nutzt Ds bereits now-relative minutesUntilDeparture
+   (keine eigene Zeitrechnung). Rein. */
+function repositionDemandScore({ node, returnRideViewModels, setup, config }) {
+  const cfg = config || REPOSITION_CONFIG;
+  const ids = [];
+  let score = 0;
+  const vms = Array.isArray(returnRideViewModels) ? returnRideViewModels : [];
+  for (const vm of vms) {
+    if (!vm || !vm.ride || !vm.op) continue;
+    if (vm.op.driverAssigned) continue;                          // nur unbesetzt (Spec 10)
+    if (!REPOSITION_DEMAND_GROUPS.has(vm.op.group)) continue;    // nur overdue/driver_missing/due_soon
+    const m = vm.op.minutesUntilDeparture;
+    if (m != null && m > cfg.demandLookaheadMin) continue;       // ueberfaellig (m<0) immer, sonst <= lookahead
+    const nodes = c3OperationalNodes(vm.ride, setup);
+    if (nodes.fromNode !== node) continue;                       // Bedarf am Ziel-Knoten
+    score += REPOSITION_DEMAND_WEIGHT[vm.op.group] || 0;
+    ids.push(vm.ride.id);
+  }
+  if (ids.length >= 2) score += 1;                               // mehrere passende (Spec 10)
+  return { score, demandRideIds: ids, count: ids.length };
+}
+
+/* Anzahl ANDERER Fahrer, die nach Plan bereits am Ziel-Knoten frei sind
+   (Spec 30). Nutzt die einmal vorberechneten Planungspositionen. Rein. */
+function repositionFreeDriverCoverage({ node, driverPlannedPositions, excludeDriverId }) {
+  const list = Array.isArray(driverPlannedPositions) ? driverPlannedPositions : [];
+  let n = 0;
+  for (const p of list) {
+    if (!p || p.driverId === excludeDriverId) continue;
+    if (p.confidence === "unknown" || p.availableAt == null) continue;
+    if (p.locationNode === node) n++;
+  }
+  return n;
+}
+
+/* Mindestens eine der offenen Bedarfsfahrten am Ziel muss fuer DIESEN Fahrer
+   ueber den Bestandsmotor erreichbar sein (Spec 31/32: Kapazitaet, Konflikt,
+   availableFrom, Rechtzeitigkeit, Leonardo/HBF-Pickup). Rein, evaluateInsertion
+   ist unveraendert. Gibt die Ride-IDs der erreichbaren Fahrten zurueck. */
+function repositionReachableOpenRides({ driver, demandRideIds, dyn, setup }) {
+  const byId = new Map((dyn.rides || []).map((r) => [r.id, r]));
+  const reachable = [];
+  for (const id of (demandRideIds || [])) {
+    const ride = byId.get(id);
+    if (!ride) continue;
+    const ev = evaluateInsertion(setup, dyn, driver, ride);
+    if (ev && ev.feasible) reachable.push(id);
+  }
+  return reachable;
+}
+
+/* Zentrale reine Bewertung eines Fahrers (Spec 25/26). Genau EIN primaerer
+   Status je Fahrer. Veraendert nichts, keine DB-/UI-Seiteneffekte. now wird nur
+   durchgereicht (G rechnet in Absolutminuten bzw. nutzt Ds now-relative Werte);
+   kein eigener Timer. */
+function evaluateDriverRepositionSuggestion({ driver, dyn, setup, now, dayKey,
+  returnRideViewModels, waitRideSuggestions, groupRideSuggestions, driverPlannedPositions }) {
+  const cfg = REPOSITION_CONFIG;
+  const reasons = [];
+  const warnings = [];
+  const out = {
+    status: "not_evaluable", severity: "warning", label: REPOSITION_STATUS_LABEL.not_evaluable,
+    driverId: driver && driver.id ? driver.id : null,
+    fromLocationId: null, fromLocationLabel: null, availableAt: null,
+    toLocationId: null, toLocationLabel: null,
+    nextRideId: null, demandRideIds: [],
+    travelMinutes: null, departureAt: null, arrivalAt: null, bufferBeforeNextRideMin: null,
+    demandScore: 0, routeReliable: false, hasConflict: false,
+    alternatives: [], reasons, warnings, sortScore: REPOSITION_STATUS_ORDER.not_evaluable * 1000,
+  };
+  const finalize = (patch) => {
+    const o = patch ? Object.assign(out, patch) : out;
+    const base = (REPOSITION_STATUS_ORDER[o.status] != null ? REPOSITION_STATUS_ORDER[o.status] : 4) * 1000;
+    // innerhalb gleicher Prioritaet: hoeherer Bedarf zuerst, kuerzere Route zuerst.
+    o.sortScore = base - (o.demandScore || 0) * 10 + (o.travelMinutes != null ? Math.min(o.travelMinutes, 99) / 100 : 0);
+    o.label = REPOSITION_STATUS_LABEL[o.status] || o.label;
+    return o;
+  };
+
+  if (!driver || !driver.id) { reasons.push("driver_invalid"); return finalize(); }
+
+  // (1) Planungsposition.
+  const pos = deriveDriverPlannedPosition({ driver, dyn, setup, now, dayKey });
+  out.fromLocationId = pos.locationId;
+  out.fromLocationLabel = pos.locationLabel;
+  out.availableAt = pos.availableAt;
+  if (pos.confidence === "unknown" || pos.locationNode == null || pos.availableAt == null) {
+    pos.reasons.forEach((r) => reasons.push(r));
+    if (!reasons.length) reasons.push("position_not_reliable");
+    return finalize({ status: "not_evaluable" });
+  }
+  out.departureAt = c3AbsToParts(pos.availableAt).iso;
+
+  // (2) E-Vorrang (Spec 22): ein konfliktfreier wait_recommended fuer diesen
+  //     Fahrer schlaegt jede G-Bewegung als Hauptvorschlag -> keine
+  //     widerspruechliche Empfehlung. G tritt zurueck (stay), E bleibt fuehrend.
+  const eWait = (Array.isArray(waitRideSuggestions) ? waitRideSuggestions : []).find(
+    (w) => w && w.driverId === driver.id && w.status === "wait_recommended" && !w.hasRideConflict);
+  if (eWait) {
+    reasons.push("e_wait_recommended_priority");
+    return finalize({ status: "stay_at_current_location", severity: "neutral" });
+  }
+
+  // (3) Konkrete Leerfahrt zur naechsten zugeteilten Fahrt (Spec 12/27) - hat
+  //     Vorrang vor der Rueckstellung.
+  const next = repositionNextAssignedRide({ driver, dyn, setup, dayKey, availableAt: pos.availableAt });
+  if (next) {
+    out.nextRideId = next.id;
+    const nn = c3OperationalNodes(next, setup);
+    const nextPickupNode = nn.fromNode;
+    const nextStartAbs = c3RideStartAbsMin(next.date, next.time);
+    out.toLocationId = next.fromId || null;
+    out.toLocationLabel = repositionLocLabel(setup, next.fromId, next.fromCustom);
+    // gleicher Ort -> keine Bewegung noetig (Spec 13/27).
+    if (nextPickupNode && nextPickupNode === pos.locationNode) {
+      reasons.push("next_ride_same_location");
+      return finalize({ status: "stay_at_current_location", severity: "neutral" });
+    }
+    const travel = travelMin(setup.matrix, pos.locationNode, nextPickupNode);
+    if (travel == null || nextStartAbs == null) {
+      reasons.push(travel == null ? "empty_route_unknown" : "next_ride_time_invalid");
+      return finalize({ status: "not_evaluable", routeReliable: false });
+    }
+    out.travelMinutes = travel;
+    out.routeReliable = true;
+    const arrivalAbs = pos.availableAt + travel;
+    out.arrivalAt = c3AbsToParts(arrivalAbs).iso;
+    const buffer = nextStartAbs - arrivalAbs;
+    out.bufferBeforeNextRideMin = buffer;
+    // Konflikt ueber den Bestandsmotor (Spec 21).
+    const ev = evaluateInsertion(setup, dyn, driver, next);
+    const conflict = !!(ev && (ev.overlap || !ev.available || ev.lateToPickup > 0));
+    out.hasConflict = conflict;
+    if (ev && !ev.available && ev.availabilityReason) warnings.push(ev.availabilityReason);
+    if (buffer < cfg.minArrivalBufferMin || conflict) {
+      reasons.push(buffer < cfg.minArrivalBufferMin ? "buffer_below_min" : "conflict");
+      // nicht sicher erreichbar -> keine positive Empfehlung (Spec 27).
+      return finalize({ status: "not_evaluable", severity: "warning" });
+    }
+    reasons.push("direct_reachable_with_buffer");
+    return finalize({ status: "direct_to_next_pickup", severity: "info" });
+  }
+
+  // (4) Keine konkrete naechste Fahrt -> Rueckstellung zum Festival (Spec 14).
+  const FEST = "festival";
+  // bereits am Festival -> keine Bewegung (Spec 13).
+  if (pos.locationNode === FEST) {
+    reasons.push("already_at_festival");
+    return finalize({ status: "stay_at_current_location", severity: "neutral" });
+  }
+  const demand = repositionDemandScore({ node: FEST, returnRideViewModels, setup, config: cfg });
+  out.demandScore = demand.score;
+  out.demandRideIds = demand.demandRideIds;
+  const travelFest = travelMin(setup.matrix, pos.locationNode, FEST);
+  if (travelFest == null) {
+    reasons.push("reposition_route_unknown");
+    return finalize({ status: "not_evaluable", routeReliable: false });
+  }
+  out.routeReliable = true;
+  out.travelMinutes = travelFest;
+  out.toLocationId = FEST;
+  out.toLocationLabel = repositionLocLabel(setup, FEST, null);
+  out.arrivalAt = c3AbsToParts(pos.availableAt + travelFest).iso;
+  // optionaler neutraler F-Hinweis (Spec 23): existiert fuer eine Bedarfsfahrt
+  // zusaetzlich ein Sammelfahrt-Vorschlag? Rein informativ, nicht positionsbestimmend.
+  const groupIds = new Set((Array.isArray(groupRideSuggestions) ? groupRideSuggestions : [])
+    .filter((g) => g && REPOSITION_ACTIONABLE_GROUP(g)).flatMap((g) => Array.isArray(g.rideIds) ? g.rideIds : []).filter(Boolean));
+  if (demand.demandRideIds.some((id) => groupIds.has(id))) warnings.push("group_suggestion_exists");
+
+  if (demand.score < cfg.minDemandScoreForReposition) {
+    reasons.push("no_sufficient_demand");
+    return finalize({ status: "stay_at_current_location", severity: "neutral" });
+  }
+  // mindestens eine offene Bedarfsfahrt muss erreichbar sein (Spec 31).
+  const reachable = repositionReachableOpenRides({ driver, demandRideIds: demand.demandRideIds, dyn, setup });
+  if (reachable.length === 0) {
+    reasons.push("no_reachable_open_ride");
+    return finalize({ status: "stay_at_current_location", severity: "neutral" });
+  }
+  // Bedarfsdeckung durch bereits freie Fahrer am Festival (Spec 30).
+  const coverage = repositionFreeDriverCoverage({ node: FEST, driverPlannedPositions, excludeDriverId: driver.id });
+  const coverageSufficient = demand.count > 0 && coverage >= demand.count;
+  // zu weite Bewegung -> nur neutral als pruefbar (Spec 14/28), keine starke Empfehlung.
+  const tooFar = travelFest > cfg.maxRepositionTravelMin;
+  if (coverageSufficient) warnings.push("sufficient_coverage");
+  if (tooFar) warnings.push("travel_over_max");
+  const weak = coverageSufficient || tooFar;
+  reasons.push(weak ? "festival_demand_weak" : "festival_demand");
+  return finalize({ status: "reposition_to_festival", severity: weak ? "neutral" : "attention" });
+}
+
+// Hilfsflag: gilt ein F-Kandidat als handlungsleitend? (nur fuer den neutralen
+// Hinweis; F-Status-Set liegt in GROUP_RIDE_ACTIONABLE.)
+function REPOSITION_ACTIONABLE_GROUP(g) {
+  return !!(g && typeof GROUP_RIDE_ACTIONABLE !== "undefined" && GROUP_RIDE_ACTIONABLE.has && GROUP_RIDE_ACTIONABLE.has(g.status));
+}
+
+/* Deterministischer Vergleich fuer die Anzeige-Reihenfolge (Spec 26/29). Rein. */
+function repositionCompare(a, b) {
+  if (a.sortScore !== b.sortScore) return a.sortScore - b.sortScore;
+  const da = a.demandScore || 0, db = b.demandScore || 0;
+  if (da !== db) return db - da;                                  // hoeherer Bedarf zuerst
+  const ta = a.travelMinutes == null ? Infinity : a.travelMinutes;
+  const tb = b.travelMinutes == null ? Infinity : b.travelMinutes;
+  if (ta !== tb) return ta - tb;                                  // kuerzere Route zuerst
+  return String(a.driverId || "").localeCompare(String(b.driverId || "")); // stabiler Tie-Break
+}
+
+/* Sortiert eine KOPIE (mutiert die Eingabe nicht, Spec 41). */
+function rankRepositionSuggestions(list) {
+  return (Array.isArray(list) ? list.slice() : []).sort(repositionCompare);
+}
+
+/* Orchestrierung (Spec 40): je Fahrer genau EIN Vorschlag. Planungspositionen
+   werden EINMAL vorberechnet und in die Bewertung gereicht (O(n) statt O(n^2)).
+   Rein lesend, mutiert nichts. */
+function buildRepositionSuggestions({ drivers, dyn, setup, now, dayKey,
+  returnRideViewModels, waitRideSuggestions, groupRideSuggestions }) {
+  const ds = Array.isArray(drivers) ? drivers : [];
+  // 1x alle Planungspositionen (fuer die Bedarfsdeckung, Spec 30/40).
+  const driverPlannedPositions = ds.map((driver) =>
+    deriveDriverPlannedPosition({ driver, dyn, setup, now, dayKey }));
+  const suggestions = ds.map((driver) => evaluateDriverRepositionSuggestion({
+    driver, dyn, setup, now, dayKey,
+    returnRideViewModels, waitRideSuggestions, groupRideSuggestions, driverPlannedPositions,
+  }));
+  const ranked = rankRepositionSuggestions(suggestions);
+  const counts = { direct_to_next_pickup: 0, reposition_to_festival: 0,
+    reposition_to_demand_zone: 0, stay_at_current_location: 0, not_evaluable: 0 };
+  ranked.forEach((s) => { counts[s.status] = (counts[s.status] || 0) + 1; });
+  const byDriver = {};
+  ranked.forEach((s) => { if (s.driverId) byDriver[s.driverId] = s; });
+  const actionable = ranked.filter((s) => REPOSITION_ACTIONABLE.has(s.status));
+  return { ranked, byDriver, actionable, counts, driverPlannedPositions };
+}
+
+
 /* ---- Teilpaket F2: rein praesentationale Anzeige der Sammelfahrt-Vorschlaege --
  * Reine Anzeige-Komponente. Kein Schreibweg, kein Handler ausser den beiden
  * bestehenden Oeffnen-Aktionen (onOpenPartner -> Ride-Editor, onOpenAssign ->
