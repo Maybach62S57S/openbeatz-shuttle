@@ -5286,6 +5286,210 @@ function TimetableTab() {
   );
 }
 
+/* ---- Fahrtenliste: rein lesende Live-Uebersicht aller Shuttle-Fahrten ---- *
+ * REIN LESEND. Keinerlei Schreibvorgang (kein updateDyn, kein onEdit/onAssign,
+ * kein Storage/Supabase, keine Status-/Zeit-/Fahrer-Aenderung). Liest allein
+ * aus dyn.rides und stellt sie als durchsuchbare, nach Betriebstag gruppierte
+ * Tabelle dar. Live automatisch, weil dieselbe Datenquelle wie Board/Timeline.
+ * Nur lokaler UI-State (Suche/Filter). Keine neuen Ride-Felder: alle Spalten
+ * kommen aus vorhandenen Feldern (Zeit, djName, from/to, passengerCount,
+ * assignedDriverId->Roster, flightNo, notes, status, type). Dispo-only ueber
+ * MC_NAV (stage/driver-Allow-Listen enthalten den Tab nicht).
+ * ------------------------------------------------------------------------- */
+function ridesListDirection(type) {
+  if (type === "return") return { key: "rueck", label: "Rückfahrt", st: "assigned" };
+  if (type === "arrival" || type === "toVenue") return { key: "hin", label: "Hinfahrt", st: "new" };
+  return { key: "transfer", label: "Transfer", st: "idle" };
+}
+const RIDESLIST_STATUS_ST = {
+  planned: "idle", accepted: "new", enroute_pickup: "enroute",
+  onboard: "enroute", done: "done", cancelled: "problem",
+};
+function RidesListTab({ setup, dyn, day }) {
+  const [query, setQuery] = useState("");
+  const [dayFilter, setDayFilter] = useState("all");   // dayKey oder "all"
+  const [typeFilter, setTypeFilter] = useState("all");  // all|hin|rueck|transfer
+
+  const ln = (id, c) => setup.locations.find((l) => l.id === id)?.short || c || "—";
+  const drvName = (id) => {
+    const d = setup.drivers.find((x) => x.id === id);
+    return d ? `${d.firstName} ${d.lastName}`.trim() : "";
+  };
+  const drvVehicle = (id) => {
+    const d = setup.drivers.find((x) => x.id === id);
+    return d ? (d.vehicleType === "Van" ? "Van" : "Car") : "";
+  };
+
+  const allRides = dyn.rides || [];
+
+  // Tag-Liste dynamisch aus den echten Fahrten (sortiert), mit Wochentagslabel.
+  const days = useMemo(() => {
+    const keys = [...new Set(allRides.map((r) => r.dayKey).filter(Boolean))].sort();
+    return keys.map((k) => ({ key: k, label: fmtDate(k) }));
+  }, [allRides]);
+
+  const norm = (s) => String(s || "").toLowerCase();
+
+  const filtered = useMemo(() => {
+    const qTokens = norm(query).split(" ").filter(Boolean);
+    return allRides.filter((r) => {
+      if (dayFilter !== "all" && r.dayKey !== dayFilter) return false;
+      if (typeFilter !== "all" && ridesListDirection(r.type).key !== typeFilter) return false;
+      if (qTokens.length) {
+        const hay = norm(`${r.djName} ${ln(r.fromId, r.fromCustom)} ${ln(r.toId, r.toCustom)} ${drvName(r.assignedDriverId)} ${r.flightNo || ""} ${r.time || ""} ${r.notes || ""}`);
+        if (!qTokens.every((t) => hay.includes(t))) return false;
+      }
+      return true;
+    });
+  }, [allRides, dayFilter, typeFilter, query, setup]);
+
+  // Gruppierung nach Betriebstag, innerhalb chronologisch nach Uhrzeit.
+  const groups = useMemo(() => {
+    const byDay = new Map();
+    filtered.forEach((r) => { if (!byDay.has(r.dayKey)) byDay.set(r.dayKey, []); byDay.get(r.dayKey).push(r); });
+    return [...byDay.entries()]
+      .sort((a, b) => (a[0] || "").localeCompare(b[0] || ""))
+      .map(([key, items]) => ({ key, label: fmtDate(key), items: items.slice().sort((x, y) => sortMin(x.time) - sortMin(y.time)) }));
+  }, [filtered]);
+
+  const anyFilter = query !== "" || dayFilter !== "all" || typeFilter !== "all";
+  const reset = () => { setQuery(""); setDayFilter("all"); setTypeFilter("all"); };
+
+  const typeChips = [
+    { key: "all", label: "Alle Typen" },
+    { key: "hin", label: "Hinfahrt" },
+    { key: "rueck", label: "Rückfahrt" },
+    { key: "transfer", label: "Transfer" },
+  ];
+
+  const Th = ({ children, w }) => (
+    <th className="text-left font-medium px-3 py-2 whitespace-nowrap"
+      style={{ color: "var(--mc-text-muted)", width: w }}>{children}</th>
+  );
+
+  return (
+    <div className="mc-scope space-y-3">
+      <MissionPanel
+        icon={Eye}
+        title="Fahrtenliste"
+        subtitle={`${filtered.length} von ${allRides.length} Fahrten`}
+      >
+        {/* Suche + Zuruecksetzen (rein lokaler UI-State) */}
+        <div className="flex items-center gap-2 mb-3">
+          <div className="relative flex-1">
+            <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" style={{ color: "var(--mc-text-muted)" }} />
+            <input
+              className="mc-input w-full pl-9 pr-3 py-2.5 text-base sm:text-sm"
+              value={query}
+              onChange={(ev) => setQuery(ev.target.value)}
+              placeholder="Artist, Ort, Fahrer, Flug oder Uhrzeit suchen…"
+              aria-label="Fahrtenliste durchsuchen"
+            />
+          </div>
+          {anyFilter && (
+            <button onClick={reset} aria-label="Filter zurücksetzen"
+              className="text-xs px-3 py-2.5 rounded-lg shrink-0 inline-flex items-center gap-1"
+              style={{ background: "var(--mc-hover)", color: "var(--mc-text)", border: "1px solid var(--mc-border)" }}>
+              <RotateCcw className="w-3.5 h-3.5" />Zurücksetzen
+            </button>
+          )}
+        </div>
+
+        {/* Filter: Festival-Tag (Chips) + Typ (Chips) */}
+        <div className="flex flex-col gap-2">
+          <div className="flex items-center gap-1.5 flex-wrap">
+            {[{ key: "all", label: "Alle Tage" }, ...days].map((d) => {
+              const on = dayFilter === d.key;
+              return (
+                <button key={d.key} onClick={() => setDayFilter(d.key)}
+                  className="text-xs px-3 py-1.5 rounded-lg whitespace-nowrap transition"
+                  style={on
+                    ? { background: "var(--mc-st-assigned-soft)", color: "var(--mc-st-assigned)", fontWeight: 600 }
+                    : { background: "var(--mc-inset)", color: "var(--mc-text-secondary)", border: "1px solid var(--mc-border)" }}>
+                  {d.label}
+                </button>
+              );
+            })}
+          </div>
+          <div className="flex items-center gap-1.5 flex-wrap">
+            {typeChips.map((c) => {
+              const on = typeFilter === c.key;
+              return (
+                <button key={c.key} onClick={() => setTypeFilter(c.key)}
+                  className="text-xs px-3 py-1.5 rounded-lg whitespace-nowrap transition"
+                  style={on
+                    ? { background: "var(--mc-st-new-soft)", color: "var(--mc-st-new)", fontWeight: 600 }
+                    : { background: "var(--mc-inset)", color: "var(--mc-text-secondary)", border: "1px solid var(--mc-border)" }}>
+                  {c.label}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      </MissionPanel>
+
+      {groups.length === 0 ? (
+        <MissionPanel padded={false}>
+          <EmptyState icon={Search} title="Keine Fahrten gefunden"
+            hint="Suche oder Filter passen auf keine Fahrt. Mit „Zurücksetzen“ wieder die komplette Liste anzeigen." />
+        </MissionPanel>
+      ) : (
+        groups.map((g) => (
+          <MissionPanel key={g.key} padded={false}>
+            <div className="px-4 py-2.5 flex items-center justify-between" style={{ borderBottom: "1px solid var(--mc-border)" }}>
+              <span className="text-sm font-semibold" style={{ color: "var(--mc-text)" }}>{g.label}</span>
+              <span className="text-[11px]" style={{ color: "var(--mc-text-muted)" }}>{g.items.length} Fahrt{g.items.length > 1 ? "en" : ""}</span>
+            </div>
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm" style={{ borderCollapse: "collapse" }}>
+                <thead>
+                  <tr style={{ borderBottom: "1px solid var(--mc-border)" }}>
+                    <Th w="72px">Zeit</Th>
+                    <Th>Artist</Th>
+                    <Th>Von → Nach</Th>
+                    <Th w="56px">Pers.</Th>
+                    <Th w="64px">Fahrzeug</Th>
+                    <Th>Fahrer</Th>
+                    <Th>Status</Th>
+                    <Th w="88px">Flug</Th>
+                    <Th>Notiz</Th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {g.items.map((r) => {
+                    const dir = ridesListDirection(r.type);
+                    const stKey = RIDESLIST_STATUS_ST[r.status] || "idle";
+                    const fahrer = drvName(r.assignedDriverId);
+                    const veh = drvVehicle(r.assignedDriverId);
+                    return (
+                      <tr key={r.id} style={{ borderTop: "1px solid var(--mc-border)" }}>
+                        <td className="px-3 py-2 align-top font-mono tabular-nums whitespace-nowrap" style={{ color: "var(--mc-text)" }}>{r.time || "—"}</td>
+                        <td className="px-3 py-2 align-top" style={{ color: "var(--mc-text)" }}>
+                          <div className="font-medium break-words" title={r.djName}>{r.djName || "—"}</div>
+                          <span className="mc-badge text-[10px] mt-0.5 inline-block" style={{ background: `var(--mc-st-${dir.st}-soft)`, color: `var(--mc-st-${dir.st})` }}>{dir.label}</span>
+                        </td>
+                        <td className="px-3 py-2 align-top whitespace-nowrap" style={{ color: "var(--mc-text-secondary)" }}>{ln(r.fromId, r.fromCustom)} → {ln(r.toId, r.toCustom)}</td>
+                        <td className="px-3 py-2 align-top tabular-nums" style={{ color: "var(--mc-text-secondary)" }}>{r.passengerCount != null && r.passengerCount !== "" ? r.passengerCount : "—"}</td>
+                        <td className="px-3 py-2 align-top" style={{ color: "var(--mc-text-secondary)" }}>{veh || "—"}</td>
+                        <td className="px-3 py-2 align-top whitespace-nowrap" style={{ color: fahrer ? "var(--mc-text)" : "var(--mc-text-muted)" }}>{fahrer || "offen"}</td>
+                        <td className="px-3 py-2 align-top">
+                          <span className="mc-badge text-[10px]" style={{ background: `var(--mc-st-${stKey}-soft)`, color: `var(--mc-st-${stKey})` }}>{STATUS_LABEL[r.status] || r.status || "—"}</span>
+                        </td>
+                        <td className="px-3 py-2 align-top font-mono whitespace-nowrap" style={{ color: r.flightNo ? "var(--mc-text-secondary)" : "var(--mc-text-muted)" }}>{r.flightNo || "—"}</td>
+                        <td className="px-3 py-2 align-top" style={{ color: "var(--mc-text-secondary)", maxWidth: "260px" }}>{r.notes ? <span className="break-words" title={r.notes}>{r.notes}</span> : <span style={{ color: "var(--mc-text-muted)" }}>—</span>}</td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          </MissionPanel>
+        ))
+      )}
+    </div>
+  );
+}
+
 
 /* ============================================================================
    Teilpaket C2: sicheres Artist-Matching zwischen Fahrten und Timetable
@@ -11768,6 +11972,7 @@ function MissionControl({ setup, dyn, session, updateDyn, updateSetup, onLogout,
           {tab === "timeline" && <MissionTimelinePage setup={setup} dyn={dyn} day={day} updateDyn={updateDyn} by={meBy} onUndo={onUndo}
             onEdit={(r) => { setDay(r.dayKey); setEditRide(r); }} onAssign={(r) => setAssignRide(r)} />}
           {tab === "timetable" && <TimetableTab />}
+          {tab === "rideslist" && <RidesListTab setup={setup} dyn={dyn} day={day} />}
           {tab === "returns" && <MissionReturnsTab setup={setup} dyn={dyn} day={day} updateDyn={updateDyn} by={meBy} onErr={notifyErr}
             onAssign={(r) => setAssignRide(r)} onWhatsApp={(r) => setWaRide(r)} onEdit={(r) => { setDay(r.dayKey); setEditRide(r); }}
             onNewReturn={(artistName) => setEditRide({ _new: true, dayKey: day, date: day, djName: artistName, fromId: "festival", toId: "" })} />}
@@ -12012,6 +12217,7 @@ const MC_NAV = [
   // PLANUNG & KOMMUNIKATION
   { tab: "timeline",  label: "Timeline",        icon: Gauge,         group: "PLANUNG & KOMMUNIKATION" },
   { tab: "timetable", label: "Timetable",       icon: Clock,         group: "PLANUNG & KOMMUNIKATION" },
+  { tab: "rideslist", label: "Fahrtenliste",    icon: Eye,           group: "PLANUNG & KOMMUNIKATION" },
   { tab: "messages",  label: "Chat",            icon: MessageSquare, group: "PLANUNG & KOMMUNIKATION" },
   // SYSTEM
   { tab: "settings",  label: "Einstellungen",   icon: Settings,      group: "SYSTEM" },
