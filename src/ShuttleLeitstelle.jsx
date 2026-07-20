@@ -1236,7 +1236,11 @@ export default function App() {
       runCasWrite(DYN_KEY, emptyDyn, mutator, "dyn", (cur, applied) => {
         pushUndoEntry(cur.rides, applied.rides);
         setDyn(applied);
-      }, (last) => setDyn(last))
+        // Monotonie-Guard: last stammt aus dem CAS-Konflikt und kann auf
+        // langsamem Netz aelter sein als ein inzwischen vom Poll uebernommener
+        // Stand. Nur uebernehmen, wenn nicht aelter (gleicher Helfer wie im
+        // Poll, keine duplizierte Logik) -> kein Revisions-Rueckfall.
+      }, (last) => setDyn((prev) => shouldAcceptRevision(prev ? prev.rev : null, last ? last.rev : null) ? last : prev))
     );
   }, [enqueueWrite, runCasWrite, pushUndoEntry]);
 
@@ -1287,7 +1291,9 @@ export default function App() {
     return enqueueWrite(setupWriteQueueRef, () =>
       runCasWrite(SETUP_KEY, () => setup, mutator, "setup", (cur, applied) => {
         setSetup(applied);
-      }, (last) => setSetup(last))
+        // Monotonie-Guard wie bei dyn (siehe dort): kein Rueckfall auf eine
+        // aeltere setup-Revision, wenn der Poll parallel schon weiter ist.
+      }, (last) => setSetup((prev) => shouldAcceptRevision(prev ? prev.rev : null, last ? last.rev : null) ? last : prev))
     );
   }, [enqueueWrite, runCasWrite, setup]);
 
@@ -3788,21 +3794,58 @@ function GuestApp({ setup, dyn, token, updateDyn, onExitPreview }) {
   // wenn das Speichern scheitert (Modal/Auswahl bleiben dann erhalten).
   const [busy, setBusy] = useState(false);
   const [guestErr, setGuestErr] = useState("");
+  // Vorübergehender Verbindungs-/RPC-Fehler beim Laden der Session. Bewusst
+  // getrennt von {valid:false}: ein Netzwerkfehler darf NICHT als "Link
+  // ungueltig" erscheinen (nur ein erfolgreicher RPC mit valid:false ist das).
+  const [loadErr, setLoadErr] = useState(false);
+  // Sync-Doppelklickschutz: React-State (busy) ist vor einem sehr schnellen
+  // zweiten Klick nicht garantiert sichtbar, der Ref schon.
+  const inFlightRef = useRef(false);
+  // Kein setState nach Unmount + Generationszaehler: ein alter, noch fliegender
+  // Poll darf einen inzwischen frisch bestaetigten Stand nicht zurueckdrehen.
+  const mountedRef = useRef(true);
+  const pollGenRef = useRef(0);
 
-  const loadSupabase = useCallback(async () => {
+  // gen = Generation, unter der dieser Load gestartet wurde. Ergebnis wird nur
+  // uebernommen, wenn die Generation beim Rueckkehren noch aktuell ist (sonst
+  // hat eine erfolgreiche Mutation zwischenzeitlich einen frischeren Reload
+  // angestossen) und die Komponente noch gemountet ist.
+  const loadSupabase = useCallback(async (gen) => {
+    const g = gen != null ? gen : pollGenRef.current;
     try {
       const sb = window.__obfSupabase;
       const { data, error } = await sb.rpc("guest_session", { p_token: token });
-      if (error) console.error("guest_session RPC-Fehler:", error);
-      setSession(error || !data ? { valid: false } : data);
-    } catch (e) { console.error("guest_session unerwarteter Fehler:", e); setSession({ valid: false }); }
+      if (!mountedRef.current || g !== pollGenRef.current) return; // veraltet/unmounted -> verwerfen
+      if (error) {
+        // Netzwerk-/RPC-Fehler: vorhandene gueltige Session stehen lassen, sonst
+        // Verbindungs-Fehlerseite. Kein Token im Log.
+        console.error("guest_session RPC-Fehler:", error.message || "RPC error");
+        setLoadErr(true);
+        return;
+      }
+      setLoadErr(false);
+      setSession(data && typeof data === "object" ? data : { valid: false });
+    } catch (e) {
+      if (!mountedRef.current || g !== pollGenRef.current) return;
+      console.error("guest_session unerwarteter Fehler:", e?.message || "load error");
+      setLoadErr(true);
+    }
   }, [token]);
 
   useEffect(() => {
     if (!hasSupabase()) return; // Artifact-Pfad leitet sich unten direkt aus setup/dyn ab
-    loadSupabase();
-    const t = setInterval(loadSupabase, POLL_MS);
-    return () => clearInterval(t);
+    mountedRef.current = true;
+    let timer = null;
+    let stopped = false;
+    // Rekursives setTimeout statt setInterval: naechster Poll erst NACH Abschluss
+    // -> zwei Gast-Polls koennen sich nie ueberlappen, auch bei schlechtem Netz.
+    const run = async () => {
+      if (stopped) return;
+      await loadSupabase(pollGenRef.current);
+      if (!stopped && mountedRef.current) timer = setTimeout(run, POLL_MS);
+    };
+    run();
+    return () => { stopped = true; mountedRef.current = false; if (timer) clearTimeout(timer); };
   }, [loadSupabase]);
 
   // Artifact-Fallback: wie bisher aus dem geteilten setup/dyn ableiten.
@@ -3813,6 +3856,19 @@ function GuestApp({ setup, dyn, token, updateDyn, onExitPreview }) {
     : session;
 
   if (fallback && (!setup || !dyn)) return <><BrandStyles /><Splash /></>;
+  // Noch keine Session UND letzter Ladeversuch fehlgeschlagen -> Verbindungs-
+  // fehler (retrybar durch den weiterlaufenden Poll), NICHT "Link ungueltig".
+  if (!fallback && effective === null && loadErr) {
+    return (
+      <div className="min-h-screen bg-stone-950 text-stone-200 flex items-center justify-center p-6 text-center">
+        <div>
+          <AlertTriangle className="w-8 h-8 mx-auto mb-3 text-stone-500" />
+          <p className="text-lg font-medium mb-1">Connection problem</p>
+          <p className="text-sm text-stone-500">The connection couldn't be established right now. Please try again.</p>
+        </div>
+      </div>
+    );
+  }
   if (!fallback && effective === null) return <><BrandStyles /><Splash /></>;
 
   if (!effective || !effective.valid) {
@@ -3832,7 +3888,8 @@ function GuestApp({ setup, dyn, token, updateDyn, onExitPreview }) {
   const coordPhone = setup.config.coordinationPhone || "";
 
   const reportIssue = async (ride, type, note) => {
-    if (busy) return;
+    if (busy || inFlightRef.current) return; // Ref: auch sehr schnellen Doppelklick abfangen
+    inFlightRef.current = true;
     setBusy(true); setGuestErr("");
     // Stabile ID/Zeit VOR dem Mutator: updateDyn kann den Mutator bei einem
     // Schreibkonflikt mehrfach ausfuehren (CAS-Retry). Entstuende die ID/Zeit
@@ -3854,12 +3911,16 @@ function GuestApp({ setup, dyn, token, updateDyn, onExitPreview }) {
     } else {
       try {
         const sb = window.__obfSupabase;
-        const { data: ok } = await sb.rpc("guest_report_issue", { p_token: token, p_ride: ride.id, p_type: type, p_note: note || "" });
-        okSave = !!ok;
-      } catch (e) { console.error("guest_report_issue", e); okSave = false; }
-      if (okSave) { saved = ride; await loadSupabase(); }
+        const { data: ok, error } = await sb.rpc("guest_report_issue", { p_token: token, p_ride: ride.id, p_type: type, p_note: note || "" });
+        // error kontrolliert behandeln; nur ok===true ist Erfolg (null/undefined nicht).
+        if (error) { console.error("guest_report_issue RPC-Fehler:", error.message || "RPC error"); okSave = false; }
+        else okSave = ok === true;
+      } catch (e) { console.error("guest_report_issue", e?.message || "error"); okSave = false; }
+      // Generation hochzaehlen entwertet aeltere, noch fliegende Polls; frischer
+      // Reload mit neuer Generation setzt den bestaetigten Stand durch.
+      if (okSave) { pollGenRef.current++; saved = ride; await loadSupabase(pollGenRef.current); }
     }
-    setBusy(false);
+    setBusy(false); inFlightRef.current = false;
     // Push und Modal-Schliessen erst NACH bestaetigtem Speichern (nie im Mutator,
     // nie vor dem Save). Bei Fehler bleibt das Melde-Fenster offen und es gibt
     // eine sichtbare Meldung. Empfaenger aus dem bestaetigten Stand (saved).
@@ -3870,7 +3931,8 @@ function GuestApp({ setup, dyn, token, updateDyn, onExitPreview }) {
     triggerDispatcherPush("Problem gemeldet", `${djName} · ${type}`, `ride-${ride.id}`);
   };
   const confirmPickup = async (ride) => {
-    if (busy) return;
+    if (busy || inFlightRef.current) return; // Ref: auch sehr schnellen Doppelklick abfangen
+    inFlightRef.current = true;
     setBusy(true); setGuestErr("");
     const at = Date.now();
     let okSave = false, saved = null;
@@ -3891,18 +3953,20 @@ function GuestApp({ setup, dyn, token, updateDyn, onExitPreview }) {
     } else {
       try {
         const sb = window.__obfSupabase;
-        const { data: ok } = await sb.rpc("guest_confirm_pickup", { p_token: token, p_ride: ride.id });
-        okSave = !!ok;
-      } catch (e) { console.error("guest_confirm_pickup", e); okSave = false; }
-      if (okSave) { saved = ride; await loadSupabase(); }
+        const { data: ok, error } = await sb.rpc("guest_confirm_pickup", { p_token: token, p_ride: ride.id });
+        if (error) { console.error("guest_confirm_pickup RPC-Fehler:", error.message || "RPC error"); okSave = false; }
+        else okSave = ok === true;
+      } catch (e) { console.error("guest_confirm_pickup", e?.message || "error"); okSave = false; }
+      if (okSave) { pollGenRef.current++; saved = ride; await loadSupabase(pollGenRef.current); }
     }
-    setBusy(false);
+    setBusy(false); inFlightRef.current = false;
     if (!okSave) { setGuestErr("Could not confirm. Please try again."); return; }
     const driverId = saved?.assignedDriverId;
     if (driverId) triggerPush(driverId, "Gast hat bestätigt", `${djName} · ${saved?.time || ride.time}`, `ride-${ride.id}`);
   };
   const atPickup = async (ride) => {
-    if (busy) return;
+    if (busy || inFlightRef.current) return; // Ref: auch sehr schnellen Doppelklick abfangen
+    inFlightRef.current = true;
     setBusy(true); setGuestErr("");
     const at = Date.now();
     let okSave = false, saved = null;
@@ -3919,12 +3983,13 @@ function GuestApp({ setup, dyn, token, updateDyn, onExitPreview }) {
     } else {
       try {
         const sb = window.__obfSupabase;
-        const { data: ok } = await sb.rpc("guest_at_pickup", { p_token: token, p_ride: ride.id });
-        okSave = !!ok;
-      } catch (e) { console.error("guest_at_pickup", e); okSave = false; }
-      if (okSave) { saved = ride; await loadSupabase(); }
+        const { data: ok, error } = await sb.rpc("guest_at_pickup", { p_token: token, p_ride: ride.id });
+        if (error) { console.error("guest_at_pickup RPC-Fehler:", error.message || "RPC error"); okSave = false; }
+        else okSave = ok === true;
+      } catch (e) { console.error("guest_at_pickup", e?.message || "error"); okSave = false; }
+      if (okSave) { pollGenRef.current++; saved = ride; await loadSupabase(pollGenRef.current); }
     }
-    setBusy(false);
+    setBusy(false); inFlightRef.current = false;
     if (!okSave) { setGuestErr("Could not update. Please try again."); return; }
     const driverId = saved?.assignedDriverId;
     if (driverId) triggerPush(driverId, "Gast wartet am Treffpunkt", `${djName} · ${saved?.time || ride.time}`, `ride-${ride.id}`);
