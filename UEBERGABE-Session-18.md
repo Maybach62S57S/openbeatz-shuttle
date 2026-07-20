@@ -4828,3 +4828,103 @@ erzeugt `tmp-tg-funcs.mjs`, 63 Blöcke, keine fehlenden Deps), `smoke-teilpaket-
 **Stand nach dieser Session:** G1-Logikkern fertig, verifiziert, committet/gepusht.
 Unsichtbar (nirgends eingebunden) -> null Laufzeitrisiko fürs Festival. G2 (Anzeige)
 offen für die nächste Session. F weiterhin fertig, F3 vertagt. Freeze 21.07.
+
+---
+
+# Session G2-UI (Anzeige der Rueckstellungs-Vorschlaege) - ERLEDIGT
+
+**Datum:** 20.07.2026. Basis: `e23113f` (HEAD==origin/main, G2-Vorbereitung), darunter
+`10d7403` (G1-Logikkern). Baseline `src/ShuttleLeitstelle.jsx` = 12442 Zeilen,
+Kopie unter `/tmp/baseline-G2.jsx`. Volle Bestands-Regression vor Beginn grün.
+
+## Zuschnitt (von Jordan freigegeben)
+
+Rein praesentationale Zweitanzeige NUR in `MissionReturnsTab`, Liste **"Am Festival /
+frei"** (die untaetig am Festival stehenden Fahrer - genau die Population, die
+Rueckstellungs-Vorschlaege betrifft). Die in der Vorbereitung genannte
+Primaeranzeige (Fahrerliste/Timeline) wurde fuer G2 bewusst **nicht** gebaut
+(Jordan-Entscheid: sekundaer-only). Sie bleibt als optionale spaetere Scheibe offen.
+
+Loudness **Variante B** (weiche 12%-Fuellung) durch **Wiederverwendung** der bereits
+validierten `mc-badge--*`-Klassen -> KEINE neue Farbflaeche, `kontrast.mjs` bleibt
+per Konstruktion bei 0. Badge nur fuer die **actionable** Status; `stay`/`not_evaluable`
+zeigen bewusst nichts (ruhige Liste). Van=Amber, Car=Blau, kein Alarmrot.
+
+## Zwei Eingriffe (rein additiv, +15 Zeilen -> 12457)
+
+1. **Logik-Memo** nach `groupSuggestionCount` (Z. 8406): `const repo = useMemo(() =>
+   buildRepositionSuggestions({ drivers: setup.drivers, dyn, setup, now, dayKey: day,
+   returnRideViewModels: viewModels, waitRideSuggestions: [...waitByReturn.values()]
+   .map(v=>v.best).filter(Boolean), groupRideSuggestions: groupModel.primaries }), [...])`.
+   Einziger Einstieg `buildRepositionSuggestions`. Nutzt den vorhandenen 60s-`now`-Tick,
+   KEIN zweiter Timer, KEIN Schreibweg.
+2. **Badge** in der `atFestival.map`-Zeile (Z. 8716), vor dem `ml-auto`-Count-Span:
+   IIFE liest `repo.byDriver[d.id]`, rendert nur bei `REPOSITION_ACTIONABLE.has(status)`
+   ein `<span className="mc-badge ...">`. Mapping: `direct_to_next_pickup` -> `mc-badge--new`
+   (Blau, Kontrast 3.61), sonst (`reposition_to_festival`/`reposition_to_demand_zone`)
+   -> `mc-badge--assigned` (Amber, 4.78).
+
+## Verifikation (volle Kette, alles gruen)
+
+esbuild EXIT 0; keine Duplikate; G1 `smoke-teilpaket-g.mjs` **130/0** und
+`gegenprobe-teilpaket-g.mjs` **10/0** (Logik nachweislich unangetastet); `rendertest`
+5 Referenzwerte konstant (App-Root 25053, IssueModal 2452, StageIssueModal 2413,
+GuestIssueModal 2895, Field ohne mc 101 - `MissionReturnsTab` ist keiner der fuenf);
+`pruefe` (Baseline vs. jetzt): **GEAENDERT (1) MissionReturnsTab, NEU 0, ENTFERNT 0,
+411/412 byte-identisch**; `kontrast` **0 Fehler**; neue `smoke-teilpaket-g2-ui.mjs`
+**51/0**.
+
+## Neue Datei
+
+`smoke-teilpaket-g2-ui.mjs` (51 Tests): (1) Fokus-Render des VERBATIM aus der Quelle
+angehaengten Badge-Ausdrucks mit kontrolliertem `repo.byDriver` (Klassenzuordnung,
+non-actionable/fehlend -> nichts, kein Alarmrot, rein statisch); (2) Integration am
+**heutigen** Tag: echter `MissionReturnsTab`, Fahrer A idle-am-Festival via beendeter
+Fahrt airport->festival + spaeterer akzeptierter Fahrt -> real `direct_to_next_pickup`,
+Badge `mc-badge--new` erscheint echt im Tab; Fahrer B (Kontrolle) -> `not_evaluable`,
+kein Badge; Bijektion "Badge sichtbar <=> actionable"; Read-only (updateDyn nie im
+Render); D/E/F-Eingaben VERBATIM wie die Komponente rekonstruiert; (3) statische
+Analyse (einziger Einstieg, kein Schreibweg/Timer/Schaltflaeche im Badge, nur
+MC-Klassen, Anker byte-genau); (4) Rollen-Gating (returns nur dispo); (5) Gegenproben.
+
+## Wichtige Erkenntnis (fuer spaetere G-Arbeiten)
+
+`deriveDriverPlannedPosition` liest **NICHT** `driverState.locationId`. Sie leitet die
+Position aus (a) aktiver Fahrt, (b) wall-clock-vergangener beendeter Fahrt oder sonst
+(c) `no_plan_position` ab. Folge: ein idle-am-Festival-Fahrer bekommt einen
+actionable G-Status (`direct_to_next_pickup`) nur, wenn eine bereits **beendete** Fahrt
+ihn am Festival positioniert. Deterministisch reproduzierbar daher nur am **heutigen**
+Tag (echte `dayNowMin`-Minuten); Zukunftstag (`-99999`) liefert stets `not_evaluable`.
+Die G2-UI-Smoke nutzt darum heute + vergangene Done-Fahrt und ueberspringt den
+actionable-Teil nur in pathologischer Nachtzeit (safeClock-Fenster), waehrend Teil 1
+das Badge-Verhalten in jedem Fall deterministisch abdeckt.
+
+## Weitere gefundene Punkte fuer spaetere Sessions (nicht angefasst)
+
+- **matchLoc** (`ShuttleLeitstelle.jsx` Z. ~7676): weiterhin hart auf 4 Orte verdrahtet,
+  liest nicht aus `setup.locations`. Betrifft 2026 ~108 Fahrten. Bleibt als
+  Pflicht-Codefix vor dem Festival offen (eigenes Paket).
+- **G2-Primaeranzeige** (Fahrerliste/Timeline) bewusst descoped, optionale spaetere Scheibe.
+
+## Ready-to-paste Opener fuer die NAECHSTE Session
+
+> Neue Session. Arbeitsverzeichnis MUSS `/home/claude/repo` sein. Erst **Schritt 0**
+> komplett: Repo klonen (frischer PAT von mir), nach `/home/claude/repo`, `npm ci`,
+> git config; dann `git log --graph --oneline --all` + `git fetch`, exakte Zeilenzahl
+> `src/ShuttleLeitstelle.jsx` pruefen (nach G2-UI = 12457) und volle Bestands-Regression
+> fahren: esbuild, Duplikat-Grep, `extract-funcs-teilpaket-g.py` + `smoke-teilpaket-g.mjs`
+> (130/0) + `gegenprobe-teilpaket-g.mjs` (10/0), `rendertest.mjs` (5 Referenzwerte
+> konstant), `pruefe.mjs` gegen eine frische Baseline, `kontrast.mjs` (0),
+> `smoke-teilpaket-g2-ui.mjs` (51/0).
+> Regeln unveraendert: rein additiv, kleinstmoeglich, keine Breaking Changes, nach
+> jeder Aenderung volle Kette + Diff-Beweis + Testfaelle, Bau erst nach Freigabe.
+> **Ab 21.07. keine Loeschungen mehr.** Freeze 21.07.
+>
+> Naechste sinnvolle Themen (deine Wahl): (a) **matchLoc-Fix** (Z. ~7676, hart auf 4
+> Orte, Pflicht vor Festival) - eigenes Paket, Kartierung zuerst; (b) optionale
+> **G2-Primaeranzeige** (Badge auch in Fahrerliste/Timeline). Vor jedem JSX-Eingriff
+> Verdrahtungsplan + genaue Stelle + Regressionsrisiko zeigen und Freigabe abwarten.
+
+**Stand nach dieser Session:** G1-Logikkern + G2-Anzeige (MissionReturnsTab Frei-Liste)
+fertig, verifiziert, committet/gepusht. Rein praesentational, keine Logik-/DB-/Rollen-
+Aenderung. Freeze 21.07.

@@ -8399,6 +8399,17 @@ function MissionReturnsTab({ setup, dyn, day, updateDyn, by, onErr, onAssign, on
   };
   const groupSuggestionCount = returns.filter((r) => groupPrimaryFor(r.id)).length;
 
+  // ---- Teilpaket G2: Rueckstellungs-Vorschlaege (rein lesend, nur Anzeige) --
+  // buildRepositionSuggestions ist der einzige Einstieg (Logik unangetastet). Die
+  // drei Eingaben liegen oben bereits als reine Modelle vor (D/E/F). Kein
+  // Schreibweg, kein zweiter Timer (nutzt den vorhandenen now-Tick).
+  const repo = useMemo(() => buildRepositionSuggestions({
+    drivers: setup.drivers, dyn, setup, now, dayKey: day,
+    returnRideViewModels: viewModels,
+    waitRideSuggestions: [...waitByReturn.values()].map((v) => v.best).filter(Boolean),
+    groupRideSuggestions: groupModel.primaries,
+  }), [setup, dyn, day, now, viewModels, waitByReturn, groupModel]);
+
   // ---- Ansicht-Filter (rein praesentational) ----
   const matchesQ = (r) => {
     if (!q.trim()) return true;
@@ -8702,6 +8713,10 @@ function MissionReturnsTab({ setup, dyn, day, updateDyn, by, onErr, onAssign, on
                   <span className="w-2 h-2 rounded-full shrink-0" style={{ background: "var(--mc-st-done)" }} />
                   <span className="font-mono text-xs" style={{ color: "var(--mc-text-secondary)" }}>{d.vehicleType === "Van" ? "Van" : "Car"}</span>
                   <span className="truncate" style={{ color: "var(--mc-text-secondary)" }}>{d.firstName} {d.lastName[0]}.</span>
+                  {(() => { const g = repo.byDriver[d.id];
+                    return g && REPOSITION_ACTIONABLE.has(g.status)
+                      ? <span className={`mc-badge text-[10px] shrink-0 ${g.status === "direct_to_next_pickup" ? "mc-badge--new" : "mc-badge--assigned"}`} title={g.label}>{g.label}</span>
+                      : null; })()}
                   <span className="ml-auto text-xs" style={{ color: "var(--mc-text-muted)" }}>{s.count}×</span>
                   {d.phone && <a href={`tel:${d.phone}`} title="Anrufen" className="shrink-0 hover:opacity-80" style={{ color: "var(--mc-text-muted)" }}><Navigation className="w-3.5 h-3.5 rotate-90" /></a>}
                 </div>
