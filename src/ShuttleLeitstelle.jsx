@@ -2937,11 +2937,15 @@ function DriverApp({ setup, dyn, session, updateDyn, onLogout }) {
   // triggerDispatcherPush geht jetzt nur noch bei Erfolg raus, vorher immer.
   const reportIssue = async (ride, type, note) => {
     setIssueFor(null);
+    // Stabile ID/Zeit VOR dem Mutator: updateDyn kann den Mutator bei einem
+    // Schreibkonflikt mehrfach fahren (CAS-Retry), sonst waere die ID/Zeit je Versuch anders.
+    const issueId = "i" + Date.now();
+    const at = Date.now();
     const ergebnis = await updateDyn((d) => {
       const r = d.rides.find((x) => x.id === ride.id);
       if (r) {
         r.issues = r.issues || [];
-        r.issues.push({ id: "i" + Date.now(), type, note: note || "", at: Date.now(), by: `driver:${driver.id}`, state: "open" });
+        r.issues.push({ id: issueId, type, note: note || "", at, by: `driver:${driver.id}`, state: "open" });
         logRide(r, "problem", `driver:${driver.id}`, `${type}${note ? ": " + note : ""}`);
       }
       return d;
@@ -3288,6 +3292,11 @@ function StageApp({ setup, dyn, updateDyn, onLogout }) {
     try { localStorage.setItem(STAGE_FILTER_KEY, val); } catch {}
   };
   const [issueFor, setIssueFor] = useState(null);
+  // Stabilitaets-Fix: Problemmeldung wartet jetzt auf das bestaetigte Speichern,
+  // bevor der Push an die Leitstelle laeuft und das Fenster schliesst. busy sperrt
+  // Doppelklick, stageErr haelt das Fenster bei Fehler offen und zeigt eine Meldung.
+  const [busy, setBusy] = useState(false);
+  const [stageErr, setStageErr] = useState("");
 
   const now = dayNowMin(day);
   const live = now >= 0 && now < 90000;
@@ -3329,19 +3338,28 @@ function StageApp({ setup, dyn, updateDyn, onLogout }) {
     .sort((a, b) => sortMin(a.r.time) - sortMin(b.r.time))
     .slice(0, 5), [enriched]);
 
-  const reportIssue = (ride, type, note) => {
+  const reportIssue = async (ride, type, note) => {
+    if (busy) return;
     const label = stageFilter !== "all" && stageFilter !== NO_STAGE ? stageFilter : (ride.zone || "Stage");
-    updateDyn((d) => {
+    // Stabile ID/Zeit VOR dem Mutator (CAS-Retry kann den Mutator mehrfach fahren).
+    const issueId = "i" + Date.now();
+    const at = Date.now();
+    setBusy(true); setStageErr("");
+    const res = await updateDyn((d) => {
       const r = d.rides.find((x) => x.id === ride.id);
       if (r) {
         r.issues = r.issues || [];
-        r.issues.push({ id: "i" + Date.now(), type, note: note || "", at: Date.now(), by: `stage:${label}`, state: "open" });
+        r.issues.push({ id: issueId, type, note: note || "", at, by: `stage:${label}`, state: "open" });
         logRide(r, "problem", `stage:${label}`, `${type}${note ? ": " + note : ""}`);
       }
       return d;
     });
-    triggerDispatcherPush("Problem gemeldet", `${label} · ${type}`, `ride-${ride.id}`);
+    setBusy(false);
+    // Push an die Leitstelle und Fenster-Schliessen erst NACH bestaetigtem Save.
+    // Bei Fehler bleibt das Melde-Fenster offen und zeigt eine Meldung.
+    if (!res || !res.ok) { setStageErr("Meldung konnte nicht gesendet werden. Bitte erneut versuchen."); return; }
     setIssueFor(null);
+    triggerDispatcherPush("Problem gemeldet", `${label} · ${type}`, `ride-${ride.id}`);
   };
 
   // Für die Nachrichten-Funktion: Absender-Label (gewählte Stage, sonst
@@ -3441,6 +3459,15 @@ function StageApp({ setup, dyn, updateDyn, onLogout }) {
       </main>
 
       {issueFor && <StageIssueModal ride={issueFor} onClose={() => setIssueFor(null)} onReport={reportIssue} setup={setup} />}
+
+      {stageErr && (
+        <div className="fixed left-1/2 -translate-x-1/2 bottom-4 z-50 max-w-sm w-[calc(100%-2rem)] bg-red-500/95 text-white text-sm px-4 py-3 rounded-xl shadow-lg flex items-start gap-2"
+          style={{ marginBottom: "env(safe-area-inset-bottom)" }} onClick={() => setStageErr("")}>
+          <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" />
+          <span className="flex-1">{stageErr}</span>
+          <button aria-label="schließen" className="underline shrink-0">OK</button>
+        </div>
+      )}
     </div>
   );
 }
@@ -3617,6 +3644,12 @@ function GuestApp({ setup, dyn, token, updateDyn, onExitPreview }) {
   const [session, setSession] = useState(null); // null=lädt, {valid:false}, {valid:true, djName, rides}
   const [issueFor, setIssueFor] = useState(null);
   const [copiedId, setCopiedId] = useState(null);
+  // Stabilitaets-Fix: Gast-Aktionen (confirm/at-pickup/problem) warten jetzt auf
+  // das bestaetigte Speichern, bevor Push/Modal-Schliessen laufen. busy sperrt
+  // Doppelklick (nur eine Aktion gleichzeitig), guestErr zeigt einen Fehler an,
+  // wenn das Speichern scheitert (Modal/Auswahl bleiben dann erhalten).
+  const [busy, setBusy] = useState(false);
+  const [guestErr, setGuestErr] = useState("");
 
   const loadSupabase = useCallback(async () => {
     try {
@@ -3661,60 +3694,95 @@ function GuestApp({ setup, dyn, token, updateDyn, onExitPreview }) {
   const coordPhone = setup.config.coordinationPhone || "";
 
   const reportIssue = async (ride, type, note) => {
+    if (busy) return;
+    setBusy(true); setGuestErr("");
+    // Stabile ID/Zeit VOR dem Mutator: updateDyn kann den Mutator bei einem
+    // Schreibkonflikt mehrfach ausfuehren (CAS-Retry). Entstuende die ID/Zeit
+    // erst im Mutator, waere sie pro Versuch anders.
+    const issueId = "i" + Date.now();
+    const at = Date.now();
+    let okSave = false, saved = null;
     if (fallback) {
-      updateDyn((d) => {
+      const res = await updateDyn((d) => {
         const r = d.rides.find((x) => x.id === ride.id);
         if (r) {
           r.issues = r.issues || [];
-          r.issues.push({ id: "i" + Date.now(), type, note: note || "", at: Date.now(), by: `guest:${djName}`, state: "open" });
+          r.issues.push({ id: issueId, type, note: note || "", at, by: `guest:${djName}`, state: "open" });
           logRide(r, "problem", `guest:${djName}`, `${type}${note ? ": " + note : ""}`);
-          if (r.assignedDriverId) triggerPush(r.assignedDriverId, "Problem gemeldet", `${djName} · ${type}`, `ride-${r.id}`);
         }
         return d;
       });
-      triggerDispatcherPush("Problem gemeldet", `${djName} · ${type}`, `ride-${ride.id}`);
+      okSave = !!(res && res.ok);
+      saved = okSave ? (res.value.rides || []).find((x) => x.id === ride.id) : null;
     } else {
-      const sb = window.__obfSupabase;
-      const { data: ok } = await sb.rpc("guest_report_issue", { p_token: token, p_ride: ride.id, p_type: type, p_note: note || "" });
-      if (ok && ride.assignedDriverId) triggerPush(ride.assignedDriverId, "Problem gemeldet", `${djName} · ${type}`, `ride-${ride.id}`);
-      if (ok) triggerDispatcherPush("Problem gemeldet", `${djName} · ${type}`, `ride-${ride.id}`);
-      await loadSupabase();
+      try {
+        const sb = window.__obfSupabase;
+        const { data: ok } = await sb.rpc("guest_report_issue", { p_token: token, p_ride: ride.id, p_type: type, p_note: note || "" });
+        okSave = !!ok;
+      } catch (e) { console.error("guest_report_issue", e); okSave = false; }
+      if (okSave) { saved = ride; await loadSupabase(); }
     }
+    setBusy(false);
+    // Push und Modal-Schliessen erst NACH bestaetigtem Speichern (nie im Mutator,
+    // nie vor dem Save). Bei Fehler bleibt das Melde-Fenster offen und es gibt
+    // eine sichtbare Meldung. Empfaenger aus dem bestaetigten Stand (saved).
+    if (!okSave) { setGuestErr("Could not send your report. Please try again."); return; }
     setIssueFor(null);
+    const driverId = saved?.assignedDriverId;
+    if (driverId) triggerPush(driverId, "Problem gemeldet", `${djName} · ${type}`, `ride-${ride.id}`);
+    triggerDispatcherPush("Problem gemeldet", `${djName} · ${type}`, `ride-${ride.id}`);
   };
   const confirmPickup = async (ride) => {
+    if (busy) return;
+    setBusy(true); setGuestErr("");
+    const at = Date.now();
+    let okSave = false, saved = null;
     if (fallback) {
-      updateDyn((d) => {
+      const res = await updateDyn((d) => {
         const r = d.rides.find((x) => x.id === ride.id);
-        if (r) {
-          r.guestConfirmedAt = Date.now(); logRide(r, "guest_confirm", `guest:${djName}`, "Confirmed pickup info");
-          if (r.assignedDriverId) triggerPush(r.assignedDriverId, "Gast hat bestätigt", `${djName} · ${r.time}`, `ride-${r.id}`);
-        }
+        if (r) { r.guestConfirmedAt = at; logRide(r, "guest_confirm", `guest:${djName}`, "Confirmed pickup info"); }
         return d;
       });
+      okSave = !!(res && res.ok);
+      saved = okSave ? (res.value.rides || []).find((x) => x.id === ride.id) : null;
     } else {
-      const sb = window.__obfSupabase;
-      const { data: ok } = await sb.rpc("guest_confirm_pickup", { p_token: token, p_ride: ride.id });
-      if (ok && ride.assignedDriverId) triggerPush(ride.assignedDriverId, "Gast hat bestätigt", `${djName} · ${ride.time}`, `ride-${ride.id}`);
-      await loadSupabase();
+      try {
+        const sb = window.__obfSupabase;
+        const { data: ok } = await sb.rpc("guest_confirm_pickup", { p_token: token, p_ride: ride.id });
+        okSave = !!ok;
+      } catch (e) { console.error("guest_confirm_pickup", e); okSave = false; }
+      if (okSave) { saved = ride; await loadSupabase(); }
     }
+    setBusy(false);
+    if (!okSave) { setGuestErr("Could not confirm. Please try again."); return; }
+    const driverId = saved?.assignedDriverId;
+    if (driverId) triggerPush(driverId, "Gast hat bestätigt", `${djName} · ${saved?.time || ride.time}`, `ride-${ride.id}`);
   };
   const atPickup = async (ride) => {
+    if (busy) return;
+    setBusy(true); setGuestErr("");
+    const at = Date.now();
+    let okSave = false, saved = null;
     if (fallback) {
-      updateDyn((d) => {
+      const res = await updateDyn((d) => {
         const r = d.rides.find((x) => x.id === ride.id);
-        if (r) {
-          r.guestAtPickupAt = Date.now(); logRide(r, "guest_at_pickup", `guest:${djName}`, "At the pickup point");
-          if (r.assignedDriverId) triggerPush(r.assignedDriverId, "Gast wartet am Treffpunkt", `${djName} · ${r.time}`, `ride-${r.id}`);
-        }
+        if (r) { r.guestAtPickupAt = at; logRide(r, "guest_at_pickup", `guest:${djName}`, "At the pickup point"); }
         return d;
       });
+      okSave = !!(res && res.ok);
+      saved = okSave ? (res.value.rides || []).find((x) => x.id === ride.id) : null;
     } else {
-      const sb = window.__obfSupabase;
-      const { data: ok } = await sb.rpc("guest_at_pickup", { p_token: token, p_ride: ride.id });
-      if (ok && ride.assignedDriverId) triggerPush(ride.assignedDriverId, "Gast wartet am Treffpunkt", `${djName} · ${ride.time}`, `ride-${ride.id}`);
-      await loadSupabase();
+      try {
+        const sb = window.__obfSupabase;
+        const { data: ok } = await sb.rpc("guest_at_pickup", { p_token: token, p_ride: ride.id });
+        okSave = !!ok;
+      } catch (e) { console.error("guest_at_pickup", e); okSave = false; }
+      if (okSave) { saved = ride; await loadSupabase(); }
     }
+    setBusy(false);
+    if (!okSave) { setGuestErr("Could not update. Please try again."); return; }
+    const driverId = saved?.assignedDriverId;
+    if (driverId) triggerPush(driverId, "Gast wartet am Treffpunkt", `${djName} · ${saved?.time || ride.time}`, `ride-${ride.id}`);
   };
   const doCopy = async (ride) => {
     const ok = await copyText(guestInfoText(setup, ride));
@@ -3758,6 +3826,15 @@ function GuestApp({ setup, dyn, token, updateDyn, onExitPreview }) {
 
       {issueFor && (
         <GuestIssueModal ride={issueFor} onClose={() => setIssueFor(null)} onReport={reportIssue} setup={setup} coordPhone={coordPhone} />
+      )}
+
+      {guestErr && (
+        <div className="fixed left-1/2 -translate-x-1/2 bottom-4 z-50 max-w-sm w-[calc(100%-2rem)] bg-red-500/95 text-white text-sm px-4 py-3 rounded-xl shadow-lg flex items-start gap-2"
+          style={{ marginBottom: "env(safe-area-inset-bottom)" }} onClick={() => setGuestErr("")}>
+          <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" />
+          <span className="flex-1">{guestErr}</span>
+          <button aria-label="dismiss" className="underline shrink-0">dismiss</button>
+        </div>
       )}
     </div>
   );
@@ -6625,6 +6702,7 @@ function AccessPinsSection({ setup, updateSetup }) {
 function GuestLinksSection({ setup, dyn, updateSetup, onPreviewGuest }) {
   const [coordPhone, setCoordPhone] = useState(setup.config.coordinationPhone || "");
   const [savedPhone, setSavedPhone] = useState(false);
+  const [phoneErr, setPhoneErr] = useState("");
   const [newArtist, setNewArtist] = useState("");
   const [copiedTok, setCopiedTok] = useState(null);
   const [saveError, setSaveError] = useState("");
@@ -6645,8 +6723,10 @@ function GuestLinksSection({ setup, dyn, updateSetup, onPreviewGuest }) {
   }, []);
 
   const savePhone = async () => {
-    await updateSetup((s) => { s.config.coordinationPhone = coordPhone.trim(); return s; });
-    setSavedPhone(true); setTimeout(() => setSavedPhone(false), 1800);
+    setPhoneErr("");
+    const res = await updateSetup((s) => { s.config.coordinationPhone = coordPhone.trim(); return s; });
+    if (res && res.ok) { setSavedPhone(true); setTimeout(() => setSavedPhone(false), 1800); }
+    else setPhoneErr(res?.error || "Speichern fehlgeschlagen, bitte erneut versuchen.");
   };
   const artistOptions = useMemo(() => {
     const set = new Set();
@@ -6668,7 +6748,13 @@ function GuestLinksSection({ setup, dyn, updateSetup, onPreviewGuest }) {
     const prev = list;
     try {
       if (hasSupabase()) await saveGuestTokens(next);
-      else await updateSetup((s) => { s.guestTokens = next; return s; });
+      else {
+        // updateSetup wirft NICHT bei einem Schreibkonflikt, sondern liefert
+        // { ok:false }. Ohne diese Pruefung liefe setTokens(next) trotzdem und
+        // die UI zeigte einen Link, der nie gespeichert wurde.
+        const res = await updateSetup((s) => { s.guestTokens = next; return s; });
+        if (!res || !res.ok) throw new Error(res?.error || "Speichern fehlgeschlagen");
+      }
       setTokens(next);
     } catch (e) {
       console.error("Gast-Link speichern fehlgeschlagen:", e);
@@ -6715,6 +6801,7 @@ function GuestLinksSection({ setup, dyn, updateSetup, onPreviewGuest }) {
           <div className="text-xs mt-1.5" style={{ color: "var(--mc-st-assigned)" }}>Diese Nummer sieht ungewöhnlich aus. Für den WhatsApp-Link an Gäste sollten es nur + und Ziffern sein. Speichern geht trotzdem.</div>
         )}
         {savedPhone && <span className="text-xs flex items-center gap-1 mt-1.5" style={{ color: "var(--mc-st-done)" }}><Check className="w-3.5 h-3.5" />gespeichert</span>}
+        {phoneErr && <span className="text-xs mt-1.5 block" style={{ color: "var(--mc-st-problem)" }}>{phoneErr}</span>}
       </div>
 
       <div className="mb-3">
@@ -6754,9 +6841,12 @@ function GuestLinksSection({ setup, dyn, updateSetup, onPreviewGuest }) {
 function PushSettingsSection({ setup, updateSetup }) {
   const [key, setKey] = useState(setup.config.vapidPublicKey || "");
   const [saved, setSaved] = useState(false);
+  const [saveErr, setSaveErr] = useState("");
   const save = async () => {
-    await updateSetup((s) => { s.config.vapidPublicKey = key.trim(); return s; });
-    setSaved(true); setTimeout(() => setSaved(false), 1800);
+    setSaveErr("");
+    const res = await updateSetup((s) => { s.config.vapidPublicKey = key.trim(); return s; });
+    if (res && res.ok) { setSaved(true); setTimeout(() => setSaved(false), 1800); }
+    else setSaveErr(res?.error || "Speichern fehlgeschlagen, bitte erneut versuchen.");
   };
   return (
     <div>
@@ -6769,6 +6859,7 @@ function PushSettingsSection({ setup, updateSetup }) {
         </div>
       </Field>
       {saved && <span className="text-xs flex items-center gap-1 mt-1.5" style={{ color: "var(--mc-st-done)" }}><Check className="w-3.5 h-3.5" />gespeichert</span>}
+      {saveErr && <span className="text-xs mt-1.5 block" style={{ color: "var(--mc-st-problem)" }}>{saveErr}</span>}
       {!setup.config.vapidPublicKey && <p className="text-[11px] mt-2" style={{ color: "var(--mc-text-muted)" }}>Solange kein Key hinterlegt ist, bleibt es beim Vordergrund-Hinweis (Toast/Vibration bei offener App) — funktioniert schon jetzt, ganz ohne Einrichtung.</p>}
     </div>
   );
@@ -8605,15 +8696,17 @@ function MissionReturnsTab({ setup, dyn, day, updateDyn, by, onErr, onAssign, on
     });
     if ((!res || !res.ok) && onErr) onErr(res?.error || "Anwesenheit konnte nicht gespeichert werden, bitte erneut versuchen.");
   };
-  const addManualArtist = (rawName) => {
+  const addManualArtist = async (rawName) => {
     const name = (rawName || "").trim();
     if (!name) return;
-    updateDyn((d) => {
+    const at = Date.now();
+    const res = await updateDyn((d) => {
       d.artistPresence = d.artistPresence || {};
       const cur = d.artistPresence[name] || {};
-      d.artistPresence[name] = { ...cur, manual: "here", by, at: Date.now() };
+      d.artistPresence[name] = { ...cur, manual: "here", by, at };
       return d;
     });
+    if ((!res || !res.ok) && onErr) onErr(res?.error || "Anwesenheit konnte nicht gespeichert werden, bitte erneut versuchen.");
   };
 
   const presenceNames = new Set(presence.map((p) => p.name));
@@ -9031,32 +9124,43 @@ function FlightTab({ setup, dyn, day, updateDyn, by, onErr, onEdit }) {
   // Gibt das Schreibergebnis ({ok,...}) zurueck, damit updateOne/updateAll die
   // "aktualisiert"-Notiz nur bei echtem Erfolg zeigen bzw. Fehlschlaege zaehlen
   // koennen (statt still "aktualisiert" zu melden, obwohl das Speichern scheiterte).
-  const applyResult = (rideId, res) => updateDyn((d) => {
-    const r = d.rides.find((x) => x.id === rideId);
-    if (!r) return d;
-    if (r.manualOverride) return d; // manuelle Werte nicht überschreiben
-    const before = r.flightStatus;
-    r.airline = res.airline || r.airline;
-    r.terminal = res.terminal || r.terminal;
-    r.scheduledArrival = res.scheduledArrival || r.scheduledArrival;
-    r.estimatedArrival = res.estimatedArrival || r.estimatedArrival;
-    r.actualArrival = res.actualArrival || r.actualArrival;
-    r.flightStatus = res.flightStatus || r.flightStatus;
-    r.delayMinutes = res.delayMinutes ?? r.delayMinutes ?? 0;
-    r.lastFlightUpdate = Date.now();
-    r.lastFlightCheck = Date.now(); // für die Abfrage-Abklingzeit, unabhängig davon ob sich der Status geändert hat
-    r.flightUpdateSource = res.source || FLIGHT_PROVIDER;
-    if (before !== r.flightStatus) {
-      logRide(r, "flight", "auto", `Flug: ${flightStyle(r.flightStatus).l}`);
-      if (r.assignedDriverId && ["verspätet", "gelandet", "annulliert"].includes(r.flightStatus)) {
-        triggerPush(r.assignedDriverId, `Flug jetzt ${flightStyle(r.flightStatus).l}`, `${r.flightNo || ""} · ${r.djName || "Fahrt"}`, `ride-${r.id}`);
-      }
-      if (needsDispatcherFlightAlert(r)) {
-        triggerDispatcherPush(`Flug kritisch: ${flightAlert(r).label}`, `${r.flightNo || ""} · ${r.djName || "Fahrt"}`, `ride-${r.id}`);
+  const applyResult = async (rideId, res) => {
+    // before aus dem gerenderten Stand festhalten: nach dem Save laesst sich der
+    // Vorher-Status nicht mehr aus dem Ergebnis lesen. Dient nur dem Push-Vergleich.
+    const before = (dyn.rides || []).find((x) => x.id === rideId)?.flightStatus;
+    const wr = await updateDyn((d) => {
+      const r = d.rides.find((x) => x.id === rideId);
+      if (!r) return d;
+      if (r.manualOverride) return d; // manuelle Werte nicht überschreiben
+      const beforeIn = r.flightStatus;
+      r.airline = res.airline || r.airline;
+      r.terminal = res.terminal || r.terminal;
+      r.scheduledArrival = res.scheduledArrival || r.scheduledArrival;
+      r.estimatedArrival = res.estimatedArrival || r.estimatedArrival;
+      r.actualArrival = res.actualArrival || r.actualArrival;
+      r.flightStatus = res.flightStatus || r.flightStatus;
+      r.delayMinutes = res.delayMinutes ?? r.delayMinutes ?? 0;
+      r.lastFlightUpdate = Date.now();
+      r.lastFlightCheck = Date.now(); // für die Abfrage-Abklingzeit, unabhängig davon ob sich der Status geändert hat
+      r.flightUpdateSource = res.source || FLIGHT_PROVIDER;
+      if (beforeIn !== r.flightStatus) logRide(r, "flight", "auto", `Flug: ${flightStyle(r.flightStatus).l}`);
+      return d;
+    });
+    // Push erst NACH bestaetigtem Save, nie im Mutator (CAS-Retry wuerde ihn
+    // mehrfach ausloesen). Statuswechsel aus dem bestaetigten Stand ableiten.
+    if (wr && wr.ok) {
+      const saved = (wr.value.rides || []).find((x) => x.id === rideId);
+      if (saved && before !== saved.flightStatus) {
+        if (saved.assignedDriverId && ["verspätet", "gelandet", "annulliert"].includes(saved.flightStatus)) {
+          triggerPush(saved.assignedDriverId, `Flug jetzt ${flightStyle(saved.flightStatus).l}`, `${saved.flightNo || ""} · ${saved.djName || "Fahrt"}`, `ride-${saved.id}`);
+        }
+        if (needsDispatcherFlightAlert(saved)) {
+          triggerDispatcherPush(`Flug kritisch: ${flightAlert(saved).label}`, `${saved.flightNo || ""} · ${saved.djName || "Fahrt"}`, `ride-${saved.id}`);
+        }
       }
     }
-    return d;
-  });
+    return wr;
+  };
 
   const updateOne = async (r, force) => {
     if (r.manualOverride) { setNote({ id: r.id, ok: false, text: "manuell überschrieben – Auto übersprungen" }); return; }
@@ -9095,20 +9199,25 @@ function FlightTab({ setup, dyn, day, updateDyn, by, onErr, onEdit }) {
       if (r) {
         Object.assign(r, patch);
         r.manualOverride = true; r.flightUpdateSource = "manuell"; r.lastFlightUpdate = Date.now();
-        if (patch.flightStatus !== undefined) {
-          logRide(r, "flight", by, `Flug: ${flightStyle(patch.flightStatus).l}`);
-          if (r.assignedDriverId && ["verspätet", "gelandet", "annulliert"].includes(patch.flightStatus)) {
-            triggerPush(r.assignedDriverId, `Flug jetzt ${flightStyle(patch.flightStatus).l}`, `${r.flightNo || ""} · ${r.djName || "Fahrt"}`, `ride-${r.id}`);
-          }
-          if (needsDispatcherFlightAlert(r)) {
-            triggerDispatcherPush(`Flug kritisch: ${flightAlert(r).label}`, `${r.flightNo || ""} · ${r.djName || "Fahrt"}`, `ride-${r.id}`);
-          }
-        }
+        if (patch.flightStatus !== undefined) logRide(r, "flight", by, `Flug: ${flightStyle(patch.flightStatus).l}`);
         if (r.scheduledArrival && (r.actualArrival || r.estimatedArrival)) r.delayMinutes = Math.max(0, sortMin(r.actualArrival || r.estimatedArrival) - sortMin(r.scheduledArrival));
       }
       return d;
     });
-    if ((!res || !res.ok) && onErr) onErr(res?.error || "Flug-Korrektur konnte nicht gespeichert werden, bitte erneut versuchen.");
+    if (!res || !res.ok) { if (onErr) onErr(res?.error || "Flug-Korrektur konnte nicht gespeichert werden, bitte erneut versuchen."); return; }
+    // Push erst NACH bestaetigtem Save (nie im Mutator). Nur wenn ein flightStatus
+    // gesetzt wurde und der bestaetigte Stand kritisch ist.
+    if (patch.flightStatus !== undefined) {
+      const saved = (res.value.rides || []).find((x) => x.id === rideId);
+      if (saved) {
+        if (saved.assignedDriverId && ["verspätet", "gelandet", "annulliert"].includes(saved.flightStatus)) {
+          triggerPush(saved.assignedDriverId, `Flug jetzt ${flightStyle(saved.flightStatus).l}`, `${saved.flightNo || ""} · ${saved.djName || "Fahrt"}`, `ride-${saved.id}`);
+        }
+        if (needsDispatcherFlightAlert(saved)) {
+          triggerDispatcherPush(`Flug kritisch: ${flightAlert(saved).label}`, `${saved.flightNo || ""} · ${saved.djName || "Fahrt"}`, `ride-${saved.id}`);
+        }
+      }
+    }
   };
 
   const ln = (id, c) => setup.locations.find((l) => l.id === id)?.short || c || "—";
@@ -9670,7 +9779,7 @@ function dateForNightTime(dayKey, time) {
 const TL_LABEL_W = 160; // px, entspricht w-40
 const TL_DRAG_THRESHOLD = 6; // px Mindestbewegung, bevor aus Klick ein Ziehen wird
 
-function MissionTimelinePage({ setup, dyn, day, onEdit, onAssign, updateDyn, by, onUndo }) {
+function MissionTimelinePage({ setup, dyn, day, onEdit, onAssign, updateDyn, by, onUndo, onErr }) {
   const ln = (id, c) => setup.locations.find((l) => l.id === id)?.short || c || "—";
   const [, setTick] = useState(0);
   useEffect(() => { const t = setInterval(() => setTick((x) => x + 1), 30000); return () => clearInterval(t); }, []);
@@ -9680,6 +9789,7 @@ function MissionTimelinePage({ setup, dyn, day, onEdit, onAssign, updateDyn, by,
   const scrollRef = useRef(null); // die horizontal scrollbare Zeitraster-Fläche (für Zoom + Ziehen-Berechnung)
   const [drag, setDrag] = useState(null);
   const dragRef = useRef(null);
+  const assignBusyRef = useRef(false); // Doppelklick-Schutz fuer die Timeline-Schnellzuteilung
   // Bestätigung vor dem eigentlichen Verschieben: erst nach Loslassen wird nichts
   // sofort übernommen, sondern ein Hinweis an der Zielposition eingeblendet.
   // Reines Antippen (kein echtes Ziehen) braucht weiterhin keine Bestätigung.
@@ -9774,10 +9884,12 @@ function MissionTimelinePage({ setup, dyn, day, onEdit, onAssign, updateDyn, by,
   const selectedRide = selectedId ? allRides.find((r) => r.id === selectedId) : null;
   const evalFor = (driverId) => selectedRide ? evaluateInsertion(setup, dyn, setup.drivers.find((d) => d.id === driverId), selectedRide) : null;
 
-  const quickAssign = (driverId) => {
-    if (!selectedRide) return;
-    updateDyn((d) => {
-      const r = d.rides.find((x) => x.id === selectedRide.id);
+  const quickAssign = async (driverId) => {
+    if (!selectedRide || assignBusyRef.current) return;
+    assignBusyRef.current = true;
+    const rideId = selectedRide.id;
+    const res = await updateDyn((d) => {
+      const r = d.rides.find((x) => x.id === rideId);
       if (r) {
         logRide(r, "assigned", by, "Schnellzuteilung über Timeline");
         r.assignedDriverId = driverId;
@@ -9785,8 +9897,14 @@ function MissionTimelinePage({ setup, dyn, day, onEdit, onAssign, updateDyn, by,
       }
       return d;
     });
-    triggerPush(driverId, "Neue Fahrt zugeteilt", `${selectedRide.time} · ${selectedRide.djName || "Fahrt"}`, `ride-${selectedRide.id}`);
+    assignBusyRef.current = false;
+    // Push und Auswahl-Reset erst NACH bestaetigtem Save; bei Fehler bleibt die
+    // Auswahl erhalten und es gibt eine Meldung. Empfaenger aus dem bestaetigten Stand.
+    if (!res || !res.ok) { onErr?.(res?.error || "Zuteilung konnte nicht gespeichert werden, bitte erneut versuchen."); return; }
     setSelectedId(null);
+    const saved = (res.value.rides || []).find((x) => x.id === rideId);
+    const drv = saved?.assignedDriverId;
+    if (drv) triggerPush(drv, "Neue Fahrt zugeteilt", `${saved.time} · ${saved.djName || "Fahrt"}`, `ride-${rideId}`);
   };
 
   // ---- Ziehen: Zeit ändern (horizontal) und/oder Fahrer wechseln (Zeile) --------
@@ -9810,14 +9928,14 @@ function MissionTimelinePage({ setup, dyn, day, onEdit, onAssign, updateDyn, by,
     const v = rowEl.getAttribute("data-row-driver");
     return v === "unassigned" ? null : v;
   };
-  const applyDrop = (rideId, newStartMin, newDriverIdOrUndefined) => {
+  const applyDrop = async (rideId, newStartMin, newDriverIdOrUndefined) => {
     const cur = allRides.find((x) => x.id === rideId);
     if (!cur || newStartMin == null) return;
     const newTime = fromMin(newStartMin);
     const timeChanged = newTime !== cur.time;
     const driverChanged = newDriverIdOrUndefined !== undefined && newDriverIdOrUndefined !== (cur.assignedDriverId || null);
     if (!timeChanged && !driverChanged) return;
-    updateDyn((d) => {
+    const res = await updateDyn((d) => {
       const r = d.rides.find((x) => x.id === rideId);
       if (!r) return d;
       if (timeChanged) { logRide(r, "time", by, `${r.time} → ${newTime} (Timeline gezogen)`); r.date = dateForNightTime(day, newTime); r.time = newTime; }
@@ -9828,8 +9946,14 @@ function MissionTimelinePage({ setup, dyn, day, onEdit, onAssign, updateDyn, by,
       if (driverChanged && r.status !== "planned") setRideStatus(r, "planned", by); else r.updatedAt = Date.now();
       return d;
     });
-    if (driverChanged && newDriverIdOrUndefined) triggerPush(newDriverIdOrUndefined, "Neue Fahrt zugeteilt", `${newTime} · ${cur.djName || "Fahrt"}`, `ride-${rideId}`);
-    else if (timeChanged && cur.assignedDriverId) triggerPush(cur.assignedDriverId, "Fahrt geändert", `${cur.djName || "Fahrt"} · neue Zeit ${newTime}`, `ride-${rideId}`);
+    // Push erst NACH bestaetigtem Save; bei Fehler Meldung, die Timeline rendert
+    // ohnehin aus dem (unveraenderten) Serverstand weiter. Empfaenger/Text aus
+    // dem bestaetigten Stand.
+    if (!res || !res.ok) { onErr?.(res?.error || "Verschiebung konnte nicht gespeichert werden, bitte erneut versuchen."); return res; }
+    const saved = (res.value.rides || []).find((x) => x.id === rideId);
+    if (driverChanged && newDriverIdOrUndefined) triggerPush(newDriverIdOrUndefined, "Neue Fahrt zugeteilt", `${saved?.time || newTime} · ${saved?.djName || cur.djName || "Fahrt"}`, `ride-${rideId}`);
+    else if (timeChanged && (saved?.assignedDriverId || cur.assignedDriverId)) triggerPush(saved?.assignedDriverId || cur.assignedDriverId, "Fahrt geändert", `${saved?.djName || cur.djName || "Fahrt"} · neue Zeit ${saved?.time || newTime}`, `ride-${rideId}`);
+    return res;
   };
 
   const beginDrag = (e, r) => {
@@ -9870,11 +9994,14 @@ function MissionTimelinePage({ setup, dyn, day, onEdit, onAssign, updateDyn, by,
     return () => { window.removeEventListener("pointermove", onMove); window.removeEventListener("pointerup", onUp); };
   }, [drag]);
 
-  const confirmPendingDrop = () => {
+  const confirmPendingDrop = async () => {
     if (!pendingDrop) return;
-    applyDrop(pendingDrop.rideId, pendingDrop.newStartMin, pendingDrop.newDriverIdOrUndefined);
-    setRecentlyMoved({ rideId: pendingDrop.rideId, at: Date.now(), x: pendingDrop.x, y: pendingDrop.y });
+    const pd = pendingDrop;
     setPendingDrop(null);
+    // Der "Verschoben/Rueckgaengig"-Hinweis suggeriert Erfolg -> erst zeigen, wenn
+    // das Speichern bestaetigt ist. Bei Fehler meldet applyDrop selbst (onErr).
+    const res = await applyDrop(pd.rideId, pd.newStartMin, pd.newDriverIdOrUndefined);
+    if (res && res.ok) setRecentlyMoved({ rideId: pd.rideId, at: Date.now(), x: pd.x, y: pd.y });
   };
   const cancelPendingDrop = () => setPendingDrop(null);
 
@@ -10961,6 +11088,7 @@ function SettingsTab({ setup, dyn, day, updateSetup, updateDyn, onPreviewGuest }
   const [imp, setImp] = useState(null);
   const [matchDrivers, setMatchDrivers] = useState(true);
   const [importing, setImporting] = useState(false); // Doppelklick-/Mehrfachimport-Schutz
+  const [importErr, setImportErr] = useState("");     // sichtbare Meldung, falls der Import nicht gespeichert wird
   const [newFestDate, setNewFestDate] = useState(""); // Hinzufuegen-Feld "Festival-Tage" (kontrolliert, damit es sich nach dem Speichern leert)
 
   // Punkt 14: robustere Signatur – zusätzlich Flug, Passagiere, Treffpunkt (oder Zeilen-ID)
@@ -11021,22 +11149,31 @@ function SettingsTab({ setup, dyn, day, updateSetup, updateDyn, onPreviewGuest }
     // sonst wird bei schnellem Doppelklick die komplette Liste zweimal angelegt
     // (IDs unterscheiden sich, die Dedup-Prüfung greift dann nicht).
     if (importing || !imp || imp.rides.length === 0) return;
-    setImporting(true);
+    setImporting(true); setImportErr("");
     try {
       const list = imp.rides;
       const dates = [...new Set(list.map((r) => r.dayKey))].filter(Boolean).sort();
-      await updateSetup((s) => {
+      // Stabile IDs VOR dem Mutator (CAS-Retry-sicher): sonst bekaeme die Liste bei
+      // einem Schreibkonflikt-Retry neue IDs. Einmal fest vergeben, dann verwenden.
+      const withIds = list.map((r, i) => ({ ...r, __id: "r" + Date.now() + i + Math.random().toString(36).slice(2, 6) }));
+      // Ergebnis beider Schreibvorgaenge auswerten. Erst wenn beide bestaetigt sind,
+      // die Vorschau verwerfen; bei Fehler bleibt sie erhalten und der Nutzer kann
+      // erneut importieren. festivalDates zuerst (harmlos ohne Fahrten), dann die
+      // Fahrten selbst (updateDyn ist atomar: alle oder keine).
+      const setupRes = await updateSetup((s) => {
         s.config.festivalDates = [...new Set([...(s.config.festivalDates || []), ...dates])].sort();
         return s;
       });
-      await updateDyn((d) => {
-        list.forEach((r, i) => {
-          const nr = { id: "r" + Date.now() + i + Math.random().toString(36).slice(2, 6), ...r };
+      if (!setupRes || !setupRes.ok) { setImportErr(setupRes?.error || "Import konnte nicht gespeichert werden, bitte erneut versuchen."); return; }
+      const dynRes = await updateDyn((d) => {
+        withIds.forEach(({ __id, ...r }) => {
+          const nr = { id: __id, ...r };
           if (!nr.statusHistory) setRideStatus(nr, "planned", "import");
           d.rides.push(nr);
         });
         return d;
       });
+      if (!dynRes || !dynRes.ok) { setImportErr(dynRes?.error || "Fahrten konnten nicht gespeichert werden, bitte erneut versuchen."); return; }
       setImp(null); setWb(null);
     } finally {
       setImporting(false);
@@ -11104,8 +11241,9 @@ function SettingsTab({ setup, dyn, day, updateSetup, updateDyn, onPreviewGuest }
             <div className="flex gap-2">
               <button onClick={doImport} disabled={imp.rides.length === 0 || importing}
                 className="mc-btn-primary text-sm px-3 py-2 disabled:opacity-40">{importing ? "Importiere…" : `${imp.rides.length} importieren`}</button>
-              <button onClick={() => { setImp(null); setWb(null); }} disabled={importing} className="mc-btn-quiet disabled:opacity-40 text-sm px-3 py-2">Verwerfen</button>
+              <button onClick={() => { setImp(null); setWb(null); setImportErr(""); }} disabled={importing} className="mc-btn-quiet disabled:opacity-40 text-sm px-3 py-2">Verwerfen</button>
             </div>
+            {importErr && <div className="text-xs mt-2" style={{ color: "var(--mc-st-problem)" }}>{importErr}</div>}
           </div>
         )}
       </section>
@@ -12021,7 +12159,7 @@ function MissionControl({ setup, dyn, session, updateDyn, updateSetup, onLogout,
 
           {tab === "overview" && <MissionOverviewTab setup={setup} dyn={dyn} day={day} setTab={setTab}
             onEdit={(r) => { setDay(r.dayKey); setEditRide(r); }} onAssign={(r) => setAssignRide(r)} />}
-          {tab === "timeline" && <MissionTimelinePage setup={setup} dyn={dyn} day={day} updateDyn={updateDyn} by={meBy} onUndo={onUndo}
+          {tab === "timeline" && <MissionTimelinePage setup={setup} dyn={dyn} day={day} updateDyn={updateDyn} by={meBy} onUndo={onUndo} onErr={notifyErr}
             onEdit={(r) => { setDay(r.dayKey); setEditRide(r); }} onAssign={(r) => setAssignRide(r)} />}
           {tab === "timetable" && <TimetableTab />}
           {tab === "rideslist" && <RidesListTab setup={setup} dyn={dyn} day={day} />}
@@ -12122,6 +12260,10 @@ function MissionControl({ setup, dyn, session, updateDyn, updateSetup, onLogout,
         <AssignModal setup={setup} dyn={dyn} ride={assignRide}
           onClose={() => setAssignRide(null)}
           onAssign={async (driverId) => {
+            // before aus dem gerenderten Stand fuer den Push-Vergleich (nach dem
+            // Save nicht mehr rekonstruierbar). Im Mutator selbst bleibt der frische
+            // DB-Vergleich fuer die Log-Entscheidung.
+            const beforeDriver = (dyn.rides || []).find((x) => x.id === assignRide.id)?.assignedDriverId ?? null;
             const res = await updateDyn((d) => {
               const r = d.rides.find((x) => x.id === assignRide.id);
               if (r) {
@@ -12131,11 +12273,14 @@ function MissionControl({ setup, dyn, session, updateDyn, updateSetup, onLogout,
                 r.assignedDriverId = driverId;
                 if ((!driverId || changed) && r.status !== "planned") setRideStatus(r, "planned", meBy);
                 else r.updatedAt = Date.now();
-                if (changed && driverId) triggerPush(driverId, "Neue Fahrt zugeteilt", `${r.time} · ${r.djName || "Fahrt"}`, `ride-${r.id}`);
               }
               return d;
             });
-            if (res && res.ok) setAssignRide(null);
+            if (!res || !res.ok) return res; // Modal bleibt offen, zeigt Fehler, kein Push
+            setAssignRide(null);
+            // Push erst NACH bestaetigtem Save (nie im Mutator, der bei CAS-Retry mehrfach laeuft).
+            const saved = (res.value.rides || []).find((x) => x.id === assignRide.id);
+            if ((beforeDriver ?? null) !== (driverId ?? null) && driverId && saved) triggerPush(driverId, "Neue Fahrt zugeteilt", `${saved.time} · ${saved.djName || "Fahrt"}`, `ride-${saved.id}`);
             return res;
           }} />
         </div>
@@ -12156,9 +12301,13 @@ function MissionControl({ setup, dyn, session, updateDyn, updateSetup, onLogout,
                 if (!ok) return { ok: false, cancelled: true };
               }
             }
+            // Stabile ID VOR dem Mutator (CAS-Retry-sicher). before-Stand fuer den
+            // Push-Vergleich festhalten (nach dem Save nicht mehr rekonstruierbar).
+            const newId = editRide._new ? ("r" + Date.now() + Math.random().toString(36).slice(2, 6)) : null;
+            const beforeRide = editRide._new ? null : (dyn.rides || []).find((x) => x.id === editRide.id);
             const res = await updateDyn((d) => {
               if (editRide._new) {
-                const nr = { id: "r" + Date.now() + Math.random().toString(36).slice(2, 6), assignedDriverId: null, ...data };
+                const nr = { id: newId, assignedDriverId: null, ...data };
                 logRide(nr, "created", meBy, "");
                 setRideStatus(nr, "planned", meBy);
                 d.rides.push(nr);
@@ -12173,14 +12322,25 @@ function MissionControl({ setup, dyn, session, updateDyn, updateSetup, onLogout,
                   if ((data.flightStatus || "") !== (r.flightStatus || "")) logRide(r, "flight", meBy, `Flug: ${flightStyle(data.flightStatus).l}`);
                   const { status, assignedDriverId, issues, log, statusHistory, acceptedAt, enrouteAt, onboardAt, doneAt, cancelledAt, plannedAt, id, ...safeData } = data;
                   Object.assign(r, safeData);
-                  if ((timeChanged || routeChanged || meetChanged) && r.assignedDriverId) {
-                    triggerPush(r.assignedDriverId, "Fahrt geändert", `${r.djName || "Fahrt"} · ${r.time}${meetChanged ? " · neuer Treffpunkt" : ""}`, `ride-${r.id}`);
-                  }
                 }
               }
               return d;
             });
-            if (res && res.ok) setEditRide(null);
+            if (!res || !res.ok) return res; // Modal bleibt offen (RideForm zeigt saveErr), kein Push
+            setEditRide(null);
+            // Push erst NACH bestaetigtem Save (nie im Mutator). Nur bei bestehender
+            // Fahrt mit geaenderter Zeit/Route/Treffpunkt; alles aus dem bestaetigten Stand.
+            if (!editRide._new && beforeRide) {
+              const saved = (res.value.rides || []).find((x) => x.id === editRide.id);
+              if (saved) {
+                const timeChanged = data.time !== beforeRide.time || data.date !== beforeRide.date;
+                const routeChanged = data.fromId !== beforeRide.fromId || data.toId !== beforeRide.toId || data.fromCustom !== beforeRide.fromCustom || data.toCustom !== beforeRide.toCustom;
+                const meetChanged = (data.meetingPoint || "") !== (beforeRide.meetingPoint || "");
+                if ((timeChanged || routeChanged || meetChanged) && saved.assignedDriverId) {
+                  triggerPush(saved.assignedDriverId, "Fahrt geändert", `${saved.djName || "Fahrt"} · ${saved.time}${meetChanged ? " · neuer Treffpunkt" : ""}`, `ride-${saved.id}`);
+                }
+              }
+            }
             return res;
           }}
           onDelete={editRide._new ? null : async () => {
