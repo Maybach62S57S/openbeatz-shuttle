@@ -5481,7 +5481,7 @@ Bewusst NICHT umgestellt (dokumentiert): Presence-Toggles `setNoReturn`/`setManu
 - Fahrt-Status tippen, den die Leitstelle zwischenzeitlich zurueckgesetzt hat: Konflikt-Meldung ("Status wurde inzwischen geaendert"), kein stiller rev+1. Der Poll (3s) korrigiert den Knopf.
 - Gast "Confirm pickup" doppelt/zwei Tabs: zweites Mal No-op, kein doppelter Push an den Fahrer.
 
-**Ergebnis:** `src/ShuttleLeitstelle.jsx` 13067 Zeilen (+152). Commit `<HASH_FOLGT>`. Freeze eingehalten, keine Loeschung. Kein Supabase-SQL noetig (reine Client-Logik, RPC-Vertrag unveraendert genutzt).
+**Ergebnis:** `src/ShuttleLeitstelle.jsx` 13067 Zeilen (+152). Commit `31746ce`. Freeze eingehalten, keine Loeschung. Kein Supabase-SQL noetig (reine Client-Logik, RPC-Vertrag unveraendert genutzt).
 
 **Weitere gefundene Punkte fuer spaetere Sessions:**
 - Presence-Toggles koennten optional einen echten No-op bekommen (wenn Wert UND bewusst kein neuer Bestaetigungs-Stempel gewuenscht) - bewusst offen gelassen, da der Stempel fachlich gewollt ist.
@@ -5494,7 +5494,7 @@ Bewusst NICHT umgestellt (dokumentiert): Presence-Toggles `setNoReturn`/`setManu
 >
 > 1. Repo klonen (frischer PAT), nach `/home/claude/repo`, PAT sofort aus der Remote-URL scrubben (`git remote set-url`).
 > 2. `npm ci`, git config (`j.merg@merg-and-more.de` / Jordan Merg).
-> 3. `git log --graph --oneline --all` UND `git fetch`, HEAD == origin/main pruefen. Letzter Commit muss `<HASH_FOLGT>` sein ("Schreib-Contention: No-op-/Konflikt-Vertrag, Schreib-Serialisierung, Backoff, Diagnose").
+> 3. `git log --graph --oneline --all` UND `git fetch`, HEAD == origin/main pruefen. Letzter Commit muss `31746ce` sein ("Schreib-Contention: No-op-/Konflikt-Vertrag, Schreib-Serialisierung, Backoff, Diagnose").
 > 4. Exakte Zeilenzahl `src/ShuttleLeitstelle.jsx`: 13067.
 > 5. Volle Bestands-Regression, ALLES gruen: esbuild, Duplikat-Grep `[a-zA-Z0-9_]+`. Fuer Teilpaket B/E/G ZUERST `python3 extract-funcs-teilpaket-{b,e,g}.py src/ShuttleLeitstelle.jsx tmp-t{b,e,g}-funcs.mjs`, DANN `smoke-teilpaket-b.mjs` (69/0) + `smoke-teilpaket-e.mjs` (152/0) + `gegenprobe-teilpaket-e.mjs` (8/0) + `smoke-teilpaket-g.mjs` (130/0) + `gegenprobe-teilpaket-g.mjs` (10/0), Extrakte danach loeschen. Weiter: `rendertest.mjs` (25053/2452/2413/2895/101), `kontrast.mjs` (0), `smoke.mjs` + alle `smoke27*.mjs` (Classic-Reste 0), `smoke-teilpaket-c1`/`c1-ui`/`c2`/`c2-ui`/`c3`/`c3-ui`/`d`/`d-ui`/`f`/`f-ui`/`g2-ui` (`f2-ui` laeuft in `f-ui` mit), `smoke-orte-fix.mjs` (47/0), `smoke-nav-url.mjs` (10/0), `smoke-fahrtenliste.mjs` (35/0), `smoke-import-dauer.mjs` (18/0), `smoke-teilpaket-h-concurrency.mjs` (21/0), `gegenprobe-teilpaket-h19-poll.mjs` (15/0), `smoke-poll-absicherung.mjs` (24/0), `smoke-write-sideeffects.mjs` (39/0), `smoke-write-contention.mjs` (67/0, NEU). `gegenprobe-teilpaket-h-rpc-postgres.mjs` NICHT Teil der Standard-Regression.
 >
@@ -5505,4 +5505,4 @@ Bewusst NICHT umgestellt (dokumentiert): Presence-Toggles `setNoReturn`/`setManu
 >
 > Thema dieser Session: [beschreiben]. Offene Kandidaten: Presence-Toggles optional No-op, `unsubscribePush`-Aufraeumung No-op, reine Setup-Toggles ohne Ergebnispruefung (Session 2), GuestApp-Poll ohne Ueberlappungsschutz, matchLoc-Fix (Z. ~7676).
 
-**Stand nach dieser Session:** Schreib-Contention-Haertung fertig, verifiziert, committet/gepusht (`<HASH_FOLGT>`). `src/ShuttleLeitstelle.jsx` 13067 Zeilen. Freeze eingehalten, keine Loeschung.
+**Stand nach dieser Session:** Schreib-Contention-Haertung fertig, verifiziert, committet/gepusht (`31746ce`). `src/ShuttleLeitstelle.jsx` 13067 Zeilen. Freeze eingehalten, keine Loeschung.
