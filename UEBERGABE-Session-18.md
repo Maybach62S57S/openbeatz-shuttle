@@ -5803,13 +5803,234 @@ Z. ~3858; die drei Aktionen `reportIssue`/`confirmPickup`/`atPickup` Z. ~3890-39
 > `return NO_CHANGE` / `return dynConflict("CODE","...")` weiter nutzbar fuer
 > neue Mutatoren; Diagnose live unter `window.__obfWriteStats`.
 >
-> Thema dieser Session: [hier eintragen]. Naheliegender Kandidat: die separate
-> **SQL-Session fuer Gast-Idempotenz** (confirm/at_pickup "unchanged"-Signal +
-> `guest_report_issue` optionaler `p_issue_id` gegen Duplikate) - loest die in
-> der GuestApp-Haertung dokumentierten Server-Restrisiken. Weitere offene
-> Kandidaten: Presence-Toggles optional No-op, `unsubscribePush`-Aufraeumung
-> No-op, reine Setup-Toggles ohne Ergebnispruefung.
+> Thema dieser Session: [hier eintragen]. Die Gast-Idempotenz-SQL (confirm/
+> at_pickup "unchanged"-Signal + `guest_report_issue` optionaler `p_issue_id`)
+> ist FERTIG VORBEREITET, aber bewusst zurueckgestellt bis nach dem Festival
+> (27.07.2026) — siehe Abschnitt "Entscheidung: Gast-Idempotenz-SQL
+> zurueckgestellt" weiter oben in diesem Dokument (komplette SQL + Anleitung
+> dort). Vor dem 28.07. NICHT von selbst aufgreifen, nur wenn Jordan es explizit
+> ansagt. Naheliegende Kandidaten VOR dem Festival stattdessen: Presence-Toggles
+> optional No-op, `unsubscribePush`-Aufraeumung No-op, reine Setup-Toggles ohne
+> Ergebnispruefung (setMatrix, Festival-Tage, Dev-Seed/Clear) — alles rein
+> client-seitig, kein SQL, risikoarm kurz vor dem Event.
 
 **Stand nach dieser Session:** GuestApp-/Gast-RPC-Haertung fertig, verifiziert,
 committet (`a2d91c0`). `src/ShuttleLeitstelle.jsx` 13177 Zeilen. Kein SQL
-geaendert; Server-Idempotenz als naechster (separater) Schritt vorgemerkt.
+geaendert; Server-Idempotenz-SQL fertig vorbereitet (siehe Abschnitt oben),
+aber bewusst zurueckgestellt bis nach dem Festival (27.07.2026).
+
+---
+
+## Entscheidung (20.07.2026, gleicher Tag): Gast-Idempotenz-SQL zurueckgestellt
+
+Nach der GuestApp-/Gast-RPC-Haertung (Commit `a2d91c0`/`c6d5095`) wurde die
+noch offene **Server-Idempotenz** (doppelter Push bei confirm/at_pickup nach
+verlorener Antwort, moegliches Issue-Duplikat bei report_issue-Retry)
+besprochen. Ergebnis: **bewusst zurueckgestellt bis nach dem Festival
+(27.07.2026).**
+
+**Begruendung:** Der Client ist bereits ausreichend gehaertet (Ref-Guard,
+Generationszaehler, busy-State aus der GuestApp-Haertung), der Normalbetrieb
+laeuft sauber. Das verbleibende Restrisiko ist rein kosmetisch (doppelter
+Push / doppelt sichtbares Issue im seltenen Lost-Response-Fall), keine
+Datenkorruption, kein Sicherheitsproblem. Dem gegenueber steht das Risiko,
+drei Tage vor dem Event drei Live-RPCs anzufassen, ohne echtes Postgres zum
+Gegentesten (`gegenprobe-teilpaket-h-rpc-postgres.mjs` ist nicht Teil der
+Standard-Regression). Prioritaet 1 ist Stabilitaet — an einem gruenen,
+getesteten Live-Stand kurz vor dem Festival nichts anfassen, was nicht muss.
+
+**Nichts ist verloren:** die fertige, additive und rueckwaertskompatible SQL
+(Deploy-Reihenfolge: SQL zuerst, Frontend danach; altes Frontend laeuft auf
+neuer SQL unveraendert weiter) steht unten, einsatzbereit fuer eine eigene
+Session nach dem Festival. Deckt ab: `guest_report_issue` bekommt einen
+optionalen `p_issue_id`-Parameter (kein Duplikat bei Retry), `_guest_patch_ride`
+bekommt einen optionalen `p_skip_if_set`-Parameter (confirm/at_pickup bei
+Wiederholung kein zweiter Log-Eintrag/rev-Bump mehr). Der doppelte *Push* bei
+confirm/at_pickup bleibt bewusst auch in dieser Variante bestehen (rein
+kosmetisch; ihn zu unterdruecken braeuchte einen geaenderten Rueckgabetyp und
+eine erzwungene Deploy-Reihenfolge — das waere ein groesserer Post-Festival-
+Ausbau, keine sichere additive Aenderung).
+
+### Fertige SQL fuer die spaetere Session (`guest-idempotenz-update.sql`)
+
+```sql
+-- Gast-Idempotenz-Nachtrag. Additiv, rueckwaertskompatibel. Reihenfolge beim
+-- Deploy: DIESE SQL zuerst, dann das Frontend (altes Frontend laeuft weiter).
+
+-- 1) _guest_patch_ride bekommt einen optionalen "skip wenn Feld schon gesetzt".
+drop function if exists _guest_patch_ride(text, text, jsonb, text, text);
+create or replace function _guest_patch_ride(
+  p_token text, p_ride text, p_patch jsonb, p_log_event text, p_log_detail text,
+  p_skip_if_set text default null
+)
+returns boolean
+language plpgsql security definer set search_path = public
+as $$
+declare
+  v_dj text;
+  v_rows int;
+  v_now bigint := (extract(epoch from now()) * 1000)::bigint;
+begin
+  select dj_name into v_dj from guest_tokens where token = p_token;
+  if v_dj is null then return false; end if;
+
+  -- Idempotenz: ist das Zielfeld auf der passenden Fahrt schon gesetzt, nichts
+  -- tun (kein rev-Bump, kein zweiter Log-Eintrag). true = ist bereits so.
+  if p_skip_if_set is not null and exists (
+    select 1 from settings s,
+      lateral jsonb_array_elements(coalesce(s.dyn_data->'rides','[]'::jsonb)) e
+    where s.id = 1
+      and e->>'id' = p_ride
+      and lower(trim(coalesce(e->>'djName',''))) = lower(trim(v_dj))
+      and coalesce(e->>p_skip_if_set,'') <> ''
+  ) then
+    return true;
+  end if;
+
+  update settings s
+  set dyn_data = jsonb_set(
+        s.dyn_data, '{rides}',
+        (
+          select jsonb_agg(
+            case
+              when elem->>'id' = p_ride and lower(trim(coalesce(elem->>'djName',''))) = lower(trim(v_dj))
+                then (elem || p_patch || jsonb_build_object('updatedAt', v_now))
+                     || jsonb_build_object('log', coalesce(elem->'log', '[]'::jsonb) || jsonb_build_array(
+                          jsonb_build_object('event', p_log_event, 'at', v_now, 'by', 'guest:' || v_dj, 'detail', p_log_detail)
+                        ))
+              else elem
+            end
+          )
+          from jsonb_array_elements(coalesce(s.dyn_data->'rides', '[]'::jsonb)) as elem
+        )
+      ),
+      dyn_rev = dyn_rev + 1,
+      updated_at = now()
+  where s.id = 1
+    and exists (
+      select 1 from jsonb_array_elements(coalesce(s.dyn_data->'rides', '[]'::jsonb)) as e
+      where e->>'id' = p_ride and lower(trim(coalesce(e->>'djName',''))) = lower(trim(v_dj))
+    );
+
+  get diagnostics v_rows = row_count;
+  return v_rows > 0;
+end $$;
+
+-- 2) confirm/at_pickup geben ihr Zielfeld als skip-Schluessel mit. Signatur
+--    (2 Argumente) unveraendert -> kein Client-Zwang, keine Grant-Aenderung.
+create or replace function guest_confirm_pickup(p_token text, p_ride text)
+returns boolean language sql security definer set search_path = public as $$
+  select _guest_patch_ride(p_token, p_ride,
+    jsonb_build_object('guestConfirmedAt', (extract(epoch from now()) * 1000)::bigint),
+    'guest_confirm', 'Confirmed pickup info', 'guestConfirmedAt');
+$$;
+
+create or replace function guest_at_pickup(p_token text, p_ride text)
+returns boolean language sql security definer set search_path = public as $$
+  select _guest_patch_ride(p_token, p_ride,
+    jsonb_build_object('guestAtPickupAt', (extract(epoch from now()) * 1000)::bigint),
+    'guest_at_pickup', 'At the pickup point', 'guestAtPickupAt');
+$$;
+
+-- 3) report_issue bekommt eine optionale stabile Issue-ID -> kein Duplikat bei
+--    Retry. 4-Argument-Aufruf bleibt gueltig (Default null = altes Verhalten).
+drop function if exists guest_report_issue(text, text, text, text);
+create or replace function guest_report_issue(
+  p_token text, p_ride text, p_type text, p_note text, p_issue_id text default null
+)
+returns boolean
+language plpgsql security definer set search_path = public
+as $$
+declare
+  v_dj text;
+  v_rows int;
+  v_now bigint := (extract(epoch from now()) * 1000)::bigint;
+  v_id text;
+  v_issue jsonb;
+  v_detail text;
+begin
+  select dj_name into v_dj from guest_tokens where token = p_token;
+  if v_dj is null then return false; end if;
+
+  v_id := coalesce(nullif(p_issue_id, ''), 'i' || v_now);
+
+  -- Idempotenz: existiert dieses Issue (gleiche id) auf der Fahrt schon, nicht
+  -- doppelt anlegen.
+  if exists (
+    select 1 from settings s,
+      lateral jsonb_array_elements(coalesce(s.dyn_data->'rides','[]'::jsonb)) e,
+      lateral jsonb_array_elements(coalesce(e->'issues','[]'::jsonb)) iss
+    where s.id = 1
+      and e->>'id' = p_ride
+      and lower(trim(coalesce(e->>'djName',''))) = lower(trim(v_dj))
+      and iss->>'id' = v_id
+  ) then
+    return true;
+  end if;
+
+  v_issue := jsonb_build_object(
+    'id', v_id, 'type', p_type, 'note', coalesce(p_note, ''),
+    'at', v_now, 'by', 'guest:' || v_dj, 'state', 'open'
+  );
+  v_detail := p_type || case when p_note is not null and p_note <> '' then ': ' || p_note else '' end;
+
+  update settings s
+  set dyn_data = jsonb_set(
+        s.dyn_data, '{rides}',
+        (
+          select jsonb_agg(
+            case
+              when elem->>'id' = p_ride and lower(trim(coalesce(elem->>'djName',''))) = lower(trim(v_dj))
+                then elem
+                     || jsonb_build_object('issues', coalesce(elem->'issues', '[]'::jsonb) || jsonb_build_array(v_issue))
+                     || jsonb_build_object('log', coalesce(elem->'log', '[]'::jsonb) || jsonb_build_array(
+                          jsonb_build_object('event', 'problem', 'at', v_now, 'by', 'guest:' || v_dj, 'detail', v_detail)
+                        ))
+                     || jsonb_build_object('updatedAt', v_now)
+              else elem
+            end
+          )
+          from jsonb_array_elements(coalesce(s.dyn_data->'rides', '[]'::jsonb)) as elem
+        )
+      ),
+      dyn_rev = dyn_rev + 1,
+      updated_at = now()
+  where s.id = 1
+    and exists (
+      select 1 from jsonb_array_elements(coalesce(s.dyn_data->'rides', '[]'::jsonb)) as e
+      where e->>'id' = p_ride and lower(trim(coalesce(e->>'djName',''))) = lower(trim(v_dj))
+    );
+
+  get diagnostics v_rows = row_count;
+  return v_rows > 0;
+end $$;
+
+-- 4) Grant fuer die neue 5-Argument-Signatur (die alte 4-Arg wurde gedroppt).
+grant execute on function guest_report_issue(text, text, text, text, text) to anon, authenticated;
+```
+
+### Anleitung fuer die spaetere Session (nach dem Festival)
+1. Supabase -> Projekt -> **SQL Editor** -> **New query**, obigen Block
+   komplett einfuegen, **Run**. Erwartet: "Success. No rows returned".
+2. Gegenprobe (Signaturen pruefen):
+   ```sql
+   select proname, pg_get_function_identity_arguments(oid)
+   from pg_proc where proname in
+   ('_guest_patch_ride','guest_confirm_pickup','guest_at_pickup','guest_report_issue')
+   order by proname;
+   ```
+   Erwartet: `guest_report_issue` mit fuenf `text`-Argumenten,
+   `_guest_patch_ride` mit zusaetzlichem `p_skip_if_set text`.
+3. **Erst danach** das Frontend mit der zugehoerigen Client-Anpassung deployen
+   (stabile Issue-ID im Gast-Melde-Modal, einmal erzeugt, an
+   `guest_report_issue` als `p_issue_id` durchgereicht; Fallback-Pfad nutzt
+   dieselbe ID). Zwischen Schritt 1 und 3 bricht nichts, altes Frontend laeuft
+   auf der neuen SQL unveraendert weiter.
+4. Repo-seitig: `guest-idempotenz-update.sql` committen, Eintrag in
+   `supabase-schema.sql` ergaenzen (damit ein Neuaufsetzen den neuen Stand
+   automatisch hat), neuer Test `smoke-guest-idempotenz.mjs` (SQL-Anker +
+   Client-Anker + Gegenproben), volle Regression, Diff-Beweis, dann commit/push
+   wie ueblich.
+
+**Diese SQL-Session ist ab jetzt NICHT mehr der naheliegende naechste Schritt**
+(siehe aktualisierter Opener unten) — erst nach dem 27.07.2026 wieder aufgreifen.
