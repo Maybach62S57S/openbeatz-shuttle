@@ -5771,10 +5771,11 @@ Z. ~3858; die drei Aktionen `reportIssue`/`confirmPickup`/`atPickup` Z. ~3890-39
 >    danach aus der Remote-URL scrubben (`git remote set-url`). `CLAUDE.md`
 >    "kein PAT noetig" gilt NUR fuer Claude Code, nicht fuer diese Chat-Umgebung.
 > 2. `npm ci`, git config (`j.merg@merg-and-more.de` / Jordan Merg).
-> 3. `git log --graph --oneline --all` UND `git fetch`, HEAD == origin/main.
->    Letzter Commit ist `2248244` ("Doku: Gast-Idempotenz-SQL zurueckgestellt
->    bis nach dem Festival ..."). Letzter CODE-Commit ist weiterhin `a2d91c0`
->    ("GuestApp-/Gast-RPC-Haertung ..."), seither nur Doku-Commits.
+> 3. `git log --graph --oneline --all` UND `git fetch`, HEAD == origin/main
+>    (per `git log --oneline -1` selbst pruefen, nicht raten). Seit dem letzten
+>    CODE-Commit `a2d91c0` ("GuestApp-/Gast-RPC-Haertung ...") kamen nur
+>    reine Doku-Commits dazu — der Code-Stand ist also weiterhin exakt der aus
+>    Session 4.
 > 4. Exakte Zeilenzahl `src/ShuttleLeitstelle.jsx` pruefen: **13177**.
 > 5. Volle Bestands-Regression, ALLES gruen, bevor irgendwas Neues gebaut wird:
 >    esbuild (gruen), Duplikat-Grep mit `[a-zA-Z0-9_]+`. Fuer Teilpaket B/E/G
