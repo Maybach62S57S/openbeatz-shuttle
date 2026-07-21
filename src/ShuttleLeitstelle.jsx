@@ -73,6 +73,18 @@ function dynConflict(code, message) {
 }
 function isNoChange(v) { return v === NO_CHANGE; }
 function isDynConflict(v) { return !!(v && typeof v === "object" && v[DYN_CONFLICT]); }
+// Undo-Hilfsfunktion (rein, ohne Nebenwirkung): welche Felder hat die
+// urspruengliche Aktion an dieser Fahrt tatsaechlich veraendert? Vergleich
+// prev<->next feldweise. prev==null (Fahrt wurde von der Aktion neu erstellt)
+// hat keine "geaenderten Felder" im Diff-Sinn und wird vom Undo gesondert
+// behandelt (ganze Fahrt), daher hier null.
+function undoChangedFields(prev, next) {
+  if (prev == null || next == null) return null;
+  const keys = new Set([...Object.keys(prev), ...Object.keys(next)]);
+  const diff = [];
+  keys.forEach((k) => { if (k !== "rev" && JSON.stringify(prev[k]) !== JSON.stringify(next[k])) diff.push(k); });
+  return diff;
+}
 
 // Kleiner Jitter-Backoff, nur bei echtem CAS-Konflikt vor dem naechsten
 // Versuch. attempt ist 0-basiert (0 = erster Konflikt). Werte bewusst klein:
@@ -1114,7 +1126,12 @@ export default function App() {
     const changed = [];
     (nextRides || []).forEach((nr) => {
       const pr = prevById.get(nr.id);
-      if (!pr || JSON.stringify(pr) !== JSON.stringify(nr)) changed.push({ id: nr.id, prev: pr ? structuredClone(pr) : null });
+      // next = der Zustand, den DIESE Aktion hinterlassen hat. Wird beim Undo
+      // fuer die feldbezogene Konfliktpruefung gebraucht (nur zuruecksetzen, wenn
+      // die betroffenen Felder noch A's Nachher-Wert tragen; sonst hat inzwischen
+      // jemand anderes an der Fahrt gearbeitet -> kontrollierter Konflikt statt
+      // stillem Ueberschreiben einer Fremdaenderung).
+      if (!pr || JSON.stringify(pr) !== JSON.stringify(nr)) changed.push({ id: nr.id, prev: pr ? structuredClone(pr) : null, next: structuredClone(nr) });
     });
     if (changed.length === 0) return;
     undoStackRef.current = [...undoStackRef.current, { at: Date.now(), changed }].slice(-15);
@@ -1260,13 +1277,44 @@ export default function App() {
     // keinen neuen Undo-Eintrag, wenn sich an den Fahrten effektiv nichts
     // ändert; im Normalfall (Rücknahme ändert etwas) legt es bewusst einen
     // "Redo-artigen" Eintrag an, das war auch vorher schon so.
+    // Feldbezogenes Undo: nur die Felder zuruecknehmen, die diese Aktion selbst
+    // veraendert hat, und NUR wenn der frische Serverstand an genau diesen
+    // Feldern noch den Nachher-Wert dieser Aktion traegt. Hat inzwischen jemand
+    // anderes an derselben Fahrt (an denselben oder anderen Feldern) gearbeitet,
+    // wird die Fremdaenderung NICHT stillschweigend ueberschrieben — stattdessen
+    // kontrollierter Konflikt (dynConflict), kein Schreiben, keine Revision.
+    // for...of statt forEach, damit ein dynConflict die ganze Rueckname abbricht.
     const res = await updateDyn((d) => {
-      entry.changed.forEach(({ id, prev }) => {
+      for (const { id, prev, next } of entry.changed) {
         const idx = d.rides.findIndex((x) => x.id === id);
-        if (prev == null) { if (idx >= 0) d.rides.splice(idx, 1); }
-        else if (idx >= 0) d.rides[idx] = structuredClone(prev);
-        else d.rides.push(structuredClone(prev));
-      });
+        if (prev == null) {
+          // Diese Aktion hatte die Fahrt ERSTELLT. Rueckgaengig = loeschen, aber
+          // nur, wenn sie noch exakt dem entspricht, was die Aktion hinterliess
+          // (rev ausgenommen). Sonst hat jemand die neue Fahrt schon veraendert.
+          if (idx >= 0) {
+            const { rev: _cr, ...curNoRev } = d.rides[idx];
+            const { rev: _nr, ...nextNoRev } = (next || {});
+            if (JSON.stringify(curNoRev) !== JSON.stringify(nextNoRev))
+              return dynConflict("UNDO_STALE", "Die Fahrt wurde inzwischen erneut geaendert und kann nicht automatisch zurueckgesetzt werden.");
+            d.rides.splice(idx, 1);
+          }
+          // schon weg -> nichts zu tun (idempotent, kein Fehler)
+          continue;
+        }
+        if (idx < 0)
+          return dynConflict("UNDO_STALE", "Die Fahrt wurde inzwischen geloescht und kann nicht automatisch zurueckgesetzt werden.");
+        const cur = d.rides[idx];
+        const flds = undoChangedFields(prev, next);
+        // Vorpruefung: alle betroffenen Felder muessen noch den Nachher-Wert
+        // dieser Aktion tragen. Erst wenn ALLE passen, wird zurueckgesetzt.
+        for (const k of flds)
+          if (JSON.stringify(cur[k]) !== JSON.stringify(next[k]))
+            return dynConflict("UNDO_STALE", "Die Fahrt wurde inzwischen erneut geaendert und kann nicht automatisch zurueckgesetzt werden.");
+        for (const k of flds) {
+          if (Object.prototype.hasOwnProperty.call(prev, k)) cur[k] = structuredClone(prev[k]);
+          else delete cur[k]; // Feld existierte vor dieser Aktion gar nicht -> entfernen
+        }
+      }
       return d;
     });
     if (res && res.ok) {
