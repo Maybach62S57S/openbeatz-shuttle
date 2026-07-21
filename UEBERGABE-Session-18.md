@@ -6035,3 +6035,42 @@ grant execute on function guest_report_issue(text, text, text, text, text) to an
 
 **Diese SQL-Session ist ab jetzt NICHT mehr der naheliegende naechste Schritt**
 (siehe aktualisierter Opener unten) — erst nach dem 27.07.2026 wieder aufgreifen.
+
+## Session (20.07.2026): Presence-Toggles No-op (letzte Pre-Festival-Session)
+
+Rein additive Stabilitaets-Haertung, kein SQL, kein Live-RPC. Die drei
+Presence-Schreib-Handler in `MissionReturnsTab` (Leitstelle-only, `tab==="returns"`,
+nicht reachable aus Driver/Stage/Guest) bekommen je einen No-op-Guard nach dem
+bestehenden `NO_CHANGE`-Vertrag: ein erneutes Setzen des bereits geltenden
+Zielzustands schreibt nicht mehr (kein `dyn_rev+1`, kein globaler Poll-/Render-
+Zyklus, kein doppelter Log-Eintrag). Reduziert Schreib-Contention in der
+heissesten Festival-Phase.
+
+Aenderung (3 Zeilen in `src/ShuttleLeitstelle.jsx`):
+- `setNoReturn`:      `if (cur.noReturn === value) return NO_CHANGE;`
+- `setManualPresence`:`if (value === null ? cur.manual === undefined : cur.manual === value) return NO_CHANGE;`
+- `addManualArtist`:  `if (cur.manual === "here") return NO_CHANGE;`
+
+Strikter `===`-Vergleich mit Absicht: nur der exakt gleiche Zielzustand wird
+geschluckt, jeder echte Wechsel (true<->false, "here"<->"away", clear) schreibt
+weiter. **Bewusst abgesegnete Nuance:** ein erneutes Setzen desselben Werts
+ueberschreibt `by`/`at` nicht mehr (Attribution bleibt beim urspruenglichen
+Setzer des aktuellen Werts) — konsistent mit dem Guest-Confirm-No-op.
+
+Test: neu `smoke-presence-noop.mjs` (22/0): Verhaltenstest der replizierten
+Mutator-Bodies (erstmaliges Setzen schreibt, gleicher Wert = No-op, echter
+Wechsel schreibt, clear-wenn-leer = No-op), `by`/`at`-Nuance, 3 Gegenproben
+(Guard entfernt -> No-op-Fall schreibt doch), 3 Quell-Anker.
+
+Verifikationskette: esbuild gruen, Duplikat-Grep leer, Zeilenzahl 13180,
+alle uebrigen smoke/gegenprobe gruen, rendertest 25053/2452/2413/2895/101
+konstant, kontrast 0.
+
+### Weitere gefundene Punkte fuer spaetere Sessions
+- `smoke-teilpaket-g2-ui.mjs` Test 14/20 ("Fahrer A idle am Festival" /
+  "Fahrer A in der Frei-Liste") sind wanduhr-abhaengig: der Test baut `DAY`
+  aus `new Date()` und die Precondition haengt am `computeDriverStats`-
+  Zeitfenster. Dadurch je nach Tageszeit gruen (51/0) oder rot (49/2),
+  unabhaengig vom Code (auf sauberem HEAD identisch reproduzierbar, durch die
+  Presence-Aenderung nachweislich unveraendert). Kandidat: Test auf feste
+  `now`/`DAY` fixieren. NICHT in dieser Session gefixt (ausser Thema).

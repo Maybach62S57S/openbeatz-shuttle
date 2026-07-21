@@ -8922,6 +8922,7 @@ function MissionReturnsTab({ setup, dyn, day, updateDyn, by, onErr, onAssign, on
     const res = await updateDyn((d) => {
       d.artistPresence = d.artistPresence || {};
       const cur = d.artistPresence[name] || {};
+      if (cur.noReturn === value) return NO_CHANGE; // schon im Zielzustand -> kein rev-Bump/Poll
       d.artistPresence[name] = { ...cur, noReturn: value, by, at: Date.now() };
       return d;
     });
@@ -8931,6 +8932,7 @@ function MissionReturnsTab({ setup, dyn, day, updateDyn, by, onErr, onAssign, on
     const res = await updateDyn((d) => {
       d.artistPresence = d.artistPresence || {};
       const cur = d.artistPresence[name] || {};
+      if (value === null ? cur.manual === undefined : cur.manual === value) return NO_CHANGE; // schon im Zielzustand -> kein rev-Bump/Poll
       if (value === null) { const { manual, ...rest } = cur; d.artistPresence[name] = { ...rest, by, at: Date.now() }; }
       else d.artistPresence[name] = { ...cur, manual: value, by, at: Date.now() };
       return d;
@@ -8944,6 +8946,7 @@ function MissionReturnsTab({ setup, dyn, day, updateDyn, by, onErr, onAssign, on
     const res = await updateDyn((d) => {
       d.artistPresence = d.artistPresence || {};
       const cur = d.artistPresence[name] || {};
+      if (cur.manual === "here") return NO_CHANGE; // schon manuell anwesend -> kein rev-Bump/Poll
       d.artistPresence[name] = { ...cur, manual: "here", by, at };
       return d;
     });
