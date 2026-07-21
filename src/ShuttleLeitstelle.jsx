@@ -6851,7 +6851,7 @@ function waArtistText(setup, ride) {
     "Your shuttle is confirmed.",
     `Pickup time: ${ride.time}`,
     `Pickup location: ${waLoc(setup, ride.fromId, ride.fromCustom)}${ride.meetingPoint ? `, ${ride.meetingPoint}` : ""}`,
-    drv ? `Driver: ${drv.firstName}${drv.phone ? ` (${drv.phone})` : ""}` : null,
+    drv ? `Driver: ${drv.firstName}` : null,
     veh ? `Vehicle: ${veh}` : null,
     `Destination: ${waLoc(setup, ride.toId, ride.toCustom)}${ride.zone ? ` – ${ride.zone}` : ""}`,
     "If anything changes, please contact us.",
