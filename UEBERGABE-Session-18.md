@@ -6074,3 +6074,286 @@ konstant, kontrast 0.
   unabhaengig vom Code (auf sauberem HEAD identisch reproduzierbar, durch die
   Presence-Aenderung nachweislich unveraendert). Kandidat: Test auf feste
   `now`/`DAY` fixieren. NICHT in dieser Session gefixt (ausser Thema).
+
+## Session (21.07.2026): Go-Live-Freigabesession Teil 1 (Bloecke F/A/C/B)
+
+Neuer Auftragsrahmen: Jordan hat die **letzte Stabilitaets- und Freigabesession
+vor dem Livebetrieb** gestartet (14 Aufgabenbloecke A-N, finale Testsuite,
+manueller Mehrrollen-Abnahmetest, Abschlussbericht mit GO/GO-mit-Restrisiken/
+NO-GO-Entscheidung). Umfang zu gross fuer eine Sitzung -> mit Jordan auf eine
+priorisierte Reihenfolge geeinigt (Risiko zuerst, dann Inventur, dann Rest):
+**F -> A -> C -> B -> [D/E/I/J/K -> G/H/L -> M/N + finale Suite/Bericht]**.
+Diese Session deckt F/A/C/B ab.
+
+### Schritt 0
+HEAD/origin/main bei Sessionstart: `c1370e3`. Alle 5 genannten Vorfahren-
+Commits bestaetigt. Gast-SQL-Idempotenz-Session verifiziert: weiterhin NICHT
+umgesetzt (keine `_v2`-RPCs, kein `p_skip_if_set`, passt zum bekannten Stand).
+Volle Regression zu Sessionbeginn gruen (37/37 Standarddateien; g2-ui zeigte
+5 statt der dokumentierten 2 roten Tests, siehe eigener Abschnitt unten).
+
+### Block F: Fallback-/Supabase-Betriebsart — GEPRUEFT, SAUBER, kein Fix
+Kernfrage: kann ein temporaerer Supabase-Ausfall im Produktivbetrieb zu einem
+stillen lokalen Schatten-Schreibpfad fuehren? **Nein.** Belegt:
+- `hasSupabase()` (Z. 98) ist eine reine Boot-Zeit-Entscheidung basierend auf
+  `VITE_SUPABASE_URL`/`_ANON_KEY` in `main.jsx` (Z. 7-14), NIE zur Laufzeit neu
+  gesetzt (einziger Zuweisungs-Treffer im ganzen Repo).
+- `window.storage` wird nur an 2 Stellen ueberhaupt beruehrt (`sget`/`sset`,
+  Z. 472/501), beide fest hinter `if (hasSupabase())`. Kein Bypass.
+- Echte Supabase-Fehler (Netzwerk/RLS/Timeout) werden bewusst NICHT abgefangen
+  (Kommentare Z. 463-469, 483-492, verweisen auf einen bereits behobenen
+  frueheren Bug), sondern geworfen und landen als sichtbarer `loadError`/
+  `connIssue` (Banner in allen Rollenansichten), nie als stiller lokaler Write.
+- Bei Supabase + leerer Erstantwort werden NIE automatisch Demo-/Seed-Daten
+  zurueckgeschrieben (Z. 926-932), um genau das zu verhindern.
+- Randrisiko (niedrig, kein Live-Datenverlust-Pfad): fehlen die Env-Variablen
+  beim echten Deploy versehentlich, laeuft die Prod-App auf dem reinen
+  In-Memory-Fallback (nicht persistent, kein Sync) — sofort offensichtlich
+  kaputt, kein subtiler Fehler. Gehoert in die Deploy-Checkliste (Block M).
+
+### Block A: Undo-System — BUG GEFUNDEN UND GEFIXT, committed `611245c`
+Kritisches Szenario (Leitstelle A aendert Feld X, Leitstelle B aendert
+inzwischen ein ANDERES Feld derselben Fahrt, A drueckt Rueckgaengig) mit
+Simulation bewiesen: das alte Undo ersetzte die betroffene Fahrt als GANZES
+Objekt (`d.rides[idx] = prev`), B's Feld ging dabei still verloren. Traf
+Prioritaet 1 (Datenverlust) und 2 (falsche Fahrerzuweisung) direkt.
+
+**Fix (feine Variante, mit Jordan abgestimmt):** feldbezogene
+Konfliktpruefung.
+- `pushUndoEntry` speichert zusaetzlich `next` (Nachher-Zustand der Aktion).
+- Neue reine Hilfsfunktion `undoChangedFields(prev, next)` (Diff, `rev`
+  ausgenommen).
+- `undo`-Mutator nimmt nur die von der Aktion tatsaechlich veraenderten Felder
+  zurueck, und nur wenn der frische Serverstand dort noch exakt den
+  Nachher-Wert der Aktion traegt. Sonst `dynConflict("UNDO_STALE", ...)`,
+  kein Schreiben, keine Revision, Eintrag bleibt (erneut versuchbar).
+  Sonderfaelle sauber: von A erstellte Fahrt (nur loeschen wenn unveraendert),
+  inzwischen geloeschte Fahrt (kontrollierter Konflikt statt Wiederbelebung).
+
+`updateDyn`/`runCasWrite`/`sset`/CAS-Kern unangetastet. Diff-Umfang: +54/-6
+Zeilen, exakt im geplanten Bereich (Verdrahtungsplan vorher gezeigt, Freigabe
+eingeholt).
+
+Test: neu `smoke-undo-fein.mjs` (28/0) — extrahiert `undoChangedFields` UND
+den `undo`-Mutator-Body VERBATIM aus der Quelle (kein Nachbau), Zwei-Client-
+Simulation mit getrennten Undo-Stacks pro Geraet (realistisch: A und B haben
+je einen eigenen `undoStackRef`), alle 10 Auftrags-Testfaelle + Pflicht-
+Gegenprobe (Mutator ohne Feldpruefung -> B's Feld wird nachweisbar
+ueberschrieben, Test kippt korrekt). Volle Regression danach gruen
+(g2-ui: bekannte Wanduhr-Faelle, siehe unten). Rendertest-Referenzwerte
+konstant. Commit `611245c`, gepusht, HEAD==origin/main verifiziert.
+
+**Manuelle Testfaelle fuer den spaeteren Live-Abnahmetest** (zwei Leitstellen-
+Browser A/B): (1) A aendert Zeit, B weist Fahrer zu, A Undo -> Zeit zurueck,
+B's Fahrer bleibt. (2) A und B aendern dasselbe Feld, A Undo -> Konflikt-
+meldung, B's Wert bleibt. (3) A aendert, B storniert, A Undo -> Konflikt,
+keine Wiederbelebung. (4) A legt neue Testfahrt an, sofort Undo -> geloescht.
+(5) A und B aendern unabhaengige Fahrten, A Undo -> nur A's Fahrt betroffen.
+
+### Block C: Berechtigungen Client/Backend — GEPRUEFT, kein Code-Fix
+**Backend (SQL/RLS):** bereits grundlegend gehaertet (Nachtrag 3 vom 10.07.
+und Nachtrag 5, beide im Schema dokumentiert). RLS auf allen 6 Tabellen aktiv.
+Schreibzugriff laeuft ausschliesslich ueber `SECURITY DEFINER`-RPCs mit festem
+`search_path`, alle direkten Schreib-Policies entfernt (Direkt-REST-Schreiben
+per anon-Key dicht). `guest_tokens` nicht mehr direkt lesbar. Gast-RPCs echt
+token-scoped (id UND dj_name), schreiben nur Flags/Log/Issues.
+
+**Bewusst offen, deckt sich mit dem zurueckgestellten PIN-Thema (nicht
+proaktiv angesprochen, nur bestaetigt):** `read_settings`/`read_drivers`
+bleiben `using(true)` (haengt an fehlendem echtem Login), `driver_state`/
+`driver_locations` GPS-Lesen offen.
+
+**Client-Rollen-Gating (4 Rollen einzeln durchgesehen):** StageApp exakt 1
+Schreibpfad (nur Issues), GuestApp 3 Schreibpfade (je 1 Flag, No-op-Guard
+gegen Doppeltipp), DriverApp UI zeigt/bedient nur eigene Fahrten
+(`driverDay`-Filter). Alles sauber.
+
+**2 dokumentierte Restrisiken, beide mit Jordan besprochen, beide NICHT vor
+dem Festival fixen:**
+1. **Fahrer-Owner-Guard fehlt:** `advance`/`goBack` (Z. ~3067/3090) pruefen
+   `RIDE_GONE`/`STATUS_CHANGED`, aber NICHT `assignedDriverId === driver.id`.
+   Theoretisch koennte ein Fahrer per manipuliertem Request den Status einer
+   fremden Fahrt aendern (kein regulaerer UI-Weg dahin, bekannter Taeterkreis
+   ~20 Fahrer, im Log nachvollziehbar, kein Datenverlust/PII-Leck). **->
+   Nachfestival-Punkt:** Ein-Zeilen-Guard `if (r.assignedDriverId !==
+   driver.id) return dynConflict(...)` in beiden Mutatoren, mit Tests gegen
+   legitime Kanten (Fahrt wird waehrend des Tippens umverteilt).
+2. **`guest_session`-RPC liefert komplette Ride-Objekte** (inkl. internem
+   `notes`-Feld) an den Gast-Browser, nicht nur die in der UI gezeigten
+   Felder. Jordan bestaetigt: fuer Artist-Fahrten unproblematisch, Notes
+   duerfen die Gaeste sehen, betrifft ohnehin nur eigene Fahrten. **Kein
+   Fix, akzeptiertes Restrisiko, niedrig.**
+
+### Block B: Statusuebergaenge-Audit — GEPRUEFT, SAUBER, keine Guard-Luecke
+Zustandsmodell: `planned -> accepted -> enroute_pickup -> onboard -> done`
+(+`cancelled`), `STATUS_FLOW`/`STATUS_PREV`/`STATUS_LABEL` als einzige
+Quelle. Automatisierte Analyse aller 34 `updateDyn`-Schreibpfade (Skript
+klassifiziert: aendert Status/Zuteilung? hat `dynConflict`/`NO_CHANGE`-Guard?)
++ manuelle Verifikation der kritischen Pfade. **Einziger Heuristik-Treffer
+war ein False Positive** (Import-Mutator legt nur NEUE Fahrten mit
+Initialstatus an, kein Uebergang eines bestehenden Datensatzes).
+
+Zwei hervorzuhebende, bereits vorhandene Absicherungen:
+- Fahrt-Bearbeiten-Mutator (Z. ~12637) destrukturiert `status,
+  assignedDriverId, issues, log, statusHistory` + alle Timestamps bewusst
+  heraus, schreibt nur die restlichen Felder — ein veralteter Formular-Stand
+  kann diese Felder STRUKTURELL nicht ueberschreiben.
+- Davor zusaetzlich eine `updatedAt`-Kollisionspruefung mit Rueckfrage
+  ("wurde inzwischen von X geaendert...").
+
+Kein Code geaendert (reine Inventur, wie vom Auftrag fuer diesen Block
+vorgesehen).
+
+### Wanduhr-Flaky-Test, praezisierter Befund
+`smoke-teilpaket-g2-ui.mjs` zeigte in dieser Session 5 statt der bisher
+dokumentierten 2 roten Tests (14, 20, 25, 26, 27). Ursache exakt eingekreist
+(Debug-Analyse mit `computeDriverStats`/`sortMin`/`dayNowMin`): der Test baut
+seine "vor 2 Stunden erledigte Fahrt" als `nm - 120`. Laeuft der Test zwischen
+**06:00 und 08:00 Uhr Systemzeit**, faellt dieser Wert automatisch in das
+00:00-05:59-Fenster, fuer das `sortMin()` (Z. 705) eine bewusste
+Nacht-Konvention hat (Fahrten dort sortieren ans Tagesende, weil sie noch zur
+Vornacht gehoeren) — das kippt die Testvorbedingung, nicht den App-Code.
+Per `git stash`/sauberem HEAD bestaetigt: reproduzierbar unabhaengig vom
+Code. **Kein App-Bug** — zusaetzlich verifiziert anhand echter Seed-
+Beispieldaten (`festDayKey()` ordnet z. B. eine Fahrt am 24.07. um 01:30 Uhr
+korrekt dem Festivaltag 23.07. zu, nichts geht verloren). Praezisiertes
+Zeitfenster fuer den bereits vorgemerkten Fix-Kandidaten ("Test auf feste
+now/DAY fixieren"): **06:00-08:00 Uhr**, nicht nur der eine Moment.
+
+### Weitere gefundene Punkte fuer spaetere Sessions (NICHT in dieser Session gefixt)
+- Fahrer-Owner-Guard in `advance`/`goBack` (siehe Block C, Punkt 1) —
+  Nachfestival.
+- `smoke-teilpaket-g2-ui.mjs` Test 14/20/25/26/27 auf feste `now`/`DAY`
+  fixieren, Zeitfenster jetzt praezise bekannt: 06:00-08:00 Uhr.
+
+### Stand nach dieser Session
+`src/ShuttleLeitstelle.jsx` 13228 Zeilen. HEAD == origin/main == `611245c`.
+40 Test-Dateien (39 + neu `smoke-undo-fein.mjs`). Bloecke F/A/C/B der
+Go-Live-Freigabesession abgeschlossen. Naechster Schritt: **Block D
+(Fehlerpfade und UI-Wiederherstellung)**, danach E/I/J/K (teils schon durch
+Sessions 1-4 mitabgedeckt, gezielt nachpruefen statt neu aufrollen), dann
+G/H/L, dann M/N + finale Testsuite (`smoke-final-live-readiness.mjs`,
+20 Punkte) + manueller Mehrrollen-Abnahmetest + Abschlussbericht mit
+GO/GO-mit-Restrisiken/NO-GO-Entscheidung.
+
+### Ready-to-paste Opener fuer die naechste Session
+
+> Neue Session, OpenBeatz Shuttle-Leitstelle, Fortsetzung der Go-Live-
+> Freigabesession (letzte Stabilitaetssession vor dem Livebetrieb).
+> Arbeitsverzeichnis MUSS `/home/claude/repo` sein. Erst Schritt 0 komplett,
+> bevor irgendetwas Inhaltliches passiert:
+>
+> 1. Repo klonen (frischer PAT von mir), nach `/home/claude/repo`, PAT sofort
+>    danach aus der Remote-URL scrubben (`git remote set-url`). `CLAUDE.md`
+>    "kein PAT noetig" gilt NUR fuer Claude Code, nicht fuer diese Chat-Umgebung.
+> 2. `npm ci`, git config (`j.merg@merg-and-more.de` / Jordan Merg).
+> 3. `git log --graph --oneline --all` UND `git fetch`, HEAD == origin/main
+>    (per `git log --oneline -1` selbst pruefen, nicht raten). Letzter
+>    CODE-Commit ist `611245c` ("Undo feldbezogen: Fremdaenderung wird nicht
+>    mehr still ueberschrieben (Block A)"). Kamen seitdem nur reine
+>    Doku-Commits dazu, ist der Code-Stand exakt dieser.
+> 4. Exakte Zeilenzahl `src/ShuttleLeitstelle.jsx` pruefen: **13228**.
+> 5. Volle Bestands-Regression, ALLES gruen, bevor irgendwas Neues gebaut
+>    wird: esbuild (gruen), Duplikat-Grep mit `[a-zA-Z0-9_]+`. Fuer Teilpaket
+>    B/E/G ZUERST `python3 extract-funcs-teilpaket-{b,e,g}.py
+>    src/ShuttleLeitstelle.jsx tmp-t{b,e,g}-funcs.mjs`, DANN alle
+>    `smoke*.mjs`/`gegenprobe*.mjs` (39 Dateien, inkl. NEU
+>    `smoke-undo-fein.mjs` 28/0). Achtung: die aelteren
+>    `smoke.mjs`/`smoke27*.mjs`/`smoke-*` mit `process.argv[2]` brauchen den
+>    Dateipfad als Argument. Extrakte danach wieder loeschen (nicht
+>    committen). Weiter: `rendertest.mjs` (5 Referenzwerte konstant:
+>    25053/2452/2413/2895/101), `kontrast.mjs` (0).
+>    `gegenprobe-teilpaket-h-rpc-postgres.mjs` NICHT Teil der Standard-
+>    Regression.
+>
+> WICHTIG bekannter Flaky-Test: `smoke-teilpaket-g2-ui.mjs` Tests
+> 14/20/25/26/27 ("Fahrer A idle am Festival" / "in der Frei-Liste" /
+> Vorschlags-Status/Badge/Label) sind WANDUHR-abhaengig, praezise
+> eingekreistes Fenster: **Systemzeit zwischen 06:00 und 08:00 Uhr** kippt
+> genau diese 5, jede andere Uhrzeit sollte sauber durchlaufen. Wenn NUR
+> diese fuenf roten auftauchen UND die aktuelle Systemzeit in diesem Fenster
+> liegt: kein Alarm, mit `git stash`/sauberem HEAD gegenpruefen (dort
+> identisch), dann als bekannt-flaky behandeln. Jede ANDERE Roete = echter
+> STOPP.
+>
+> Wenn ein Punkt (ausser dem bekannten Flaky oben) nicht gruen ist: STOPP,
+> mir melden, nicht weiterbauen.
+>
+> ## Kontext: Go-Live-Freigabesession (14 Bloecke A-N)
+> Dies ist die letzte Stabilitaets- und Freigabesession vor dem Livebetrieb
+> (Festival 23.-27.07.2026). Keine neuen Funktionen, keine Designaenderungen,
+> keine grossen Refactorings. Prioritaet: 1. Datenverlust verhindern,
+> 2. falsche Fahrerzuweisungen verhindern, 3. veralteten lokalen State
+> verhindern, 4. doppelte fachliche Aktionen verhindern, 5. Fehler sichtbar/
+> wiederholbar behandeln, 6. sicheren Rollback ermoeglichen, 7. keine
+> riskanten Last-Minute-Umbauten. Verbindliche Grenzen: keine neuen Features/
+> Designaenderungen/State-Management-Umbauten/Single-File-Aufteilung/neue
+> Tabellen/Rollen-Workflow-Aenderungen/Feld-Umbenennungen/Stil-Optimierungen/
+> kosmetische Cleanups/grossflaechige Aenderungen an funktionierendem Code.
+> Jeder Fix muss ein konkret belegtes Live-Risiko beheben, mit gezieltem Test
+> abgesichert. Im Zweifel dokumentieren statt kurz vor dem Festival umbauen.
+> Am Ende soll eine belastbare GO/GO-MIT-RESTRISIKEN/NO-GO-Entscheidung
+> moeglich sein, basierend auf echten Codepruefungen und Tests, nicht auf
+> Vermutungen.
+>
+> **Bereits abgeschlossen (siehe UEBERGABE-Session-18.md, Abschnitt "Go-Live-
+> Freigabesession Teil 1" fuer volle Details):**
+> - Block F (Fallback/Supabase): sauber, kein Fix noetig.
+> - Block A (Undo): Bug gefunden+gefixt (feldbezogene Konfliktpruefung),
+>   committed `611245c`, Test `smoke-undo-fein.mjs`.
+> - Block C (Rechte Client/Backend): Backend solide gehaertet, kein Fix.
+>   2 dokumentierte Restrisiken (Fahrer-Owner-Guard in advance/goBack,
+>   guest_session liefert komplette Ride-Objekte inkl. internem notes-Feld —
+>   von Jordan als akzeptabel bestaetigt), beide bewusst NICHT vor dem
+>   Festival fixen.
+> - Block B (Statusuebergaenge): Inventur sauber, keine Guard-Luecke
+>   gefunden, kein Fix noetig.
+>
+> **PIN-Sicherheitsthema:** wie in allen bisherigen Sessions NICHT proaktiv
+> ansprechen, nur wenn ich es explizit anspreche.
+>
+> **Naechstes Thema dieser Session: Block D (Fehlerpfade und UI-
+> Wiederherstellung)**, danach in dieser Reihenfolge weiter: E (Offline/
+> Reconnect), I (Error Boundary), J (Timer/Listener/Cleanup), K (Push-Matrix)
+> — diese vier gezielt nachpruefen statt neu aufrollen, da grossteils schon
+> durch die fruehren Sessions 1-4 (Polling/Schreibnebenwirkungen/
+> Schreibkonflikte/GuestApp-Haertung) abgedeckt. Danach G (Mehrbenutzer-/
+> Lastsimulation), H (Datenvalidierung/Import), L (Datenschutz/Logs). Zum
+> Schluss M (Deployment-/Rollback-Anleitung), N (Betriebshandbuch fuer
+> das Festivalteam als eigene Markdown-Datei), die finale Testsuite
+> (`smoke-final-live-readiness.mjs`, mindestens 20 Punkte + Pflicht-
+> Gegenproben), der manuelle Mehrrollen-Abnahmetest (dokumentiert, ehrlich
+> kennzeichnen ob tatsaechlich durchgefuehrt oder nur als Anleitung erstellt)
+> und der Abschlussbericht mit finaler GO/GO-MIT-RESTRISIKEN/NO-GO-
+> Entscheidung.
+>
+> Falls ich (Jordan) das urspruengliche vollstaendige Auftragsdokument mit
+> allen Detailanforderungen pro Block noch parat habe, fuege ich es hier
+> nochmal komplett an — die Kurzfassung oben deckt Struktur/Prioritaet/
+> Grenzen ab, aber nicht jedes Detail pro Block (v. a. Block G, M, N und die
+> finale Testsuite haben granulare Einzelanforderungen, die im Original
+> praeziser stehen als hier zusammengefasst).
+>
+> Regeln unveraendert: rein additiv wo moeglich, kleinstmoeglich, keine
+> Breaking Changes, keine Workflow-/Rollen-/Stage-Aenderungen, keine
+> DB-Struktur-Aenderungen (ausser zwingend noetig), keine kosmetischen
+> Refactorings, keine Performance-Optimierungen ausserhalb des Themas. Vor
+> jeder Code-Aenderung: Verdrahtungsplan + genaue Einfuegestelle +
+> Regressionsrisiko zeigen und meine Freigabe abwarten. Nach jeder Aenderung:
+> volle Kette + Diff-Beweis + konkrete manuelle Testfaelle. Bugs ausserhalb
+> des aktuellen Themas -> "Weitere gefundene Punkte fuer spaetere Sessions",
+> NICHT fixen. FREEZE AUFGEHOBEN seit 20.07. Festival laeuft 23.-27.07.
+> Proaktiv warnen, bevor der Chat zu lang wird — bei einem Auftrag dieser
+> Groesse lieber frueher als spaeter einen sauberen Schnitt mit Uebergabe
+> vorschlagen. Nur eine Session gleichzeitig offen. `git fetch` unmittelbar
+> vor jedem Push. Commit-Messages mit Umlauten immer ueber `/tmp/msg.txt` +
+> `git commit -F`. Jede Aenderung, die Live-Daten betrifft, kommt mit
+> passendem Supabase-SQL-Nachtrag. `return NO_CHANGE` /
+> `return dynConflict("CODE","...")` weiter nutzbar fuer neue Mutatoren;
+> Diagnose live unter `window.__obfWriteStats`.
+
+**Stand nach dieser Session:** Bloecke F/A/C/B der Go-Live-Freigabesession
+abgeschlossen. `src/ShuttleLeitstelle.jsx` 13228 Zeilen, Commit `611245c`,
+gepusht, HEAD==origin/main. 2 dokumentierte Restrisiken (Fahrer-Owner-Guard,
+Gast-notes-Feld), beide bewusst nicht vor dem Festival gefixt. Naechster
+Schritt: Block D.
