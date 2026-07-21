@@ -1571,6 +1571,60 @@ function MissionControlFallbackScreen({ reason }) {
   );
 }
 
+// ============================================================================
+// Aeusserste Auffang-Boundary fuer die GESAMTE App (main.jsx umschliesst <App/>
+// damit). Faengt Renderfehler ab, die AUSSERHALB des MC-Zweigs auftreten - also
+// in DriverApp/StageApp/GuestApp/Login oder im App-Root selbst - und sonst zum
+// Weissbild fuehren wuerden. Der MC-Zweig behaelt seine eigene, speziellere
+// MissionControlBoundary (die faengt zuerst und sperrt MC gezielt); diese hier
+// ist nur das Netz darunter fuer die uebrigen Rollen.
+//
+// WICHTIG - wie MissionControlBoundary: KEIN Datenzugriff, kein updateDyn/
+// updateSetup, kein sset, kein localStorage. Einziger Seiteneffekt ist
+// console.error. Ein abgefangener Renderfehler kann also keine Daten aendern.
+// Recovery = Neu laden (Knopf im Fallback-Screen). Kein Session-Lock noetig: die
+// aeussere Boundary faengt keinen 3s-Poll-Re-Render eines gesperrten Teilbaums,
+// sie ist der letzte Auffang vor dem Weissbild.
+export class AppErrorBoundary extends Component {
+  constructor(props) {
+    super(props);
+    this.state = { failed: false };
+  }
+  static getDerivedStateFromError() {
+    // Render-Phase: nur den Fehlerzustand setzen (kein Seiteneffekt hier).
+    return { failed: true };
+  }
+  componentDidCatch(error, info) {
+    // Effekt-Phase: protokollieren. Kein Datenzugriff, kein localStorage.
+    console.error("App-Renderfehler abgefangen, Fehlerseite statt Weissbild:", error, info);
+  }
+  render() {
+    if (this.state.failed) return <AppFallbackScreen />;
+    return this.props.children;
+  }
+}
+
+// Neutrale Vollbild-Fehlerseite fuer die aeussere Boundary. Bewusst rollenneutral
+// (kann Fahrer, Stage, Gast oder Leitstelle treffen) und zweisprachig, weil der
+// Gast-Link standardmaessig Englisch ist. Reine Anzeige plus Reload, KEIN
+// Datenzugriff. Stone-Look wie MissionControlFallbackScreen (kein mc-scope).
+function AppFallbackScreen() {
+  const reload = () => { try { window.location.reload(); } catch {} };
+  return (
+    <div className="min-h-screen w-full flex flex-col items-center justify-center gap-4 bg-stone-950 text-stone-300 px-6 text-center">
+      <img src={OB_HORIZ} alt="Open Beatz" style={obInvert} className="h-10 w-auto opacity-90" />
+      <AlertTriangle className="w-8 h-8 text-amber-400" />
+      <div className="font-mono text-sm text-stone-100">Etwas ist schiefgelaufen · Something went wrong</div>
+      <div className="text-xs text-stone-500 max-w-sm">Bitte die Seite neu laden. Bereits gespeicherte Daten bleiben erhalten.</div>
+      <div className="text-xs text-stone-500 max-w-sm">Please reload the page. Any data already saved is preserved.</div>
+      <button type="button" onClick={reload}
+        className="mt-1 flex items-center gap-2 text-sm px-4 py-2 rounded-lg bg-stone-800 hover:bg-stone-700 text-stone-100 border border-stone-700 transition-colors">
+        <RefreshCw className="w-4 h-4" /> Neu laden · Reload
+      </button>
+    </div>
+  );
+}
+
 // Dezentes Hinweis-Banner für einen fehlgeschlagenen Polling-Zyklus (kurzer
 // Netzwerk-Hänger o. ä.) — reißt die laufende Ansicht bewusst NICHT weg,
 // zeigt nur an, dass der letzte Datenabgleich nicht geklappt hat. Rein

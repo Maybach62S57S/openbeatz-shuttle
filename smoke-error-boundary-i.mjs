@@ -16,12 +16,13 @@
 //   I5  Kein Renderfehler veraendert Daten: der einzige Seiteneffekt der Boundary
 //       ist onFallback; sie erhaelt keine Schreib-Props.
 //
-// Zusaetzlich als DOKUMENTIERTER Befund (kein Test-Fail, sondern Nachweis der
-// Abdeckungsgrenze): die Boundary umschliesst NUR den MC-/Leitstellen-Zweig.
-// Fahrer/Stage/Gast/Login laufen ausserhalb -> ein Renderfehler DORT ist aktuell
-// NICHT abgefangen (Weissbild, Reload nur manuell). Der Test weist das als
-// bekannte Grenze aus (I6), damit es nicht faelschlich als "ueberall abgefangen"
-// gilt.
+//   I6  Abdeckung: der MC-Zweig behaelt seine eigene, speziellere Boundary
+//       (genau eine Verwendung), UND die GESAMTE App ist zusaetzlich aussen durch
+//       AppErrorBoundary in main.jsx umschlossen -> Fahrer/Stage/Gast/Login sind
+//       ebenfalls gegen Weissbild abgesichert (frueher offene Luecke, jetzt zu).
+//   I7  Die NEUE AppErrorBoundary + AppFallbackScreen: getDerivedStateFromError,
+//       render (Kinder vs. Fehlerseite), componentDidCatch ohne Datenmutation,
+//       zweisprachiger Reload-Screen - inkl. Laufzeit-Render (nicht nur esbuild).
 //
 // SSR-Hinweis: renderToStaticMarkup faengt Error Boundaries in React 18 NICHT
 // (getDerivedStateFromError/componentDidCatch feuern im Server-Render nicht).
@@ -49,12 +50,14 @@ const rawSrc = fs.readFileSync(srcFile, "utf8");
 // --- Wegwerf-Kopie mit Export (Original unangetastet) ----------------------
 const tag = Math.random().toString(36).slice(2);
 const copy = "/tmp/eb-src-" + tag + ".jsx";
-fs.writeFileSync(copy, rawSrc + "\nexport { MissionControlBoundary, MissionControlFallbackScreen, LoadErrorScreen };\n");
+// AppErrorBoundary ist in der Quelle bereits `export class` -> NICHT erneut
+// listen (sonst doppelter Export). AppFallbackScreen ist lokal -> anhaengen.
+fs.writeFileSync(copy, rawSrc + "\nexport { MissionControlBoundary, MissionControlFallbackScreen, LoadErrorScreen, AppFallbackScreen };\n");
 const out = "/home/claude/repo/.eb-" + tag + ".mjs";
 execSync(`./node_modules/.bin/esbuild ${copy} --bundle=false --format=esm --jsx=automatic --outfile=${out}`);
 const M = await import(out);
 fs.unlinkSync(out); fs.unlinkSync(copy);
-const { MissionControlBoundary, MissionControlFallbackScreen, LoadErrorScreen } = M;
+const { MissionControlBoundary, MissionControlFallbackScreen, LoadErrorScreen, AppErrorBoundary, AppFallbackScreen } = M;
 
 // ===========================================================================
 // I1  getDerivedStateFromError -> { failed: true }, ohne Seiteneffekt
@@ -148,21 +151,54 @@ const { MissionControlBoundary, MissionControlFallbackScreen, LoadErrorScreen } 
 }
 
 // ===========================================================================
-// I6  DOKUMENTIERTER Befund (kein Fail): Abdeckungsgrenze der Boundary.
-// Die Boundary umschliesst NUR den MC-Zweig. Fahrer/Stage/Gast/Login sind
-// NICHT umschlossen -> ein Renderfehler dort ist aktuell nicht abgefangen.
-// Der Test WEIST das nach (statt es faelschlich als abgedeckt zu behaupten).
+// I6  Abdeckung: der MC-Zweig hat weiterhin seine eigene, speziellere Boundary
+// (genau eine Verwendung), UND die GESAMTE App ist zusaetzlich aussen durch die
+// AppErrorBoundary in main.jsx umschlossen -> Fahrer/Stage/Gast/Login sind jetzt
+// ebenfalls gegen Weissbild abgesichert (Luecke geschlossen).
 // ===========================================================================
 {
-  // Genau eine MissionControlBoundary-Verwendung, und die steht im MC-Zweig.
   const uses = (rawSrc.match(/<MissionControlBoundary/g) || []).length;
-  eq(uses, 1, "I6 genau EINE MissionControlBoundary im Render-Baum (nur MC-Zweig)");
-  // Fahrer/Stage/Gast/Login werden NICHT von einer Boundary umschlossen:
-  // heuristisch - in derselben Zeile wie der Rollen-Return steht keine Boundary.
-  const roleLines = rawSrc.split("\n").filter((l) => /<(DriverApp|StageApp|GuestApp|Login) /.test(l));
-  ok(roleLines.length >= 3, "I6 Rollen-Zweige Fahrer/Stage/Gast/Login im Quelltext gefunden");
-  const anyWrapped = roleLines.some((l) => l.includes("Boundary"));
-  ok(!anyWrapped, "I6 BEFUND: Fahrer/Stage/Gast/Login sind NICHT von einer Boundary umschlossen (bekannte Grenze)");
+  eq(uses, 1, "I6 genau EINE MissionControlBoundary im Render-Baum (nur MC-Zweig, speziellere Meldung)");
+  // main.jsx umschliesst <App/> mit AppErrorBoundary (aeusserstes Netz).
+  const mainSrc = fs.readFileSync("src/main.jsx", "utf8");
+  ok(/import App, \{ AppErrorBoundary \} from ".\/ShuttleLeitstelle\.jsx";/.test(mainSrc),
+     "I6 main.jsx importiert AppErrorBoundary");
+  ok(/<AppErrorBoundary>[\s\S]*<App \/>[\s\S]*<\/AppErrorBoundary>/.test(mainSrc),
+     "I6 main.jsx umschliesst <App/> mit AppErrorBoundary (Fahrer/Stage/Gast/Login abgesichert)");
+}
+
+// ===========================================================================
+// I7  Die NEUE AppErrorBoundary + AppFallbackScreen verhalten sich korrekt und
+// rendern ohne undefinierte Referenz (Laufzeit-Beweis, nicht nur esbuild).
+// ===========================================================================
+{
+  // getDerivedStateFromError -> failed:true
+  eq(AppErrorBoundary.getDerivedStateFromError(new Error("x")), { failed: true },
+     "I7 AppErrorBoundary.getDerivedStateFromError -> failed:true");
+  // render: failed=false -> Kinder; failed=true -> Fehlerseite (kein Weissbild)
+  const inst = new AppErrorBoundary({ children: React.createElement("div", null, "APP-KINDER") });
+  inst.state = { failed: false };
+  ok(renderToStaticMarkup(inst.render()).includes("APP-KINDER"), "I7 render(failed=false) -> Kinder");
+  inst.state = { failed: true };
+  const fbHtml = renderToStaticMarkup(inst.render());
+  ok(fbHtml.length > 0 && !fbHtml.includes("APP-KINDER"), "I7 render(failed=true) -> Fehlerseite statt Kinder");
+  // componentDidCatch: nur console.error, KEINE Datenmutation (kein onFallback noetig)
+  const origErr = console.error; console.error = () => {};
+  let threw = false;
+  try { inst.componentDidCatch(new Error("boom"), { componentStack: "" }); } catch { threw = true; }
+  console.error = origErr;
+  ok(!threw, "I7 componentDidCatch wirft nicht");
+  // AppFallbackScreen: zweisprachig + Reload, Laufzeit-Render ok
+  const html = renderToStaticMarkup(AppFallbackScreen());
+  ok(/Neu laden|Reload/i.test(html), "I7 AppFallbackScreen hat Reload-Knopf");
+  ok(/schiefgelaufen|went wrong/i.test(html), "I7 AppFallbackScreen hat verstaendlichen (zweisprachigen) Text");
+  // strukturell: AppErrorBoundary-Koerper ohne Schreibweg
+  const s = rawSrc.indexOf("export class AppErrorBoundary");
+  const e = rawSrc.indexOf("\n}\n", s);
+  const body = rawSrc.slice(s, e).replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/[^\n]*/g, "");
+  for (const verboten of ["updateDyn", "updateSetup", "sset(", "localStorage", "saveSession", "sbSet"]) {
+    ok(!body.includes(verboten), `I7 AppErrorBoundary-Koerper ohne "${verboten}" (keine Datenmutation)`);
+  }
 }
 
 // ===========================================================================
@@ -192,5 +228,5 @@ let gpKippte = false;
 console.log(`\nBlock-I Error-Boundary Smoke: ${pass} OK, ${fail} FAIL`);
 if (fail) { console.log("FEHLER:"); fails.forEach((f) => console.log("  - " + f)); process.exit(1); }
 console.log(gpKippte ? "Gegenprobe I-GP: kippte wie erwartet." : "Gegenprobe I-GP: NICHT gekippt!");
-console.log("BEFUND I6: Boundary deckt nur den MC-Zweig ab (Fahrer/Stage/Gast/Login ungeschuetzt).");
+console.log("I6: MC-Zweig hat eigene Boundary; App gesamt zusaetzlich via AppErrorBoundary (main.jsx) abgesichert.");
 console.log("ALLE GRUEN");
