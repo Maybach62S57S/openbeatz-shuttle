@@ -6624,3 +6624,130 @@ Abnahmetest + Abschlussbericht.
 abgeschlossen. `src/ShuttleLeitstelle.jsx` 13282 Zeilen, letzter CODE-Commit
 `dd1f95f`, gepusht, HEAD==origin/main. 3 neue Tests (D/E/I), Standard-
 Regression 42 Dateien gruen. Naechster Schritt: Block J.
+
+---
+
+## Go-Live-Freigabesession Teil 3 (J/K/L/H)
+
+**Abgeschlossen in diesem Chat (alle read-only Audits + 1 Fix):**
+
+- **Block J (Timer/Listener/Cleanup):** sauber. Alle 7 `setInterval`, beide
+  rekursiven Polls (`cancelled`/`stopped`+`mountedRef`+`pollGenRef`), Effekt-
+  Timeouts, online/offline, keydown/pointer, ResizeObserver, GPS `watchPosition`
+  und Push-Subscribe korrekt aufgeraeumt. StrictMode ist an, Doppel-Invoke aber
+  nur im Dev-Build; Polls sind dokumentiert idempotent. **0 Fixes.**
+  - Weitere gefundene Punkte fuer spaetere Sessions: **flashIds-Effekt
+    (Z. 12144, MissionControl) ohne Timer-Cleanup** — N Einmal-Timer (1600 ms)
+    werden nicht gesammelt/geraeumt, anders als der Pulse-Zwilling Z. 9731.
+    KEIN Leak (Timer terminieren selbst, Zaehler selbstausgleichend), unter
+    React 18 stiller No-op bei Unmount, rein praesentational. Fix nach dem
+    Festival: `let timers=[]` vor dem if, `fresh.forEach`->`timers=fresh.map`,
+    `return () => timers.forEach(clearTimeout)`; Pflicht: Smoke-Test fuer den
+    Zaehler-nach-Cleanup-Fall mit Gegenprobe.
+
+- **Block K (Push-Matrix):** sauber. Alle 13 Push-Ausloeser diszipliniert:
+  Push immer NACH bestaetigtem Save, nie im CAS-Mutator, nie bei dynConflict
+  (RIDE_GONE), nie bei NO_CHANGE (Gast-Confirm/AtPickup ueber `saved`/
+  `!res.unchanged`, Flug ueber echten Statuswechsel `before!==saved.flightStatus`).
+  Doppel-Feuer an den Einstiegen abgefangen (`inFlightRef`/`sending`/
+  `assignBusyRef`). `triggerPush`/`triggerDispatcherPush` sind fire-and-forget,
+  behandeln 4xx/5xx + HTTP-200-mit-`ok:false` + Netzwerkfehler. **0 Fixes.**
+
+- **Block L (Datenschutz/Logs):** Gast-UI + Gast-Text (`guestInfoText`) zeigen
+  kein Fahrer-Telefon, nur `guestNote` (nicht internes `notes`). Logs (42
+  `console.*`) ohne Tokens/Telefon/PIN/PII. **1 FIX:** `waArtistText` gab die
+  private Fahrer-Nummer an den Artist/Manager weiter, inkonsistent zum
+  gehaerteten Gast-Link -> jetzt nur Vorname + Fahrzeug. Commit `50467ee`,
+  Test `smoke-artisttext-privacy-l.mjs` (12/0) mit Laufzeit-Gegenprobe +
+  Quell-Drift-Check. `waDriverText` unveraendert (interne Notiz bleibt).
+  Bewusst KEINE coordinationPhone ergaenzt (Default ist noch Demo-Nummer ->
+  Fake-Nummer-Risiko; Artist antwortet ohnehin im Dispatcher-WhatsApp-Thread).
+
+- **Block H (Datenvalidierung/Import):** sauber. Pflichtfelder Datum+Uhrzeit
+  hart, `validPassengerCount` (keine stille 1), robuste Header-Erkennung,
+  Dedup gegen Bestand UND Datei (`rideSig`), `importing`-Doppelklick-Guard,
+  stabile IDs VOR dem Mutator (CAS-retry-sicher), zweiphasiger Schreibvorgang
+  mit erhaltener Vorschau bei Fehler. **matchLoc ist BEREITS GEFIXT** (Stand
+  21.07. im Code, deckt alle 2026-Orte ab: sheraton/moevenpick/karl_august/
+  leonardo/hbf_nue/airport_muc/gat_nue/airport + Festival-Zonen + custom).
+  Die alte Notiz "matchLoc-Fix Z. 7676 offen" ist ueberholt. **0 Fixes.**
+  - Kleine Notiz (nicht tracking-wuerdig): Datumsparser interpretiert `DD/MM`
+    europaeisch; fuer die Festivaltage 23.-27.07. folgenlos (alle Tage > 12,
+    nicht als Monat missdeutbar), plus Off-Festival-Datum-Warnung als Netz.
+
+**Stand nach diesem Chat:** `src/ShuttleLeitstelle.jsx` weiter **13282** Zeilen,
+letzter CODE-Commit **`50467ee`** (Block L), gepusht, HEAD==origin/main.
+Standard-Regression jetzt **43** smoke/gegenprobe-Dateien (42 alt +
+`smoke-artisttext-privacy-l.mjs`), alles gruen. rendertest 5 Werte konstant,
+kontrast 0.
+
+**Offene Restrisiken (fuer den Abschlussbericht sammeln):**
+- Block E: RLS/Session nicht separat vom Verbindungsfehler gelabelt (niedrig).
+- Block C: Fahrer-Owner-Guard in advance/goBack; guest_session liefert komplette
+  Ride-Objekte inkl. internem `notes`-Feld (UI rendert es nicht, aber im Payload).
+- Block F: fehlende Env-Variablen -> reiner In-Memory-Fallback (Deploy-Checkliste M).
+- Gast-Idempotenz-SQL nicht umgesetzt.
+- Block J: flashIds-Cleanup fehlt (harmloser React-18-No-op, post-Festival).
+
+---
+
+> **Fertiger Opener fuer den naechsten Chat (Go-Live-Freigabesession Teil 4: G/M/N + Finale):**
+>
+> Neue Session, OpenBeatz Shuttle-Leitstelle, Fortsetzung der Go-Live-Freigabe.
+> Arbeitsverzeichnis MUSS /home/claude/repo. Erst Schritt 0 komplett:
+> Repo klonen (frischer PAT von mir), PAT sofort aus der Remote-URL scrubben
+> (`git remote set-url`; Push spaeter einmalig mit inline-PAT, nicht in Config
+> speichern). `npm ci`, git config (j.merg@merg-and-more.de / Jordan Merg).
+> `git fetch` + selbst pruefen HEAD==origin/main. **Letzter CODE-Commit ist
+> `50467ee`** ("Block L: Fahrer-Telefonnummer aus Artist-Text entfernen").
+> Kamen nur Doku-Commits dazu, ist der Code-Stand exakt dieser. Exakte
+> Zeilenzahl `src/ShuttleLeitstelle.jsx`: **13282**.
+>
+> Volle Bestands-Regression, ALLES gruen, bevor Neues: esbuild, Duplikat-Grep
+> `[a-zA-Z0-9_]+` (der `function c`-Treffer beim `[a-zA-Z]+`-Grep ist Artefakt
+> der c3*-Funktionen). Fuer Teilpaket B/E/G ZUERST
+> `python3 extract-funcs-teilpaket-{b,e,g}.py src/ShuttleLeitstelle.jsx
+> tmp-t{b,e,g}-funcs.mjs`, DANN alle smoke*.mjs/gegenprobe*.mjs (**43 Dateien**
+> in der Standard-Regression, neu seit Teil 3: `smoke-artisttext-privacy-l.mjs`
+> 12/0). Aufruf-Argument: die meisten nehmen den Dateipfad als `process.argv[2]`;
+> NUR `smoke-fehlerpfade-d.mjs` ist self-contained. Extrakte danach loeschen
+> (nicht committen). Weiter: `rendertest.mjs` (5 Werte konstant
+> 25053/2452/2413/2895/101), `kontrast.mjs` (0).
+> `gegenprobe-teilpaket-h-rpc-postgres.mjs` NICHT Teil der Standard-Regression.
+>
+> Bekannter Flaky-Test: `smoke-teilpaket-g2-ui.mjs` Tests 14/20/25/26/27 sind
+> wanduhr-abhaengig, Fenster 06:00-08:00 Uhr kippt genau diese 5. Nur wenn genau
+> diese fuenf rot sind UND die Uhrzeit im Fenster liegt: kein Alarm, mit sauberem
+> HEAD gegenpruefen, als bekannt-flaky behandeln. Jede ANDERE Roete = echter STOPP.
+>
+> Bereits abgeschlossen (Details oben in Teil 1/2/3): Bloecke F, A(Fix), C, B,
+> D(Test), E(Test), I(Fix), J, K, L(Fix `50467ee`), H. **matchLoc ist bereits
+> gefixt** (nicht erneut anfassen). PIN-Sicherheitsthema wie immer NICHT
+> proaktiv ansprechen.
+>
+> **Naechste Themen dieser Session:** G (Mehrbenutzer-/Lastsimulation 20 Fahrer
+> + 2 Leitstellen + 3 Stage + Gaeste; ehrlich kennzeichnen was simuliert vs.
+> echt getestet). Dann M (Deployment-/Rollback-Anleitung; inkl. Env-Variablen-
+> Checkliste, Supabase-Deploy, Rollback-Weg). N (Betriebshandbuch
+> `GO_LIVE_OPENBEATZ_2026.md`). Finale Testsuite `smoke-final-live-readiness.mjs`
+> (>=20 Punkte + Pflicht-Gegenproben; baut auf D/E/I-Tests auf). Manueller
+> Mehrrollen-Abnahmetest (ehrlich kennzeichnen: durchgefuehrt oder nur
+> Anleitung). Abschlussbericht mit finaler GO/GO-MIT-RESTRISIKEN/NO-GO-
+> Entscheidung; dort ALLE offenen Restrisiken sammeln: Block-E-Labeling,
+> Block-C Owner-Guard + guest-notes, Block-F Env-Fallback, Gast-Idempotenz-SQL
+> nicht umgesetzt, Block-J flashIds-Cleanup.
+>
+> Regeln unveraendert: rein additiv wo moeglich, kleinstmoeglich, keine Breaking
+> Changes, keine Workflow-/Rollen-/Stage-Aenderungen, keine DB-Struktur-
+> Aenderungen (ausser zwingend), keine kosmetischen Refactorings/Performance-
+> Optimierungen ausserhalb des Themas. Vor jeder Code-Aenderung: Verdrahtungsplan
+> + Einfuegestelle + Regressionsrisiko zeigen, meine Freigabe abwarten. Nach jeder
+> Aenderung: volle Kette + Diff-Beweis + konkrete manuelle Testfaelle. Bugs
+> ausserhalb des Themas -> "Weitere gefundene Punkte", NICHT fixen. FREEZE
+> AUFGEHOBEN seit 20.07. Festival 23.-27.07. Proaktiv vor zu langem Chat warnen.
+> Nur eine Session gleichzeitig. `git fetch` unmittelbar vor jedem Push.
+> Commit-Messages mit Umlauten ueber `/tmp/msg.txt` + `git commit -F`. Jede
+> Live-Daten-Aenderung mit passendem Supabase-SQL-Nachtrag. Neue Tests:
+> standalone `.mjs`, Quelle zeilengetreu replizieren oder Wegwerf-Kopie+Export,
+> IMMER Pflicht-Gegenprobe, Drift-Check gegen die Quelle wenn Texte/Logik
+> verankert werden.
