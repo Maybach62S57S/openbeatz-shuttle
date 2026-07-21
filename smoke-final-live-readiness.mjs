@@ -60,8 +60,9 @@ R(artistBlk.length > 0 && !artistBlk.includes("drv.phone"), "R8: waArtistText oh
 R(artistBlk.includes("Driver: ${drv.firstName}"), "R8: waArtistText zeigt Fahrer-Vorname");
 R(has("static getDerivedStateFromError() {"), "R9: getDerivedStateFromError vorhanden");
 R(has("if (this.props.onFallback) this.props.onFallback(error);"), "R9: componentDidCatch ruft onFallback");
-{ const bi = SRC.indexOf("componentDidCatch(error, info) {"); const b = SRC.slice(bi, bi + 300);
-  R(bi >= 0 && !/updateDyn|updateSetup|localStorage|await sset/.test(b), "R9: Error-Boundary-Effektphase schreibt keine Daten"); }
+{ const bi = SRC.indexOf("componentDidCatch(error, info) {");
+  const b = SRC.slice(bi, bi + 400).replace(/\/\/[^\n]*/g, ""); // Kommentare raus, nur echter Code
+  R(bi >= 0 && !/updateDyn\(|updateSetup\(|localStorage|\bsset\(|\bsget\(/.test(b), "R9: Error-Boundary-Effektphase schreibt keine Daten (Kommentare gestrippt)"); }
 R(has("<ConnIssueBanner message={connIssue} offline={isOffline} reconnected={justReconnected} />"), "R10: ConnIssueBanner verdrahtet");
 R(has("const [justReconnected, setJustReconnected] = useState(false);"), "R11: justReconnected-Zustand");
 R(SRC.includes("manuell") && SRC.includes("flightStatus"), "R14: Flug-Handling (manuell gewinnt)");
