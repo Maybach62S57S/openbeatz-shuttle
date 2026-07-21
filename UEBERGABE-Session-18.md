@@ -6357,3 +6357,270 @@ abgeschlossen. `src/ShuttleLeitstelle.jsx` 13228 Zeilen, Commit `611245c`,
 gepusht, HEAD==origin/main. 2 dokumentierte Restrisiken (Fahrer-Owner-Guard,
 Gast-notes-Feld), beide bewusst nicht vor dem Festival gefixt. Naechster
 Schritt: Block D.
+
+## Session (21.07.2026): Go-Live-Freigabesession Teil 2 (Bloecke D/E/I)
+
+Fortsetzung der Go-Live-Freigabesession. Diese Session deckt **D/E/I** ab
+(Reihenfolge laut Plan: F/A/C/B -> D/E/I/J/K -> G/H/L -> M/N + finale Suite/
+Bericht). Arbeitsweise wie Teil 1: erst analysierend, Verdrahtungsplan +
+Freigabe vor jeder Code-Aenderung, danach volle Kette + Diff-Beweis.
+
+### Schritt 0
+HEAD/origin/main bei Sessionstart: `73322e6` (reiner Doku-Commit). Letzter
+CODE-Commit `611245c`, Code-Stand also exakt dieser. Alle 5 bekannten
+Vorfahren-Commits (7541f0d/5949338/31746ce/a2d91c0/c6d5095) als Ancestor
+bestaetigt. `src/ShuttleLeitstelle.jsx` exakt 13228 Zeilen. Volle Bestands-
+Regression gruen: 39 Standard-Testdateien (34 smoke + 5 gegenprobe, ohne
+`gegenprobe-teilpaket-h-rpc-postgres.mjs`) + rendertest (5 Werte
+25053/2452/2413/2895/101) + kontrast (0). Systemzeit 08:32 UTC -> ausserhalb
+des g2-ui-Flaky-Fensters (06:00-08:00), g2-ui lief ohnehin gruen (51/0).
+Einziger Stolperstein war mein eigener Aufruf-Fehler (rendertest/smoke/smoke27*
+brauchen den Quelldateipfad als `process.argv[2]`) — nach Korrektur alles
+gruen. Der `function c`-Treffer beim reinen `[a-zA-Z]+`-Duplikat-Grep ist ein
+Artefakt (bricht an der Ziffer bei den acht `c3*`-Praefix-Funktionen ab); mit
+`[a-zA-Z0-9_]+` sauber, keine echten Duplikate.
+
+### Block D: Fehlerpfade / UI-Wiederherstellung — GEPRUEFT, SAUBER, kein Fix
+Alle kritischen Aktionen (Zuweisung, Fahrerstatus, Fahrt speichern, Loeschen/
+Storno, Problem melden/loesen, Timeline-DnD, Gastaktionen, Setup/Import, Chat-
+Aktion) einzeln durchgesehen. Durchgaengig gehaertet: Ergebnis awaitet + `ok`
+geprueft (kein falscher Erfolg), Push strikt NACH bestaetigtem Save, Busy-Reset
+im `finally` (kein haengender Busy-State), Modal bleibt bei Fehler offen
+(Eingaben erhalten, Retry moeglich), ueberall Fallback-Meldung.
+
+Ein Kandidat geprueft und entkraeftet: `friendlyError(e?.message, null)`
+(Z. ~2531) liefert bei nicht-Netz-Fehlern (RLS/unerwartet) `null`. Waere nur
+riskant, wenn ein Aufrufer `res.error` OHNE Fallback anzeigt — Grep ueber alle
+20 Fehler-Anzeige-Stellen: JEDE hat `|| "Fallback-Text"`. Kein leerer/roher
+Durchgriff. Rohfehler-Schutz pro Rolle bestaetigt: Fahrer -> `notify` mit
+Fallback; Gast -> fest verdrahtete englische Texte (nie `res.error`); Stage ->
+fest verdrahtet; Leitstelle -> `notifyErr`-Toasts (8s, max 4). `triggerPush`/
+`triggerDispatcherPush` vollstaendig try/catch-gekapselt -> Push-Fehler wirft
+nie zurueck, erzeugt nie einen falschen Speicherfehler.
+
+Kein Code geaendert. Test: neu `smoke-fehlerpfade-d.mjs` (55/0) — repliziert
+`friendlyError`/`runCasWrite`-catch/`triggerPush`-Muster/Aufrufer-Wrapper
+zeilengetreu, prueft die Aufrufer-/UI-Wiederherstellungs-Invarianten, die
+contention/sideeffects NICHT abdecken. `friendlyError`-Replik byte-identisch
+zur Quelle verifiziert; Kaputte-Referenz-Gegenbeweis (Rohtext leakt -> D1/D2/
+D-GP kippen); Pflicht-Gegenprobe D-GP (ohne Aufrufer-Fallback wird UI-Meldung
+leer). Commit `a5fe041`, gepusht, HEAD==origin/main.
+
+### Block E: Offline / Reconnect — GEPRUEFT, SAUBER, kein Fix (1 Doku-Restrisiko)
+8 Auftragsfragen durch: (1) ehrliches Amber-Offline-Banner ("Aenderungen gehen
+verloren, bitte erneut tippen" — KEINE falsche Queue-Zusage) vs. rotes
+Abgleichfehler-Banner online, jeweils ueber dem zuletzt bekannten Stand, kein
+Rohfehlertext (message nur als truthy-Flag). (2/3) Aktionen klickbar, scheitern
+aber sauber (Block D), kein optimistisches Update -> kein falscher Erfolg.
+(4/5) `online`-Event loescht `isOffline`; Poll laeuft durch (Deps
+`[loading, loadError]`, NICHT offline-gated) -> Selbstheilung. (6) Monotonie-
+Guards `shouldAcceptPolledDyn`/`shouldAcceptRevision` + CAS-liest-frisch +
+`hasSupabase()`-bleibt-true-bei-Ausfall -> kein lokaler Schatten. (7)
+`setConnIssue(null)` bei jedem Erfolgs-Poll; `justReconnected` nur beim echten
+Uebergang (BEIDE Bad-Flags weg), 4s Auto-Hide. (8) drei distinkte Banner
+Offline/Abgleichfehler/Reconnected.
+
+**Doku-Restrisiko (niedrig, kein Fix):** RLS/Berechtigungsfehler und Laufzeit-
+Session-Verlust werden im Banner nicht separat vom generischen
+Verbindungsfehler unterschieden. Fuer den Festivalbetrieb akzeptabel (gleiche
+richtige Reaktion "Verbindung pruefen/erneut versuchen"; RLS-Fehlkonfig faellt
+beim Deploy-Smoke-Test auf). Startup-ungueltige Session wird behandelt (->
+Login). Gehoert in den Abschlussbericht unter Restrisiken (niedrig).
+
+Kein Code geaendert. Test: neu `smoke-offline-reconnect-e.mjs` (39/0) — deckt
+`ConnIssueBanner`-Prioritaet/Meldung, `justReconnected`-Uebergang (nicht bei
+WLAN-zurueck-aber-Server-tot, nicht beim ersten Laden), Offline-beim-Laden ->
+`loadError` statt leerer Ansicht, `hasSupabase()`-Entscheidung (kein Schatten),
+Selbstheilung. VERANKERT gegen die Quelle (Banner-Texte + Uebergangsbedingung,
+Drift-Nachweis bestaetigt). Pflicht-Gegenprobe E-GP (kaputte Bedingung feuert
+faelschlich bei totem Server). Commit `b203136`, gepusht, HEAD==origin/main.
+
+### Block I: Error Boundary — BEFUND + FIX, committed `dd1f95f`
+`MissionControlBoundary` (Klassen-Komponente) ist einwandfrei:
+`getDerivedStateFromError -> {failed:true}` ohne Seiteneffekt,
+`componentDidCatch` nur console.error + `onFallback` (kein Datenzugriff, kein
+updateDyn/updateSetup/localStorage), Crash-Loop-Sperre via `mcBlocked` (nur
+Speicher, Reload gibt frei), Fallback-Screen mit "Neu laden", kein `key` (kein
+versehentliches Remount). Umschliesst aber NUR den MC-/Leitstellen-Zweig.
+
+**Befund (konkretes Live-Risiko):** Fahrer/Stage/Gast/Login laufen ausserhalb
+jeder Boundary -> ein Renderfehler dort fuehrte zum WEISSBILD ohne Reload-Knopf.
+`main.jsx` mountete `<App/>` direkt.
+
+**Fix (mit Verdrahtungsplan + Freigabe, rein additiv):**
+- `src/ShuttleLeitstelle.jsx`: neue `export class AppErrorBoundary extends
+  Component` + neutrale, zweisprachige `AppFallbackScreen` (Reload). Gleiches
+  Muster/Stil wie MissionControlBoundary/-FallbackScreen. KEIN Datenzugriff,
+  einziger Effekt console.error. Kein Session-Lock (aeusserstes Netz).
+- `src/main.jsx`: `import App, { AppErrorBoundary }` + `<App/>` aussen mit
+  `<AppErrorBoundary>` umschlossen.
+
+Der MC-Zweig behaelt seine eigene, speziellere Boundary (faengt zuerst); die
+neue ist das Netz darunter fuer die uebrigen Rollen. Diff +54/-0 in
+ShuttleLeitstelle.jsx, 2 minimale Hunks in main.jsx.
+
+Verifikation: esbuild beide Dateien gruen, Duplikat-Grep sauber, Symbol-Cross-
+Check ok, **rendertest 5 Referenzwerte KONSTANT** (Wrap liegt in main.jsx,
+NICHT in App -> App-Root-Render unveraendert 25053), kontrast 0, volle
+Regression (42 Dateien) gruen. Zeilenanker `src/ShuttleLeitstelle.jsx`
+**13228 -> 13282** (rein additiv). Test erweitert: `smoke-error-boundary-i.mjs`
+(37/0) — rendert die neuen Komponenten zur LAUFZEIT (Referenz-Beweis, nicht nur
+esbuild), I6 prueft jetzt den main.jsx-Wrap (Luecke zu), I7 neu fuer
+AppErrorBoundary/AppFallbackScreen. Pflicht-Gegenprobe I-GP + Quell-Gegenbeweis
+(Boundary ohne `getDerivedStateFromError` -> Test bricht) bestaetigt.
+Commits: `315561b` (Test zuerst, Befund dokumentiert), `dd1f95f` (Fix + Test-
+Erweiterung).
+
+**Manuelle Testfaelle (fuers Deploy/Abnahme):** (1) Fahrer-App mit
+provoziertem Renderfehler -> zweisprachiger "schiefgelaufen/went wrong"-Screen
+mit Reload statt Weissbild. (2) Nach Reload startet App normal (Session via
+localStorage). (3) MC-Crash -> weiterhin die speziellere MC-Fehlerseite (innere
+Boundary zuerst). (4) Gast-Link-Fehler -> englischer Reload-Hinweis. (5) Happy
+Path aller vier Rollen unveraendert (kein Screen im Normalbetrieb).
+
+### Stand nach dieser Session
+`src/ShuttleLeitstelle.jsx` **13282 Zeilen**. Letzter CODE-Commit `dd1f95f`
+(Block-I-Fix). **43 Test-Dateien insgesamt** (Teil-1-Stand 40 + neu in Teil 2:
+`smoke-fehlerpfade-d.mjs`, `smoke-offline-reconnect-e.mjs`,
+`smoke-error-boundary-i.mjs`), davon **42 in der Standard-Regression**
+(`gegenprobe-teilpaket-h-rpc-postgres.mjs` weiter ausgeschlossen). Bloecke
+D/E/I abgeschlossen. rendertest-5-Werte unveraendert. Naechster Schritt:
+**Block J (Timer/Listener/Cleanup)**, danach K (Push-Matrix), G (Last-
+simulation), H (Import-Validierung), L (Logs), dann M/N + finale Suite +
+Abnahmetest + Abschlussbericht.
+
+### Offene Doku-Punkte fuer den Abschlussbericht (nicht vergessen)
+- Block E Restrisiko (niedrig): RLS/Session nicht separat vom Verbindungsfehler
+  gelabelt.
+- Block C Restrisiken (aus Teil 1, weiter offen): Fahrer-Owner-Guard,
+  guest_session-notes-Feld.
+- Block F Randrisiko (aus Teil 1): fehlende Env-Variablen -> reiner In-Memory-
+  Fallback (Deploy-Checkliste Block M).
+- Gast-Idempotenz-SQL weiterhin NICHT umgesetzt (verbleibender Go-live-Punkt).
+
+### Ready-to-paste Opener fuer die naechste Session
+
+> Neue Session, OpenBeatz Shuttle-Leitstelle, Fortsetzung der Go-Live-
+> Freigabesession (letzte Stabilitaetssession vor dem Livebetrieb).
+> Arbeitsverzeichnis MUSS `/home/claude/repo` sein. Erst Schritt 0 komplett,
+> bevor irgendetwas Inhaltliches passiert:
+>
+> 1. Repo klonen (frischer PAT von mir), nach `/home/claude/repo`, PAT sofort
+>    danach aus der Remote-URL scrubben (`git remote set-url`). `CLAUDE.md`
+>    "kein PAT noetig" gilt NUR fuer Claude Code, nicht fuer diese Chat-Umgebung.
+> 2. `npm ci`, git config (`j.merg@merg-and-more.de` / Jordan Merg).
+> 3. `git log --graph --oneline --all` UND `git fetch`, HEAD == origin/main
+>    (per `git log --oneline -1` selbst pruefen, nicht raten). Letzter
+>    CODE-Commit ist `dd1f95f` ("Block I: Top-Level-AppErrorBoundary fuer
+>    Fahrer/Stage/Gast/Login"). Kamen seitdem nur reine Doku-Commits dazu, ist
+>    der Code-Stand exakt dieser.
+> 4. Exakte Zeilenzahl `src/ShuttleLeitstelle.jsx` pruefen: **13282**.
+> 5. Volle Bestands-Regression, ALLES gruen, bevor irgendwas Neues gebaut
+>    wird: esbuild (gruen), Duplikat-Grep mit `[a-zA-Z0-9_]+` (der `function c`-
+>    Treffer beim reinen `[a-zA-Z]+`-Grep ist ein Artefakt der `c3*`-Funktionen,
+>    daher `[a-zA-Z0-9_]+` nutzen). Fuer Teilpaket B/E/G ZUERST `python3
+>    extract-funcs-teilpaket-{b,e,g}.py src/ShuttleLeitstelle.jsx
+>    tmp-t{b,e,g}-funcs.mjs`, DANN alle `smoke*.mjs`/`gegenprobe*.mjs`
+>    (42 Dateien in der Standard-Regression, NEU seit Teil 2:
+>    `smoke-fehlerpfade-d.mjs` 55/0, `smoke-offline-reconnect-e.mjs` 39/0,
+>    `smoke-error-boundary-i.mjs` 37/0). Achtung Aufruf-Argument: `rendertest`,
+>    `kontrast`, `smoke`, `smoke27*`, `smoke-offline-reconnect-e`,
+>    `smoke-error-boundary-i` und die meisten `smoke-teilpaket-*` brauchen den
+>    Dateipfad als `process.argv[2]` (bzw. nehmen ihn optional); NUR
+>    `smoke-fehlerpfade-d.mjs` ist voellig self-contained (KEIN Argument).
+>    Extrakte danach wieder loeschen (nicht committen). Weiter: `rendertest.mjs`
+>    (5 Referenzwerte konstant: 25053/2452/2413/2895/101), `kontrast.mjs` (0).
+>    `gegenprobe-teilpaket-h-rpc-postgres.mjs` NICHT Teil der Standard-
+>    Regression.
+>
+> WICHTIG bekannter Flaky-Test: `smoke-teilpaket-g2-ui.mjs` Tests
+> 14/20/25/26/27 sind WANDUHR-abhaengig, praezises Fenster: **Systemzeit
+> zwischen 06:00 und 08:00 Uhr** kippt genau diese 5, jede andere Uhrzeit
+> laeuft sauber. Nur wenn genau diese fuenf rot sind UND die Uhrzeit im Fenster
+> liegt: kein Alarm, mit `git stash`/sauberem HEAD gegenpruefen, dann als
+> bekannt-flaky behandeln. Jede ANDERE Roete = echter STOPP, mir melden.
+>
+> ## Kontext: Go-Live-Freigabesession (14 Bloecke A-N)
+> Letzte Stabilitaets- und Freigabesession vor dem Livebetrieb (Festival
+> 23.-27.07.2026). Keine neuen Funktionen, keine Designaenderungen, keine
+> grossen Refactorings. Prioritaet: 1. Datenverlust, 2. falsche
+> Fahrerzuweisung, 3. veralteter lokaler State, 4. doppelte Aktionen,
+> 5. Fehler sichtbar/wiederholbar, 6. sicherer Rollback, 7. keine riskanten
+> Last-Minute-Umbauten. Jeder Fix muss ein konkret belegtes Live-Risiko
+> beheben, mit gezieltem Test. Im Zweifel dokumentieren statt umbauen. Ziel:
+> belastbare GO/GO-MIT-RESTRISIKEN/NO-GO-Entscheidung aus echten Codepruefungen
+> und Tests.
+>
+> **Bereits abgeschlossen (Details in UEBERGABE-Session-18.md, Abschnitte
+> "Go-Live-Freigabesession Teil 1" und "Teil 2"):**
+> - Block F (Fallback/Supabase): sauber, kein Fix. Randrisiko: fehlende
+>   Env-Variablen -> reiner In-Memory-Fallback (Deploy-Checkliste M).
+> - Block A (Undo): Bug gefixt (feldbezogene Konfliktpruefung), `611245c`,
+>   Test `smoke-undo-fein.mjs`.
+> - Block C (Rechte): Backend solide, kein Fix. 2 dokumentierte Restrisiken
+>   (Fahrer-Owner-Guard in advance/goBack; guest_session liefert komplette
+>   Ride-Objekte inkl. internem notes-Feld), beide bewusst NICHT vor dem
+>   Festival fixen.
+> - Block B (Statusuebergaenge): Inventur sauber, kein Fix.
+> - Block D (Fehlerpfade/UI-Wiederherstellung): sauber, kein Fix, Test
+>   `smoke-fehlerpfade-d.mjs` (55/0), `a5fe041`.
+> - Block E (Offline/Reconnect): sauber, 1 Doku-Restrisiko (niedrig: RLS/
+>   Session nicht separat vom Verbindungsfehler gelabelt), Test
+>   `smoke-offline-reconnect-e.mjs` (39/0), `b203136`.
+> - Block I (Error Boundary): FIX (Top-Level-`AppErrorBoundary` fuer Fahrer/
+>   Stage/Gast/Login, additiv, main.jsx-Wrap; MC-Zweig behaelt eigene
+>   Boundary), `dd1f95f`, Test `smoke-error-boundary-i.mjs` (37/0).
+>
+> **PIN-Sicherheitsthema:** wie immer NICHT proaktiv ansprechen, nur wenn ich
+> es explizit anspreche.
+>
+> **Naechstes Thema dieser Session: Block J (Timer/Listener/Cleanup)** —
+> Audit aller `setInterval`/`setTimeout`/Event-/Visibility-/Online-Offline-/
+> GPS-/Push-Listener/Subscriptions/Resize-Keyboard-Listener: Cleanup
+> vorhanden? keine Doppel-Listener nach Remount? kein setState nach Unmount?
+> keine Timerkaskaden? rekursive Polls planen nach Cleanup nicht neu?
+> StrictMode-Doppelmount fuehrt nicht zu doppelten produktiven Effekten? NUR
+> konkrete Leaks/Doppelregistrierungen beheben (mit Verdrahtungsplan+Freigabe),
+> sonst dokumentieren. Danach: K (Push-Matrix: Aktion/Empfaenger/Ausloeser/
+> Save-Erfolg/No-op/Konflikt/Push-Fehler/Doppelung; kein Push vor Save, nicht
+> im CAS-Mutator, kein Push bei NO_CHANGE/dynConflict), G (Mehrbenutzer-/
+> Lastsimulation 20 Fahrer + 2 Leitstellen + 3 Stage + Gaeste, ehrlich
+> kennzeichnen was simuliert vs. echt getestet), H (Datenvalidierung/Import),
+> L (Datenschutz/Logs). Zum Schluss M (Deployment-/Rollback-Anleitung),
+> N (Betriebshandbuch `GO_LIVE_OPENBEATZ_2026.md`), finale Testsuite
+> `smoke-final-live-readiness.mjs` (>=20 Punkte + Pflicht-Gegenproben;
+> baut auf D/E/I-Tests auf, z.B. Punkt 5 Fallback-Trennung ist Block-F/E-nah),
+> manueller Mehrrollen-Abnahmetest (ehrlich kennzeichnen ob durchgefuehrt oder
+> nur Anleitung), Abschlussbericht mit finaler GO/GO-MIT-RESTRISIKEN/NO-GO-
+> Entscheidung (dort ALLE offenen Restrisiken sammeln: Block-E-Labeling,
+> Block-C Owner-Guard + guest-notes, Block-F Env-Fallback, Gast-Idempotenz-SQL
+> nicht umgesetzt).
+>
+> Falls ich (Jordan) das urspruengliche vollstaendige Auftragsdokument mit
+> allen Detailanforderungen pro Block noch parat habe, fuege ich es hier
+> nochmal komplett an — die Kurzfassung deckt Struktur/Prioritaet/Grenzen ab,
+> aber nicht jedes Detail pro Block (v. a. G, M, N und die finale Testsuite).
+>
+> Regeln unveraendert: rein additiv wo moeglich, kleinstmoeglich, keine
+> Breaking Changes, keine Workflow-/Rollen-/Stage-Aenderungen, keine
+> DB-Struktur-Aenderungen (ausser zwingend noetig), keine kosmetischen
+> Refactorings, keine Performance-Optimierungen ausserhalb des Themas. Vor
+> jeder Code-Aenderung: Verdrahtungsplan + genaue Einfuegestelle +
+> Regressionsrisiko zeigen und meine Freigabe abwarten. Nach jeder Aenderung:
+> volle Kette + Diff-Beweis + konkrete manuelle Testfaelle. Bugs ausserhalb des
+> aktuellen Themas -> "Weitere gefundene Punkte fuer spaetere Sessions", NICHT
+> fixen. FREEZE AUFGEHOBEN seit 20.07. Festival laeuft 23.-27.07. Proaktiv
+> warnen, bevor der Chat zu lang wird — lieber frueher einen sauberen Schnitt
+> mit Uebergabe. Nur eine Session gleichzeitig offen. `git fetch` unmittelbar
+> vor jedem Push. Commit-Messages mit Umlauten immer ueber `/tmp/msg.txt` +
+> `git commit -F`. Jede Aenderung, die Live-Daten betrifft, kommt mit passendem
+> Supabase-SQL-Nachtrag. `return NO_CHANGE` / `return dynConflict("CODE","...")`
+> weiter nutzbar; Diagnose live unter `window.__obfWriteStats`. Neue Tests im
+> Stil der bisherigen: standalone `.mjs`, Quelle zeilengetreu replizieren oder
+> per Wegwerf-Kopie+Export importieren, IMMER mit Pflicht-Gegenprobe, und wenn
+> Texte/Logik aus der Quelle verankert werden: Drift-Check gegen die Quelle.
+
+**Stand nach dieser Session:** Bloecke D/E/I der Go-Live-Freigabesession
+abgeschlossen. `src/ShuttleLeitstelle.jsx` 13282 Zeilen, letzter CODE-Commit
+`dd1f95f`, gepusht, HEAD==origin/main. 3 neue Tests (D/E/I), Standard-
+Regression 42 Dateien gruen. Naechster Schritt: Block J.
