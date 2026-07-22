@@ -12377,10 +12377,9 @@ function MissionControl({ setup, dyn, session, updateDyn, updateSetup, onLogout,
             );
           })()}
           {tab === "board" && (() => {
-            const wide = boardWidth >= 960;    // Liste + Fahrer + Karte
             const twoCol = boardWidth >= 640;  // Liste + Fahrer
             const narrow = boardWidth > 0 && boardWidth < 560; // Karten stapeln
-            const cols = wide ? "minmax(360px,1.7fr) minmax(160px,0.8fr) minmax(360px,1.5fr)" : twoCol ? "minmax(300px,2fr) minmax(160px,1fr)" : "1fr";
+            const cols = twoCol ? "minmax(300px,2fr) minmax(160px,1fr)" : "1fr";
             const ridesLoaded = Array.isArray(dyn.rides);
             const boardRides = onlyGroup ? filtered.filter((r) => boardGroupPrimary(r)) : filtered;
             return (
@@ -12518,15 +12517,6 @@ function MissionControl({ setup, dyn, session, updateDyn, updateSetup, onLogout,
                   })}
                 </div>
               </section>
-
-              {/* Live-Karte (nur wenn genug Platz gemessen wurde, mitscrollend) */}
-              {wide && (
-                <section>
-                  <div className="sticky top-4">
-                    <BoardMiniMap setup={setup} dyn={dyn} day={day} SchematicComponent={MissionSchematicMap} onEdit={(r) => { setDay(r.dayKey); setEditRide(r); }} />
-                  </div>
-                </section>
-              )}
             </div>
             );
           })()}
