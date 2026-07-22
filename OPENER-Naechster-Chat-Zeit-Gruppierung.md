@@ -67,8 +67,8 @@ null Treffer auf `MC_NAV`/`mcNavForRole`. Reine Doku-Ungenauigkeit, keine Wirkun
 
 ## 2. Aktueller Stand (Ausgangspunkt)
 
-- `origin/main` = HEAD = **`0e8a951`**
-- Letzter Code-Commit = **`0e8a951`** (HEAD ist selbst der Code-Commit)
+- Letzter **Code**-Commit = **`0e8a951`**
+- HEAD = `origin/main` = der reine Doku-Commit darueber (Hash wandert, kein Anker)
 - `src/ShuttleLeitstelle.jsx` = **13467 Zeilen**
 - Working Tree sauber, keine offenen Branches, kein ungepushter Stand
 - FREEZE AUFGEHOBEN seit 20.07., Loeschungen/Aenderungen wieder erlaubt
@@ -236,7 +236,7 @@ Hier ein neuer Chat fuer das OpenBeatz-Shuttle-Leitstelle-Projekt. Bitte alles a
 
 Schritt 0: Repo klonen (frischer PAT), nach /home/claude/repo, PAT sofort aus der Remote-URL scrubben. npm ci, git config (j.merg@merg-and-more.de / Jordan Merg). git fetch und verifizieren, was wirklich auf dem Server steht statt dem Opener zu glauben, Abweichung sofort melden.
 
-Erwartung: HEAD == origin/main == 0e8a951, src/ShuttleLeitstelle.jsx 13467 Zeilen.
+Erwartung: letzter CODE-Commit == 0e8a951, src/ShuttleLeitstelle.jsx == 13467 Zeilen, HEAD == origin/main == der darauf folgende reine Doku-Commit. Anker ist die Zeilenzahl plus der Code-Commit, NICHT der HEAD-Hash - der wandert bei jedem Doku-Push. HEAD und origin/main muessen aber identisch sein, jede Divergenz sofort melden.
 
 Volle Bestands-Regression gruen, bevor Neues gebaut wird. esbuild, Duplikat-Grep mit [a-zA-Z0-9_] (die Buchstaben-only-Variante meldet faelschlich "function c"). Fuer B/E/G ZUERST python3 extract-funcs-teilpaket-{b,e,g}.py src/ShuttleLeitstelle.jsx tmp-t{b,e,g}-funcs.mjs, dann die 45 Standard-Dateien (alle smoke*.mjs + gegenprobe*.mjs MINUS gegenprobe-teilpaket-h-rpc-postgres.mjs und MINUS smoke-final-live-readiness.mjs).
 
