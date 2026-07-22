@@ -5,7 +5,7 @@ import {
   ArrowRight, Plus, Settings, Upload, LogOut, Radio, Navigation, AlertTriangle,
   RefreshCw, Search, X, Route, Timer, Gauge, ChevronRight, Play, Flag, Ban,
   MessageSquare, Copy, Check, Moon, LayoutGrid, BarChart3, Siren, History, Link2, Eye, Trash2,
-  Smartphone, Wifi, WifiOff, RotateCcw, MoreHorizontal,
+  Smartphone, Wifi, WifiOff, RotateCcw, MoreHorizontal, Crosshair,
 } from "lucide-react";
 
 /* ============================================================================
@@ -12074,6 +12074,11 @@ function MissionControl({ setup, dyn, session, updateDyn, updateSetup, onLogout,
   const [clock, setClock] = useState(nowHM());
   useEffect(() => { const t = setInterval(() => setClock(nowHM()), 20000); return () => clearInterval(t); }, []);
   const [boardRef, boardWidth] = useElementWidth();
+  // Fokus-Bereich: eigene Breitenmessung (boardRef haengt am board-Container und
+  // ist beim Direkteinstieg in "fokus" nie montiert -> waere 0). Plus der
+  // Aufklapp-Zustand des Erledigt-Blocks. Rein presentational.
+  const [focusRef, focusWidth] = useElementWidth();
+  const [focusDoneOpen, setFocusDoneOpen] = useState(false);
 
   const [errToasts, setErrToasts] = useState([]);
   const notifyErr = useCallback((text) => {
@@ -12521,6 +12526,184 @@ function MissionControl({ setup, dyn, session, updateDyn, updateSetup, onLogout,
             );
           })()}
 
+          {/* ---- Fokus-Bereich (eigener Nav-Punkt, Idee B) ------------------ *
+           * Priorisiert statt chronologisch. REIN PRAESENTATIONAL: keine eigene
+           * Zuteilungs-, Status- oder Filterlogik. Quelle fuer "braucht
+           * Aufmerksamkeit" ist ausschliesslich das bereits berechnete emCases
+           * (emergencyCases), alle Aktionen laufen ueber genau dieselben Handler
+           * wie im Fahrten-Tab (setAssignRide/setEditRide/setWaRide). Der
+           * Fahrten-Tab bleibt unberuehrt.
+           * ----------------------------------------------------------------- */}
+          {tab === "fokus" && (() => {
+            const twoCol = focusWidth >= 640;
+            const cols = twoCol ? "minmax(300px,2fr) minmax(150px,1fr)" : "1fr";
+            const ridesLoaded = Array.isArray(dyn.rides);
+
+            // emCases kann mehrere Faelle pro Fahrt liefern (z.B. Problem UND
+            // Flugalarm). Pro Fahrt gewinnt der erste Eintrag, denn emCases ist
+            // bereits critical-vor-warn und darin nach Zeit sortiert.
+            const attnCase = new Map();
+            emCases.forEach((c) => { if (c.r && !attnCase.has(c.r.id)) attnCase.set(c.r.id, c); });
+
+            // Jede Fahrt des Tages landet in genau einem Eimer; die Reihenfolge
+            // der Pruefungen IST die Zuordnungsregel. Summe der vier Eimer ist
+            // immer dayRides.length.
+            const bOpen = [], bRun = [], bDone = [];
+            dayRides.forEach((r) => {
+              if (r.status === "done" || r.status === "cancelled") { bDone.push(r); return; }
+              if (attnCase.has(r.id)) return;              // steht in bAttn
+              if (!r.assignedDriverId) { bOpen.push(r); return; }
+              bRun.push(r);
+            });
+            // bAttn in emCases-Reihenfolge (critical zuerst, dann nach Zeit).
+            const bAttn = [];
+            emCases.forEach((c) => { if (c.r && attnCase.get(c.r.id) === c) bAttn.push(c.r); });
+
+            const head = (label, n, color) => (
+              <div className="mc-eyebrow mb-2 flex items-center gap-2" style={{ color }}>
+                {label}<span className="font-mono tabular-nums">{n}</span>
+              </div>
+            );
+            const hint = (text) => (
+              <div className="text-sm px-3 py-2 rounded-[var(--mc-r-sm)]"
+                style={{ background: "var(--mc-inset)", border: "1px solid var(--mc-border)", color: "var(--mc-text-muted)" }}>{text}</div>
+            );
+
+            // Grosse Karte (Aufmerksamkeit + offen). ca = zugehoeriger emCases-
+            // Eintrag oder null.
+            const bigCard = (r, ca) => {
+              const drv = setup.drivers.find((d) => d.id === r.assignedDriverId);
+              const stripeKey = mcRideStatusKey(r.status, !!r.assignedDriverId);
+              const flashing = !!flashIds[r.id];
+              const CIcon = ca ? (CASE_ICON[ca.type] || AlertTriangle) : null;
+              const crit = !!ca && ca.sev === "critical";
+              return (
+                <div key={r.id} className="mc-ride-card group relative flex items-stretch overflow-hidden"
+                  style={{ boxShadow: flashing ? "0 0 0 2px var(--mc-st-new), var(--mc-shadow)" : undefined,
+                           borderColor: crit ? "var(--mc-st-problem)" : undefined }}>
+                  <span className="w-1 shrink-0 self-stretch" style={{ background: ca ? "var(--mc-st-problem)" : `var(--mc-st-${stripeKey})` }} aria-hidden="true" />
+                  <div className="flex-1 min-w-0 px-4 py-3">
+                    <div className="flex items-center gap-x-4 gap-y-2 flex-wrap">
+                      <div className="font-mono text-lg font-semibold leading-none tabular-nums min-w-[52px] text-center" style={{ color: "var(--mc-text)" }}>{r.time}</div>
+                      <div className="flex-1 min-w-0">
+                        {r.djName && <div className="text-base font-semibold truncate mb-0.5" style={{ color: "var(--mc-text)" }}>{r.djName}</div>}
+                        <div className="flex items-center gap-2 text-sm flex-wrap">
+                          <span style={{ color: "var(--mc-text-secondary)" }}>{locName(r.fromId, r.fromCustom)}</span>
+                          <ArrowRight className="w-3.5 h-3.5 shrink-0" style={{ color: "var(--mc-text-muted)" }} />
+                          <span className="font-medium truncate" style={{ color: "var(--mc-text)" }}>{locName(r.toId, r.toCustom)}</span>
+                          {r.zone && <ZoneChip zone={r.zone} className="shrink-0" />}
+                          <span className="inline-flex items-center gap-1 text-xs" style={{ color: "var(--mc-text-muted)" }}><Users className="w-3 h-3" />{r.passengerCount}</span>
+                          {r.flightNo && <span className="inline-flex items-center gap-1 text-xs" style={{ color: flightDelayed(r) ? "var(--mc-st-problem)" : "var(--mc-st-new)" }}><Plane className="w-3 h-3" />{r.flightNo}</span>}
+                        </div>
+                      </div>
+                      <div className="shrink-0"><StatusBadge status={stripeKey} label={STATUS_LABEL[r.status] || r.status || "—"} /></div>
+                      <div className="shrink-0 w-[140px]">
+                        {drv ? (
+                          <button onClick={() => setAssignRide(r)} title="Fahrer ändern" className="w-full text-left rounded-[var(--mc-r)] px-1.5 py-1 -mx-1.5 hover:bg-white/5 transition-colors">
+                            <div className="text-sm flex items-center gap-1.5" style={{ color: "var(--mc-text)" }}>
+                              <span className="w-2 h-2 rounded-full shrink-0" style={{ background: drv.vehicleType === "Van" ? "var(--mc-st-assigned)" : "var(--mc-st-new)" }} />
+                              {drv.firstName} {drv.lastName[0]}.
+                            </div>
+                          </button>
+                        ) : (
+                          <button onClick={() => setAssignRide(r)}
+                            className="mc-btn-assign w-full text-sm px-2.5 py-1.5 flex items-center justify-center gap-1">
+                            <Navigation className="w-3.5 h-3.5" />Zuteilen
+                          </button>
+                        )}
+                      </div>
+                      <div className="flex items-center gap-0.5 shrink-0 ml-auto">
+                        <button onClick={() => setWaRide(r)} title="WhatsApp-Text" className="mc-iconbtn"><MessageSquare className="w-4 h-4" /></button>
+                        <button onClick={() => setEditRide(r)} title="Fahrt öffnen" className="mc-iconbtn"><ChevronRight className="w-5 h-5" /></button>
+                      </div>
+                    </div>
+                    {ca && (
+                      <div className="mt-2 text-xs px-2.5 py-1.5 rounded-[var(--mc-r-sm)] inline-flex items-center gap-1.5"
+                        style={{ background: "var(--mc-st-problem-soft)", color: "var(--mc-st-problem)" }}>
+                        <CIcon className="w-3.5 h-3.5 shrink-0" />{ca.label}
+                      </div>
+                    )}
+                    {(() => { const gc = boardGroupPrimary(r); return gc ? (
+                      <GroupSuggestionNote candidate={gc} thisRideId={r.id} rides={dyn.rides}
+                        onOpenPartner={(pr) => setEditRide(pr)} onOpenAssign={() => setAssignRide(r)} />
+                    ) : null; })()}
+                  </div>
+                </div>
+              );
+            };
+
+            // Dichte Zeile (laeuft gerade + erledigt).
+            const slimRow = (r) => {
+              const drv = setup.drivers.find((d) => d.id === r.assignedDriverId);
+              const stripeKey = mcRideStatusKey(r.status, !!r.assignedDriverId);
+              return (
+                <div key={r.id} className="flex items-center gap-3 px-3 py-2 rounded-[var(--mc-r-sm)] overflow-hidden"
+                  style={{ background: "var(--mc-panel)", border: "1px solid var(--mc-border)", opacity: r.status === "cancelled" ? 0.6 : 1 }}>
+                  <span className="w-0.5 self-stretch shrink-0" style={{ background: `var(--mc-st-${stripeKey})` }} aria-hidden="true" />
+                  <span className="font-mono text-sm tabular-nums shrink-0" style={{ color: "var(--mc-text)" }}>{r.time}</span>
+                  <span className="text-sm truncate flex-1 min-w-0" style={{ color: "var(--mc-text)" }}>
+                    {r.djName || "—"}<span style={{ color: "var(--mc-text-muted)" }}> · {locName(r.fromId, r.fromCustom)} → {locName(r.toId, r.toCustom)}</span>
+                  </span>
+                  {drv && <span className="text-xs shrink-0 hidden sm:inline" style={{ color: "var(--mc-text-muted)" }}>{drv.firstName} {drv.lastName[0]}.</span>}
+                  <span className="text-xs shrink-0" style={{ color: `var(--mc-st-${stripeKey})` }}>{STATUS_LABEL[r.status] || r.status || "—"}</span>
+                  <button onClick={() => setEditRide(r)} title="Fahrt öffnen" className="mc-iconbtn shrink-0"><ChevronRight className="w-4 h-4" /></button>
+                </div>
+              );
+            };
+
+            return (
+            <div ref={focusRef} className="grid gap-5" style={{ gridTemplateColumns: cols }}>
+              <section>
+                {!ridesLoaded && <LoadingState label="Fahrten werden geladen" />}
+                {ridesLoaded && dayRides.length === 0 && (
+                  <EmptyState icon={Crosshair} title="Für diesen Tag sind keine Fahrten geplant."
+                    action={<button onClick={() => setEditRide({ _new: true, dayKey: day, date: day })} className="mc-btn-primary text-xs px-3 py-1.5 flex items-center gap-1.5"><Plus className="w-3.5 h-3.5" />Fahrt anlegen</button>} />
+                )}
+                {ridesLoaded && dayRides.length > 0 && (
+                  <div className="space-y-5">
+                    <div>
+                      {head("Braucht Aufmerksamkeit", bAttn.length, "var(--mc-st-problem)")}
+                      {bAttn.length === 0 ? hint("Nichts Kritisches offen.")
+                        : <div className="space-y-2">{bAttn.map((r) => bigCard(r, attnCase.get(r.id)))}</div>}
+                    </div>
+                    <div>
+                      {head("Offen, noch Zeit", bOpen.length, "var(--mc-st-assigned)")}
+                      {bOpen.length === 0 ? hint("Alle anstehenden Fahrten haben einen Fahrer.")
+                        : <div className="space-y-2">{bOpen.map((r) => bigCard(r, null))}</div>}
+                    </div>
+                    <div>
+                      {head("Läuft gerade", bRun.length, "var(--mc-st-enroute)")}
+                      {bRun.length === 0 ? hint("Gerade ist keine Fahrt unterwegs.")
+                        : <div className="space-y-1.5">{bRun.map((r) => slimRow(r))}</div>}
+                    </div>
+                    <div>
+                      <button onClick={() => setFocusDoneOpen((v) => !v)}
+                        aria-expanded={focusDoneOpen}
+                        className="w-full flex items-center gap-2 px-3 py-2.5 rounded-[var(--mc-r)] text-sm transition-colors hover:bg-white/5"
+                        style={{ background: "var(--mc-panel)", border: "1px solid var(--mc-border)", color: "var(--mc-text)" }}>
+                        <ChevronRight className="w-4 h-4 shrink-0 transition-transform" style={{ transform: focusDoneOpen ? "rotate(90deg)" : "none", color: "var(--mc-text-muted)" }} />
+                        Erledigt<span className="font-mono tabular-nums" style={{ color: "var(--mc-text-muted)" }}>{bDone.length}</span>
+                      </button>
+                      {focusDoneOpen && <div className="space-y-1.5 mt-2">{bDone.map((r) => slimRow(r))}</div>}
+                    </div>
+                  </div>
+                )}
+              </section>
+
+              {/* Fahrer-Live-Spalte: identisch zum Fahrten-Tab, gleiche Quelle. */}
+              <section>
+                <div className="mc-eyebrow mb-3 flex items-center gap-2"><Radio className="w-3.5 h-3.5" />Fahrer live</div>
+                <div className="space-y-1.5">
+                  {setup.drivers.map((d) => {
+                    const s = computeDriverStats(setup, dyn, d.id, day);
+                    return <DriverRow key={d.id} setup={setup} driver={d} stats={s} />;
+                  })}
+                </div>
+              </section>
+            </div>
+            );
+          })()}
+
           {tab === "overview" && <MissionOverviewTab setup={setup} dyn={dyn} day={day} setTab={setTab}
             onEdit={(r) => { setDay(r.dayKey); setEditRide(r); }} onAssign={(r) => setAssignRide(r)} />}
           {tab === "timeline" && <MissionTimelinePage setup={setup} dyn={dyn} day={day} updateDyn={updateDyn} by={meBy} onUndo={onUndo} onErr={notifyErr}
@@ -12789,6 +12972,7 @@ const MC_NAV = [
   { tab: "map",       label: "Karte",           icon: MapIcon,       group: "MISSION CONTROL" },
   // FAHRTEN
   { tab: "board",     label: "Fahrten",         icon: Route,         group: "FAHRTEN" },
+  { tab: "fokus",     label: "Fokus",           icon: Crosshair,     group: "FAHRTEN" },
   { tab: "returns",   label: "Rückfahrten",     icon: Moon,          group: "FAHRTEN" },
   { tab: "flights",   label: "Flughafen",       icon: Plane,         group: "FAHRTEN" },
   // BETRIEB
