@@ -12079,6 +12079,9 @@ function MissionControl({ setup, dyn, session, updateDyn, updateSetup, onLogout,
   // Aufklapp-Zustand des Erledigt-Blocks. Rein presentational.
   const [focusRef, focusWidth] = useElementWidth();
   const [focusDoneOpen, setFocusDoneOpen] = useState(false);
+  // Fokus-Ansicht: "prio" (Standard, Verhalten wie 0e8a951) oder "zeit".
+  // Bewusst nur useState, keine Persistenz.
+  const [focusView, setFocusView] = useState("prio");
 
   const [errToasts, setErrToasts] = useState([]);
   const notifyErr = useCallback((text) => {
@@ -12559,6 +12562,21 @@ function MissionControl({ setup, dyn, session, updateDyn, updateSetup, onLogout,
             const bAttn = [];
             emCases.forEach((c) => { if (c.r && attnCase.get(c.r.id) === c) bAttn.push(c.r); });
 
+            // Zeit-Ansicht (Idee A): dieselbe Menge dayRides, andere Partition.
+            // Grenzen in sortMin-Space. sortMin (Z. 717) schiebt 00:00-05:59 um
+            // +1440, die Nacht landet dadurch automatisch am Ende, ohne Sonderfall.
+            // Erledigte/Stornierte bleiben wie in der Prio-Ansicht aussen vor und
+            // stehen unten im gemeinsamen Aufklapper: Summe der vier Zeitbloecke
+            // plus bDone ist immer dayRides.length.
+            const TIME_BUCKETS = [["Vormittag", "bis 12:00", 720], ["Nachmittag", "bis 18:00", 1080], ["Abend", "bis 24:00", 1440], ["Nacht", "ab 00:00", Infinity]];
+            const tBuckets = TIME_BUCKETS.map(() => []);
+            dayRides.forEach((r) => {
+              if (r.status === "done" || r.status === "cancelled") return;  // steht in bDone
+              const m = sortMin(r.time);
+              const i = TIME_BUCKETS.findIndex(([, , max]) => m < max);
+              tBuckets[i < 0 ? TIME_BUCKETS.length - 1 : i].push(r);        // unlesbare Zeit -> Nacht
+            });
+
             const head = (label, n, color) => (
               <div className="mc-eyebrow mb-2 flex items-center gap-2" style={{ color }}>
                 {label}<span className="font-mono tabular-nums">{n}</span>
@@ -12632,15 +12650,19 @@ function MissionControl({ setup, dyn, session, updateDyn, updateSetup, onLogout,
               );
             };
 
-            // Dichte Zeile (laeuft gerade + erledigt).
-            const slimRow = (r) => {
+            // Dichte Zeile (laeuft gerade + erledigt + Zeit-Ansicht). Zweiter
+            // Parameter ca ist der zugehoerige emCases-Eintrag oder null. Ohne ca
+            // ist das Ergebnis identisch zu 0e8a951 (Prio-Ansicht unveraendert).
+            const slimRow = (r, ca) => {
               const drv = setup.drivers.find((d) => d.id === r.assignedDriverId);
               const stripeKey = mcRideStatusKey(r.status, !!r.assignedDriverId);
+              const CIcon = ca ? (CASE_ICON[ca.type] || AlertTriangle) : null;
               return (
                 <div key={r.id} className="flex items-center gap-3 px-3 py-2 rounded-[var(--mc-r-sm)] overflow-hidden"
                   style={{ background: "var(--mc-panel)", border: "1px solid var(--mc-border)", opacity: r.status === "cancelled" ? 0.6 : 1 }}>
-                  <span className="w-0.5 self-stretch shrink-0" style={{ background: `var(--mc-st-${stripeKey})` }} aria-hidden="true" />
+                  <span className="w-0.5 self-stretch shrink-0" style={{ background: ca ? "var(--mc-st-problem)" : `var(--mc-st-${stripeKey})` }} aria-hidden="true" />
                   <span className="font-mono text-sm tabular-nums shrink-0" style={{ color: "var(--mc-text)" }}>{r.time}</span>
+                  {ca && <span title={ca.label} className="shrink-0 inline-flex"><CIcon className="w-3.5 h-3.5" style={{ color: "var(--mc-st-problem)" }} /></span>}
                   <span className="text-sm truncate flex-1 min-w-0" style={{ color: "var(--mc-text)" }}>
                     {r.djName || "—"}<span style={{ color: "var(--mc-text-muted)" }}> · {locName(r.fromId, r.fromCustom)} → {locName(r.toId, r.toCustom)}</span>
                   </span>
@@ -12651,15 +12673,40 @@ function MissionControl({ setup, dyn, session, updateDyn, updateSetup, onLogout,
               );
             };
 
+            // Erledigt-Aufklapper: in beiden Ansichten identisch, deshalb einmal
+            // definiert statt dupliziert. Verhalten und Markup unveraendert
+            // gegenueber 0e8a951, nutzt weiterhin focusDoneOpen und bDone.
+            const doneBlock = () => (
+              <div>
+                <button onClick={() => setFocusDoneOpen((v) => !v)}
+                  aria-expanded={focusDoneOpen}
+                  className="w-full flex items-center gap-2 px-3 py-2.5 rounded-[var(--mc-r)] text-sm transition-colors hover:bg-white/5"
+                  style={{ background: "var(--mc-panel)", border: "1px solid var(--mc-border)", color: "var(--mc-text)" }}>
+                  <ChevronRight className="w-4 h-4 shrink-0 transition-transform" style={{ transform: focusDoneOpen ? "rotate(90deg)" : "none", color: "var(--mc-text-muted)" }} />
+                  Erledigt<span className="font-mono tabular-nums" style={{ color: "var(--mc-text-muted)" }}>{bDone.length}</span>
+                </button>
+                {focusDoneOpen && <div className="space-y-1.5 mt-2">{bDone.map((r) => slimRow(r))}</div>}
+              </div>
+            );
+
             return (
             <div ref={focusRef} className="grid gap-5" style={{ gridTemplateColumns: cols }}>
               <section>
+                {/* Ansichts-Umschalter. Optik 1:1 von der Filterleiste im
+                    Fahrten-Tab. Rein presentational, kein Schreibweg. */}
+                <div className="flex gap-0.5 p-1 mb-3 w-fit rounded-[var(--mc-r)]" style={{ background: "var(--mc-inset)", border: "1px solid var(--mc-border)" }}>
+                  {[["prio", "Priorität"], ["zeit", "Nach Zeit"]].map(([v, l]) => (
+                    <button key={v} onClick={() => setFocusView(v)} aria-pressed={focusView === v}
+                      className="px-2.5 py-1 rounded-[var(--mc-r-sm)] text-sm transition-colors"
+                      style={focusView === v ? { background: "var(--mc-hover)", color: "var(--mc-text)", fontWeight: 500 } : { color: "var(--mc-text-secondary)" }}>{l}</button>
+                  ))}
+                </div>
                 {!ridesLoaded && <LoadingState label="Fahrten werden geladen" />}
                 {ridesLoaded && dayRides.length === 0 && (
                   <EmptyState icon={Crosshair} title="Für diesen Tag sind keine Fahrten geplant."
                     action={<button onClick={() => setEditRide({ _new: true, dayKey: day, date: day })} className="mc-btn-primary text-xs px-3 py-1.5 flex items-center gap-1.5"><Plus className="w-3.5 h-3.5" />Fahrt anlegen</button>} />
                 )}
-                {ridesLoaded && dayRides.length > 0 && (
+                {ridesLoaded && dayRides.length > 0 && focusView === "prio" && (
                   <div className="space-y-5">
                     <div>
                       {head("Braucht Aufmerksamkeit", bAttn.length, "var(--mc-st-problem)")}
@@ -12676,16 +12723,20 @@ function MissionControl({ setup, dyn, session, updateDyn, updateSetup, onLogout,
                       {bRun.length === 0 ? hint("Gerade ist keine Fahrt unterwegs.")
                         : <div className="space-y-1.5">{bRun.map((r) => slimRow(r))}</div>}
                     </div>
-                    <div>
-                      <button onClick={() => setFocusDoneOpen((v) => !v)}
-                        aria-expanded={focusDoneOpen}
-                        className="w-full flex items-center gap-2 px-3 py-2.5 rounded-[var(--mc-r)] text-sm transition-colors hover:bg-white/5"
-                        style={{ background: "var(--mc-panel)", border: "1px solid var(--mc-border)", color: "var(--mc-text)" }}>
-                        <ChevronRight className="w-4 h-4 shrink-0 transition-transform" style={{ transform: focusDoneOpen ? "rotate(90deg)" : "none", color: "var(--mc-text-muted)" }} />
-                        Erledigt<span className="font-mono tabular-nums" style={{ color: "var(--mc-text-muted)" }}>{bDone.length}</span>
-                      </button>
-                      {focusDoneOpen && <div className="space-y-1.5 mt-2">{bDone.map((r) => slimRow(r))}</div>}
-                    </div>
+                    {doneBlock()}
+                  </div>
+                )}
+                {ridesLoaded && dayRides.length > 0 && focusView === "zeit" && (
+                  <div className="space-y-5">
+                    {tBuckets.every((b) => b.length === 0)
+                      ? hint("Keine anstehenden Fahrten.")
+                      : TIME_BUCKETS.map(([label, span], i) => (tBuckets[i].length === 0 ? null : (
+                        <div key={label}>
+                          {head(`${label} (${span})`, tBuckets[i].length, "var(--mc-text-secondary)")}
+                          <div className="space-y-1.5">{tBuckets[i].map((r) => slimRow(r, attnCase.get(r.id) || null))}</div>
+                        </div>
+                      )))}
+                    {doneBlock()}
                   </div>
                 )}
               </section>

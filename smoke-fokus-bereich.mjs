@@ -36,7 +36,7 @@ const probe = `
 function FokusProbe(p) {
   const { tab, focusWidth, focusRef, dyn, emCases, dayRides, setup, day, flashIds,
           locName, boardGroupPrimary, setAssignRide, setEditRide, setWaRide,
-          focusDoneOpen, setFocusDoneOpen } = p;
+          focusDoneOpen, setFocusDoneOpen, focusView, setFocusView } = p;
   return (<div>
   ${block}
   </div>);
@@ -112,6 +112,7 @@ const base = {
   locName: (id, txt) => setup.locations.find((l) => l.id === id)?.short || txt || "—",
   boardGroupPrimary: () => null,
   setAssignRide: () => {}, setEditRide: () => {}, setWaRide: () => {}, setFocusDoneOpen: () => {},
+  focusView: "prio", setFocusView: () => {},
 };
 const render = (over = {}) => renderToStaticMarkup(React.createElement(FokusProbe, { ...base, focusDoneOpen: false, ...over }));
 const html = render();
@@ -188,6 +189,87 @@ check("50. Fokus-Block nutzt emCases als einzige Aufmerksamkeitsquelle",
   block.includes("emCases.forEach") && !block.includes("emergencyCases("));
 check("51. Fokus-Block nutzt die bestehende GroupSuggestionNote", block.includes("GroupSuggestionNote"));
 
+
+// ==== Schritt 2: Zeit-Gruppierung (Idee A) + Umschalter ==================
+// Eigener Datensatz mit Fahrten in allen vier Zeitfenstern, damit die
+// bestehenden Tests 13-51 unveraendert auf ihren Daten laufen.
+const zRides = [
+  mk({ id: "z1", time: "07:30", djName: "ZVORMITTAG", status: "planned", assignedDriverId: "d1" }),
+  mk({ id: "z2", time: "11:59", djName: "ZGRENZEVOR", status: "planned", assignedDriverId: "d1" }),
+  mk({ id: "z3", time: "12:00", djName: "ZNACHMITTAG", status: "planned", assignedDriverId: "d1" }),
+  mk({ id: "z4", time: "17:59", djName: "ZGRENZENACH", status: "planned", assignedDriverId: "d1" }),
+  mk({ id: "z5", time: "18:00", djName: "ZABEND", status: "planned", assignedDriverId: "d1" }),
+  mk({ id: "z6", time: "23:59", djName: "ZGRENZEAB", status: "planned", assignedDriverId: "d1" }),
+  mk({ id: "z7", time: "01:30", djName: "ZNACHT", status: "planned", assignedDriverId: "d1" }),
+  mk({ id: "z8", time: "10:00", djName: "ZKRITISCH", status: "planned" }),
+  mk({ id: "z9", time: "09:00", djName: "ZFERTIG", status: "done", assignedDriverId: "d2" }),
+  mk({ id: "z10", time: "09:15", djName: "ZSTORNO", status: "cancelled" }),
+];
+const zEm = [{ r: zRides[7], sev: "critical", type: "issue", label: "Panne auf der A3" }];
+const zSorted = zRides.slice().sort((a, b) => {
+  const s = (t) => { const [h, m] = t.split(":").map(Number); const v = h * 60 + m; return v < 360 ? v + 1440 : v; };
+  return s(a.time) - s(b.time);
+});
+const zBase = { dayRides: zSorted, dyn: { rides: zRides, driverState: {} }, emCases: zEm };
+const zPrio = render({ ...zBase });
+const zHtml = render({ ...zBase, focusView: "zeit" });
+const zOpen = render({ ...zBase, focusView: "zeit", focusDoneOpen: true });
+const zp = (s) => zHtml.indexOf(s);
+const zCount = (label) => { const i = zHtml.indexOf(label); if (i < 0) return null;
+  const m = zHtml.slice(i, i + 260).match(/tabular-nums[^>]*>(\d+)</); return m ? Number(m[1]) : null; };
+
+// ---- 52-55: Umschalter --------------------------------------------------
+check("52. Umschalter zeigt beide Ansichten", html.includes("Priorität") && html.includes("Nach Zeit"));
+check("53. Umschalter markiert die aktive Ansicht (aria-pressed)",
+  html.includes('aria-pressed="true"') && html.includes('aria-pressed="false"'));
+check("54. Default 'prio' rendert die Prio-Bloecke, keine Zeitbloecke",
+  zPrio.includes("Braucht Aufmerksamkeit") && !zPrio.includes("Vormittag"));
+check("55. 'zeit' rendert die Zeitbloecke, keine Prio-Bloecke",
+  zHtml.includes("Vormittag") && !zHtml.includes("Braucht Aufmerksamkeit") && !zHtml.includes("Offen, noch Zeit"));
+
+// ---- 56-63: Zuordnung zu den vier Zeitbloecken --------------------------
+check("56. Alle vier Zeitbloecke vorhanden",
+  zHtml.includes("Vormittag") && zHtml.includes("Nachmittag") && zHtml.includes("Abend") && zHtml.includes("Nacht"));
+check("57. Zeitspanne steht in der Ueberschrift", zHtml.includes("bis 12:00") && zHtml.includes("ab 00:00"));
+check("58. Vormittag = 3 (07:30, 10:00, 11:59)", zCount("Vormittag") === 3);
+check("59. Nachmittag = 2 (12:00, 17:59)", zCount("Nachmittag") === 2);
+check("60. Abend = 2 (18:00, 23:59)", zCount("Abend") === 2);
+check("61. Nacht = 1 (01:30)", zCount("Nacht") === 1);
+check("62. Erledigt = 2 (done + cancelled, nicht in den Zeitbloecken)", zCount("Erledigt") === 2);
+check("63. Summe der vier Zeitbloecke + Erledigt = Anzahl Fahrten des Tages",
+  zCount("Vormittag") + zCount("Nachmittag") + zCount("Abend") + zCount("Nacht") + zCount("Erledigt") === zSorted.length);
+
+// ---- 64-69: Grenzen, Reihenfolge, Nacht ---------------------------------
+check("64. 11:59 liegt noch im Vormittag", zp("ZGRENZEVOR") > zp("Vormittag") && zp("ZGRENZEVOR") < zp("Nachmittag"));
+check("65. 12:00 liegt schon im Nachmittag", zp("ZNACHMITTAG") > zp("Nachmittag") && zp("ZNACHMITTAG") < zp("Abend"));
+check("66. 17:59 liegt noch im Nachmittag", zp("ZGRENZENACH") > zp("Nachmittag") && zp("ZGRENZENACH") < zp("Abend"));
+check("67. 18:00 liegt schon im Abend", zp("ZABEND") > zp("Abend") && zp("ZABEND") < zp("Nacht"));
+check("68. 23:59 liegt noch im Abend", zp("ZGRENZEAB") > zp("Abend") && zp("ZGRENZEAB") < zp("Nacht"));
+check("69. 01:30 liegt in der Nacht und damit ganz unten", zp("ZNACHT") > zp("Nacht"));
+check("70. Bloecke stehen in Tagesreihenfolge",
+  zp("Vormittag") < zp("Nachmittag") && zp("Nachmittag") < zp("Abend") && zp("Abend") < zp("Nacht"));
+
+// ---- 71-75: Erledigte, kritische Faelle, Toggle-Trap --------------------
+check("71. Erledigte stehen NICHT in den Zeitbloecken", zHtml.indexOf("ZFERTIG") === -1 && zHtml.indexOf("ZSTORNO") === -1);
+check("72. Erledigt-Aufklapper auch in der Zeit-Ansicht vorhanden", zHtml.includes('aria-expanded="false"'));
+check("73. aufgeklappt zeigt die erledigten Fahrten auch in der Zeit-Ansicht",
+  zOpen.includes("ZFERTIG") && zOpen.includes("ZSTORNO") && zOpen.includes('aria-expanded="true"'));
+check("74. kritische Fahrt bekommt in der Zeit-Zeile die Problemfarbe",
+  (() => { const i = zp("ZKRITISCH"); const seg = zHtml.slice(Math.max(0, i - 700), i);
+    return seg.includes("--mc-st-problem"); })());
+check("75. Grund der kritischen Fahrt steht als Tooltip in der Zeile", zHtml.includes("Panne auf der A3"));
+
+// ---- 76-79: Leerzustaende und Read-only --------------------------------
+const zLeer = render({ dayRides: [zRides[8]], dyn: { rides: [zRides[8]], driverState: {} }, emCases: [], focusView: "zeit" });
+check("76. Nur Erledigte: Fallback-Hinweis statt leerer Flaeche", zLeer.includes("Keine anstehenden Fahrten."));
+check("77. Leere Zeitbloecke werden ausgeblendet, nicht als Leerkasten gezeigt", !zLeer.includes("Vormittag"));
+const zEinBlock = render({ dayRides: [zRides[0]], dyn: { rides: [zRides[0]], driverState: {} }, emCases: [], focusView: "zeit" });
+check("78. Nur ein belegter Zeitblock: die anderen drei fehlen",
+  zEinBlock.includes("Vormittag") && !zEinBlock.includes("Nachmittag") && !zEinBlock.includes("Abend"));
+check("79. Zeit-Ansicht nutzt dieselbe Zeile wie die Prio-Ansicht (kein zweiter Kartentyp)",
+  (block.match(/const slimRow = /g) || []).length === 1 && block.includes("slimRow(r, attnCase.get(r.id)"));
+check("80. Umschalter schreibt nur in den lokalen State",
+  block.includes("setFocusView(v)") && !block.includes("localStorage") && !block.includes("updateDyn"));
 // ---- Pflicht-Gegenproben: kippen die Tests ueberhaupt? ------------------
 let gOk = 0, gBad = 0;
 const gp = (name, cond) => { if (cond) { gOk++; } else { gBad++; console.log("GEGENPROBE GREIFT NICHT:", name); } };
@@ -212,6 +294,29 @@ gp("G3b Partnerfahrt wird im Hinweis benannt", gHtml3.includes("COONE"));
 gp("G4 zugeklappt und aufgeklappt liefern unterschiedliches Markup", html !== htmlOpen && htmlOpen.length > html.length);
 // G5: Read-only-Check wuerde einen Schreibweg finden
 gp("G5 Schreibweg-Erkennung funktioniert", (block + "updateDyn(").includes("updateDyn("));
+
+// G6: Zeitgrenze wirkt wirklich - dieselbe Fahrt eine Minute spaeter wandert
+const g6a = render({ ...zBase, focusView: "zeit",
+  dayRides: [mk({ id: "g", time: "11:59", djName: "GRENZE", status: "planned" })] });
+const g6b = render({ ...zBase, focusView: "zeit",
+  dayRides: [mk({ id: "g", time: "12:00", djName: "GRENZE", status: "planned" })] });
+gp("G6 11:59 landet im Vormittag, 12:00 im Nachmittag",
+  g6a.includes("Vormittag") && !g6a.includes("Nachmittag") && g6b.includes("Nachmittag") && !g6b.includes("Vormittag"));
+// G7: Nacht-Sonderfall - 01:30 darf nicht in den Vormittag rutschen
+const g7 = render({ ...zBase, focusView: "zeit",
+  dayRides: [mk({ id: "n", time: "01:30", djName: "NACHTFAHRT", status: "planned" })] });
+gp("G7 01:30 landet in der Nacht, nicht im Vormittag", g7.includes("Nacht") && !g7.includes("Vormittag"));
+// G8: ohne kritischen Fall kein Problem-Streifen an derselben Fahrt
+const g8 = render({ ...zBase, focusView: "zeit", emCases: [] });
+gp("G8 ohne emCases verschwindet der Problem-Hinweis aus der Zeit-Zeile",
+  zHtml.includes("Panne auf der A3") && !g8.includes("Panne auf der A3"));
+// G9: die beiden Ansichten liefern wirklich unterschiedliches Markup
+gp("G9 prio und zeit unterscheiden sich im Markup", zPrio !== zHtml && zPrio.length > 0 && zHtml.length > 0);
+// G10: Zeit-Ansicht reagiert auf zusaetzliche Fahrt
+const g10 = render({ ...zBase, focusView: "zeit",
+  dayRides: zSorted.concat([mk({ id: "zz", time: "07:45", djName: "EXTRAVOR", status: "planned" })]) });
+gp("G10 Zaehler Vormittag reagiert auf eine zusaetzliche Fahrt",
+  (() => { const i = g10.indexOf("Vormittag"); const m = g10.slice(i, i + 260).match(/tabular-nums[^>]*>(\d+)</); return m && Number(m[1]) === 4; })());
 
 try { fs.unlinkSync(out); fs.unlinkSync(copy); } catch {}
 
