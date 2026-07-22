@@ -1897,7 +1897,18 @@ function teamGroupOf(d) {
   return p && p.teamGroup ? p.teamGroup : null;
 }
 const TEAM_LABEL = { "timmy-team": "Timmy-Team" };
-function teamLabelOf(d) { const g = teamGroupOf(d); return g ? (TEAM_LABEL[g] || g) : null; }
+// Team-Badge nur am Tag sichtbar, an dem das Team wirklich zusammen faehrt (Jordan,
+// 22.07.: Timmy-Team nur Freitag, sonst normale Einzelfahrer, Badge stoert dort).
+// Ohne dayKey (Aufrufer ohne Tageskontext) bleibt das alte Verhalten (immer sichtbar),
+// damit kein bestehender Callsite ungewollt das Label verliert.
+const TEAM_ACTIVE_DAY = { "timmy-team": "2026-07-24" };
+function teamLabelOf(d, dayKey) {
+  const g = teamGroupOf(d);
+  if (!g) return null;
+  const active = TEAM_ACTIVE_DAY[g];
+  if (active && dayKey && dayKey !== active) return null;
+  return TEAM_LABEL[g] || g;
+}
 
 // Strikter Parser fuer "YYYY-MM-DD HH:MM" (auch ...THH:MM) als LOKALE Wall-Clock
 // (Browser-Zeit, kein UTC/ISO-Offset) - passend zum bestehenden Zeitmodell der
@@ -2223,7 +2234,7 @@ function evaluateInsertion(setup, dyn, driver, ride) {
     capacityUnknown,
     // Teilpaket A (rein informativ / fuer Filter in suggestDrivers + UI):
     available, availabilityRestricted: avail.restricted, availabilityReason: avail.reason,
-    driverCategory: driverCategoryOf(driver), teamGroup: teamGroupOf(driver), teamLabel: teamLabelOf(driver),
+    driverCategory: driverCategoryOf(driver), teamGroup: teamGroupOf(driver), teamLabel: teamLabelOf(driver, ride.dayKey),
     // Teilpaket B (rein informativ fuer UI): operative Orte + angewandte Regeln.
     opLoc };
 }
@@ -6775,7 +6786,7 @@ function MissionDriversTab({ setup, dyn, day }) {
                       <span className="text-sm font-semibold truncate" style={{ color: "var(--mc-text)" }}>{d.firstName} {d.lastName}</span>
                       {/* Teilpaket A: Springer-/Team-Kennzeichnung (rein informativ) */}
                       {driverCategoryOf(d) === "springer" && <span className="mc-badge mc-badge--problem text-[10px] shrink-0">Springer</span>}
-                      {teamLabelOf(d) && <span className="mc-badge mc-badge--assigned text-[10px] shrink-0">{teamLabelOf(d)}</span>}
+                      {teamLabelOf(d, day) && <span className="mc-badge mc-badge--assigned text-[10px] shrink-0">{teamLabelOf(d, day)}</span>}
                       {gi.has && (
                         <span className="inline-flex items-center gap-1 text-[10px] shrink-0"
                           style={{ color: gi.online ? "var(--mc-st-done)" : "var(--mc-text-muted)" }}>

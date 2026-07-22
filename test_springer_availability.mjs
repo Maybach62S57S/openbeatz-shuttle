@@ -224,6 +224,22 @@ function driverProfileGone(fn, ln) {
   // Wir pruefen, dass die Team-Info reines Beiwerk ist (feasible haengt nur an den
   // bekannten Faktoren, nicht am Team).
   check("13b. teamGroup aendert eligible/feasible nicht (nur Info)", ev.teamGroup === "timmy-team" && typeof ev.feasible === "boolean");
+
+  // 13c-13f (22.07., Jordan): Team-Badge nur am Freitag (24.07.), sonst verborgen.
+  // Direkter Aufruf mit dayKey:
+  check("13c. teamLabelOf mit aktivem Tag (24.07.) -> Label sichtbar", teamLabelOf(setup.drivers[5], "2026-07-24") === "Timmy-Team");
+  check("13d. teamLabelOf mit anderem Tag (25.07.) -> Label verborgen", teamLabelOf(setup.drivers[5], "2026-07-25") === null);
+  check("13e. teamLabelOf ohne dayKey -> Rueckwaertskompatibel weiterhin sichtbar", teamLabelOf(setup.drivers[5]) === "Timmy-Team");
+  // Ueber evaluateInsertion (ride.dayKey), wie es die App tatsaechlich aufruft:
+  const rideFr = mkRide({ passengerCount: 5, fromId: "sheraton", toId: "festival", date: "2026-07-24", dayKey: "2026-07-24" });
+  const rideSa = mkRide({ passengerCount: 5, fromId: "sheraton", toId: "festival", date: "2026-07-25", dayKey: "2026-07-25" });
+  const evFr = evaluateInsertion(setup, dyn, setup.drivers[5], rideFr);
+  const evSa = evaluateInsertion(setup, dyn, setup.drivers[5], rideSa);
+  check("13f. evaluateInsertion Freitag-Fahrt -> teamLabel gesetzt", evFr.teamLabel === "Timmy-Team");
+  check("13g. evaluateInsertion Samstag-Fahrt -> teamLabel null (bereits ev von oben, dayKey 25.07.)", ev.teamLabel === null && evSa.teamLabel === null);
+  // Anker: aktives Team-Datum steht wortgleich in der Quelle (Drift-Check).
+  const srcTxt = fs.readFileSync(srcFile, "utf8");
+  check("13h. Anker: TEAM_ACTIVE_DAY mit 2026-07-24 steht in der Quelle", /TEAM_ACTIVE_DAY\s*=\s*\{\s*"timmy-team":\s*"2026-07-24"/.test(srcTxt));
 }
 
 // ===================== Reinheit / Determinismus =====================
