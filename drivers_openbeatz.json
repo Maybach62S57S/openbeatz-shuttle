@@ -9,11 +9,12 @@
   "Stand 23.07.2026: Fahrerliste OB26 (PDF von Jordan) eingearbeitet.",
   "Leon Merg und Philipp Stich sind Notfall-Reserve (Springer).",
   "available_from gilt jetzt fuer JEDEN Fahrer und ist eine harte Grenze (Jordan, 23.07.).",
-  "Van-Sitzzahlen sind FAHRZEUGSPEZIFISCH: Mustafa Uenver=8, Patrick Ibrahimi=7, alle anderen Vans=6 (Fahrer ausgeschlossen).",
+  "Van-Sitzzahlen sind FAHRZEUGSPEZIFISCH: Mustafa Uenver=8, Patrick Ibrahimi=7, Raphael Swiety=7, alle anderen Vans=6 (Fahrer ausgeschlossen).",
   "Car seats=4 pauschal. Damit 7 Vans, 16 Cars.",
   "Timmy-Team: Patrick Ibrahimi, Mustafa Uenver, Amar Piljevic (Lukas Bieber faehrt seit 23.07. Car).",
   "Sandro Benz (vormals d20) ist nicht mehr im Team und wurde entfernt.",
-  "ACHTUNG: Diese Datei ist Referenz/Doku. Fahrzeug, Sitze und Existenz eines Fahrers liegen in der DB-Tabelle drivers."
+  "ACHTUNG: Diese Datei ist Referenz/Doku. Fahrzeug, Sitze und Existenz eines Fahrers liegen in der DB-Tabelle drivers.",
+  "Korrektur 23.07. (Jordan): Raphael Swiety hat 7 freie Sitze, nicht 6 wie in der PDF-Liste."
  ],
  "drivers": [
   {
@@ -220,7 +221,7 @@
    "vehicle": "van",
    "role": "regular",
    "available_from": "2026-07-23 16:00",
-   "seats": 6,
+   "seats": 7,
    "timmy_team": false
   }
  ]
