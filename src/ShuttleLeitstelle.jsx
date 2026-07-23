@@ -2018,6 +2018,14 @@ const LOC_MATRIX_NODE = {
   hbf_nue: "sheraton",
   karl_august: "sheraton",
   airport_muc: "muc",
+  // Orts-Nachtrag (23.07.): MELTER liegt laut Jordan genauso weit weg wie Karl
+  // August -> gleicher Matrix-Knoten (sheraton), keine neue Matrix-Kante noetig.
+  melter: "sheraton",
+  // Flugplatz Herzogenaurach und Bahnhof Puschendorf sind EIGENE Knoten (kein
+  // Alias moeglich, sonst waere die Fahrzeit 0). Ihre Kanten stehen in
+  // settings.matrix, nachgetragen per orte-nachtrag-23-07-update.sql.
+  flugplatz_herzo: "flugplatz_herzo",
+  bahnhof_puschendorf: "bahnhof_puschendorf",
 };
 
 // Normalisierung (Spec Abschnitt 6): deterministisch, kein Fuzzy.
