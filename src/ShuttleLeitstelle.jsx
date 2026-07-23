@@ -1858,12 +1858,33 @@ function validPassengerCount(v) {
    automatisch als regular / ohne Verfuegbarkeitsgrenze / ohne Team.
    ========================================================================= */
 const DRIVER_PROFILES = {
-  "leon merg":          { driverCategory: "springer", availableFrom: null,               teamGroup: null },
-  "philipp stich":      { driverCategory: "springer", availableFrom: null,               teamGroup: null },
-  "philipp baumeister": { driverCategory: "regular",  availableFrom: "2026-07-25 14:00", teamGroup: null },
-  "patrick ibrahimi":   { driverCategory: "regular",  availableFrom: null,               teamGroup: "timmy-team" },
-  "mustafa unver":      { driverCategory: "regular",  availableFrom: null,               teamGroup: "timmy-team" },
-  "lukas bieber":       { driverCategory: "regular",  availableFrom: null,               teamGroup: "timmy-team" },
+  // Fahrerliste OB26 (Jordan, 23.07.2026): "Verfuegbar ab" gilt jetzt fuer JEDEN
+  // Fahrer, nicht mehr nur fuer Philipp Baumeister. Harte Grenze (Jordan bestaetigt).
+  // Timmy-Team: Lukas Bieber faehrt jetzt Car, ersetzt durch Amar Piljevic.
+  // Sandro Benz ist nicht mehr im Team und steht deshalb nicht mehr in dieser Tabelle.
+  "leon merg":            { driverCategory: "springer", availableFrom: "2026-07-23 14:00", teamGroup: null },
+  "philipp stich":        { driverCategory: "springer", availableFrom: "2026-07-23 15:00", teamGroup: null },
+  "jassin salah":         { driverCategory: "regular",  availableFrom: "2026-07-23 22:00", teamGroup: null },
+  "daniel sakic":         { driverCategory: "regular",  availableFrom: "2026-07-24 14:00", teamGroup: null },
+  "tim kostka":           { driverCategory: "regular",  availableFrom: "2026-07-23 14:00", teamGroup: null },
+  "marian mihalca":       { driverCategory: "regular",  availableFrom: "2026-07-23 14:00", teamGroup: null },
+  "philipp baumeister":   { driverCategory: "regular",  availableFrom: "2026-07-25 16:00", teamGroup: null },
+  "toni penno":           { driverCategory: "regular",  availableFrom: "2026-07-24 10:00", teamGroup: null },
+  "marco haney":          { driverCategory: "regular",  availableFrom: "2026-07-23 15:00", teamGroup: null },
+  "simon schug":          { driverCategory: "regular",  availableFrom: "2026-07-23 14:00", teamGroup: null },
+  "bennet fuger":         { driverCategory: "regular",  availableFrom: "2026-07-24 14:00", teamGroup: null },
+  "stefan baumann":       { driverCategory: "regular",  availableFrom: "2026-07-23 21:00", teamGroup: null },
+  "karim salah":          { driverCategory: "regular",  availableFrom: "2026-07-23 22:00", teamGroup: null },
+  "david schneider":      { driverCategory: "regular",  availableFrom: "2026-07-23 16:00", teamGroup: null },
+  "finn steinmetz":       { driverCategory: "regular",  availableFrom: "2026-07-23 14:00", teamGroup: null },
+  "lukas bieber":         { driverCategory: "regular",  availableFrom: "2026-07-24 15:00", teamGroup: null },
+  "dominik dittes":       { driverCategory: "regular",  availableFrom: "2026-07-23 14:00", teamGroup: null },
+  "bjorn korn":           { driverCategory: "regular",  availableFrom: "2026-07-23 16:00", teamGroup: null },
+  "amar piljevic":        { driverCategory: "regular",  availableFrom: "2026-07-23 16:00", teamGroup: "timmy-team" },
+  "patrick ibrahimi":     { driverCategory: "regular",  availableFrom: "2026-07-23 14:00", teamGroup: "timmy-team" },
+  "mustafa unver":        { driverCategory: "regular",  availableFrom: "2026-07-23 23:00", teamGroup: "timmy-team" },
+  "raphael swiety":       { driverCategory: "regular",  availableFrom: "2026-07-23 16:00", teamGroup: null },
+  "maximilian schneider": { driverCategory: "regular",  availableFrom: "2026-07-23 21:00", teamGroup: null },
 };
 
 // Normalisierter Vollname: NFKD + Diakritika weg (Ünver -> unver), klein, nur
@@ -11776,12 +11797,21 @@ function matchLoc(txt) {
   // Neue echte Orte der 2026-Liste. Karl August, Leonardo, HBF -> eigene IDs
   // (Name bleibt sichtbar, Fahrzeit ueber Nachbar-Knoten). Muenchen und GAT VOR
   // dem allgemeinen Nuernberg-Airport-Muster, sonst wuerden sie dort gefangen.
+  // Orts-Nachtrag (23.07., Jordan): MELTER ist ein eigenes Hotel, Entfernung wie
+  // Karl August. MUSS VOR karl_august stehen, sonst wird die Doppelnennung
+  // "MELTER - a Neighborhood Hotel + Karl August Hotel" still als Karl August verbucht.
+  if (/melter/.test(t)) return { id: "melter" };
   if (/karl.?august/.test(t)) return { id: "karl_august" };
   if (/leonardo/.test(t)) return { id: "leonardo" };
   if (/\bhbf\b|hauptbahnhof|central station/.test(t)) return { id: "hbf_nue" };
   if (/munich|m(ü|ue)nchen|\bmuc\b/.test(t)) return { id: "airport_muc" };
   if (/private jet|\bgat\b/.test(t)) return { id: "gat_nue" };
   if (/(airport|flughafen).*(n(ü|u)rnberg|nuremberg)|n(ü|u)rnberg.*(airport|flughafen)|^airport nuremberg|nuremberg - private|private jet gat/.test(t)) return { id: "airport" };
+  // Orts-Nachtrag (23.07., Jordan): Flugplatz Herzogenaurach (EDQH, Am Birkenbuehl 1)
+  // und Bahnhof Puschendorf. Beide VOR dem Festival-Muster, damit sie nicht ueber
+  // "stage"/"zone" o. ae. dort landen. Schreibvarianten der Liste abgedeckt.
+  if (/flugplatz.*herzogenaurach|herzogenaurach.*flugplatz|\bedqh\b/.test(t)) return { id: "flugplatz_herzo" };
+  if (/puschendor/.test(t)) return { id: "bahnhof_puschendorf" };
   if (/venue|caldera|zone|stonelands|forest|stage|woods|festival/.test(t)) {
     // Festival-Zonen-Regel (21.07., Jordan): fuer dieses Festival laufen ALLE
     // Zonen ausser Caldera/Zone 3/Stonelands unter Caldera (dort Pickup + Absetzung).
