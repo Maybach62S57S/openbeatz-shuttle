@@ -2566,7 +2566,11 @@ function estimateDriverPosition(ctx, driver) {
   // planned/accepted/done -> steht (nicht auf der Strecke).
   const doneRides = rides.filter((r) => r.status === "done");
   const lastDone = doneRides[doneRides.length - 1];
-  const locId = st.locationId || (lastDone ? nodeOf(lastDone, "to") : null) || cfg.baseLocationId;
+  // Kein Festival-Fallback mehr: wenn wir die Position nicht wirklich kennen
+  // (keine gesetzte locationId, keine letzte done-Fahrt), liefern wir null.
+  // computeMapPositions rendert den Fahrer dann nicht am Festival, sondern gar
+  // nicht - er taucht stattdessen im "Kein Live-Standort"-Panel auf.
+  const locId = st.locationId || (lastDone ? nodeOf(lastDone, "to") : null) || null;
   let lateMin = 0;
   if (nextPlanned) lateMin = Math.max(0, Math.round(nowMin - sortMin(nextPlanned.time)));
   return { ...base, nextRide: nextPlanned || null, mode: "free", status: nextPlanned ? nextPlanned.status : null, nodeId: locId, lateMin, lastChange: lastChangeOf(lastDone) };
@@ -9159,7 +9163,11 @@ function MissionReturnsTab({ setup, dyn, day, updateDyn, by, onErr, onAssign, on
 
   const atFestival = setup.drivers
     .map((d) => ({ d, s: computeDriverStats(setup, dyn, d.id, day) }))
-    .filter((x) => !x.s.active && (x.s.locNow === "festival" || !x.s.locNow))
+    // Nur Fahrer, deren letzte Fahrt tatsaechlich am Festival endete. Frueher
+    // "|| !x.s.locNow" hat Fahrer ohne bekannten Standort als am Festival gezaehlt,
+    // was falsche Vor-Ort-Vorschlaege verursacht hat (computeDriverStats.locNow
+    // faellt bei fehlender Info bewusst auf baseLocationId zurueck).
+    .filter((x) => !x.s.active && x.s.locNow === "festival")
     .sort((a, b) => a.s.drivingMin - b.s.drivingMin);
 
   // ---- Teilpaket D: operatives View-Model pro Rueckfahrt (rein lesend) ------
