@@ -1796,6 +1796,19 @@ function driverDay(rides, driverId, dayKey) {
     .sort((a, b) => sortMin(a.time) - sortMin(b.time));
 }
 
+// Tagesgeprüfter letzter bekannter Standort eines Fahrers.
+// driverState[id].locationId wird ausschließlich beim Abschluss einer Fahrt
+// gesetzt (DriverApp advance) und war bisher weder tagesbezogen noch mit
+// Ablauf versehen: ein Eintrag von gestern hat den Fahrer heute an einem Ort
+// gezeigt, an dem er nicht ist, und schlug dabei sogar die letzte echte Fahrt
+// von heute. Ohne passendes locationDayKey gilt der Wert deshalb als
+// unbekannt (null) - das deckt auch den Altbestand ohne das neue Feld ab,
+// ohne dass in der Datenbank etwas aufgeräumt werden muss.
+function stateLocationId(st, dayKey) {
+  if (!st || !st.locationId) return null;
+  return st.locationDayKey === dayKey ? st.locationId : null;
+}
+
 function computeDriverStats(setup, dyn, driverId, dayKey) {
   const cfg = setup.config;
   const rides = driverDay(dyn.rides, driverId, dayKey);
@@ -1821,7 +1834,7 @@ function computeDriverStats(setup, dyn, driverId, dayKey) {
     const past = rides.filter((r) => sortMin(r.time) + effDur(cfg, r) <= now && r.status !== "cancelled");
     const last = past[past.length - 1];
     freeAt = now < 0 ? 0 : now;
-    locNow = st.locationId || (last ? last.toId : null) || cfg.baseLocationId;
+    locNow = stateLocationId(st, dayKey) || (last ? last.toId : null) || cfg.baseLocationId;
   }
 
   // Punkt 9: Verfügbarkeit ist rein abgeleitet – entweder „auf Fahrt" oder „verfügbar". Keine Pause.
@@ -2508,7 +2521,7 @@ function estimateDriverPosition(ctx, driver) {
 
   const base = {
     driver, ride: null, nextRide: null, fromId: null, toId: null, f: 0,
-    nodeId: st.locationId || cfg.baseLocationId, mode: "free", status: null,
+    nodeId: stateLocationId(st, dayKey) || cfg.baseLocationId, mode: "free", status: null,
     positionSource: "estimated", gps: st.gps || null,
     uncertain: false, problem, lateMin: 0, etaMin: null, lastChange: null,
   };
@@ -2527,7 +2540,7 @@ function estimateDriverPosition(ctx, driver) {
     if (nxt) {
       const before = sorted.filter((r) => sortMin(r.time) + effDur(cfg, r) <= nowMin);
       const prev = before[before.length - 1];
-      const fromNode = prev ? nodeOf(prev, "to") : (st.locationId || cfg.baseLocationId);
+      const fromNode = prev ? nodeOf(prev, "to") : (stateLocationId(st, dayKey) || cfg.baseLocationId);
       const pickup = nodeOf(nxt, "from");
       const dead = fromNode && pickup ? nodeTravel(setup, fromNode, pickup) : null;
       const start = sortMin(nxt.time);
@@ -2560,7 +2573,7 @@ function estimateDriverPosition(ctx, driver) {
   if (enroute) {
     const before = rides.filter((r) => r.id !== enroute.id && sortMin(r.time) <= sortMin(enroute.time)).sort((a, b) => sortMin(a.time) - sortMin(b.time));
     const prev = before[before.length - 1];
-    const fromNode = prev ? nodeOf(prev, "to") : (st.locationId || cfg.baseLocationId);
+    const fromNode = prev ? nodeOf(prev, "to") : (stateLocationId(st, dayKey) || cfg.baseLocationId);
     const pickup = nodeOf(enroute, "from");
     const dead = fromNode && pickup ? nodeTravel(setup, fromNode, pickup) : null;
     const elapsed = enroute.enrouteAt ? (Date.now() - enroute.enrouteAt) / 60000 : 0;
@@ -2577,7 +2590,7 @@ function estimateDriverPosition(ctx, driver) {
   // (keine gesetzte locationId, keine letzte done-Fahrt), liefern wir null.
   // computeMapPositions rendert den Fahrer dann nicht am Festival, sondern gar
   // nicht - er taucht stattdessen im "Kein Live-Standort"-Panel auf.
-  const locId = st.locationId || (lastDone ? nodeOf(lastDone, "to") : null) || null;
+  const locId = stateLocationId(st, dayKey) || (lastDone ? nodeOf(lastDone, "to") : null) || null;
   let lateMin = 0;
   if (nextPlanned) lateMin = Math.max(0, Math.round(nowMin - sortMin(nextPlanned.time)));
   return { ...base, nextRide: nextPlanned || null, mode: "free", status: nextPlanned ? nextPlanned.status : null, nodeId: locId, lateMin, lastChange: lastChangeOf(lastDone) };
@@ -3182,7 +3195,12 @@ function DriverApp({ setup, dyn, session, updateDyn, onLogout }) {
       if (r.status !== from) return dynConflict("STATUS_CHANGED", "Der Status wurde inzwischen geaendert.");
       setRideStatus(r, flow.next, `driver:${driver.id}`);
       d.driverState[driver.id] = d.driverState[driver.id] || {};
-      if (flow.next === "done") d.driverState[driver.id].locationId = ride.toId;
+      if (flow.next === "done") {
+        d.driverState[driver.id].locationId = ride.toId;
+        // Tagesbezug mitschreiben: ohne ihn galt der Ort unbegrenzt weiter
+        // (siehe stateLocationId oben).
+        d.driverState[driver.id].locationDayKey = ride.dayKey;
+      }
       return d;
     }));
   };
