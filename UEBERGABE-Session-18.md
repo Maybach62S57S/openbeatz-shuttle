@@ -6751,3 +6751,209 @@ kontrast 0.
 > standalone `.mjs`, Quelle zeilengetreu replizieren oder Wegwerf-Kopie+Export,
 > IMMER Pflicht-Gegenprobe, Drift-Check gegen die Quelle wenn Texte/Logik
 > verankert werden.
+
+---
+
+# Session 24.07.2026 (Vormittag/Mittag): resolveNode-Restbug + Diagnose
+
+**Zwei Code-Commits, beide gepusht:**
+- `5bd9e4a` Fahrer-Standort: Kartenknoten ueber resolveNode aufloesen (Zone, Alias, Custom)
+- `a910328` Zuteilung: praeziseres Problem-Label bei unbekanntem Fahrer-Standort
+
+Sicherungs-Tag `pre-resolvenode-fix` (= `121c4de`) gesetzt und gepusht.
+Zeilenzahl `src/ShuttleLeitstelle.jsx` nach `a910328`: **13745**.
+
+## 1. resolveNode-Restbug (Hauptthema, abgeschlossen)
+
+`driverState[id].locationId` ist die rohe `toId` einer Fahrt und wurde auf der
+Karte direkt als Knoten-Schluessel benutzt (`computeMapPositions`:
+`nodes[pos.nodeId]`), ohne `resolveNode()`. Folgen: Zone ging verloren (Fahrer
+am Festival-Hauptknoten statt Caldera/Zone 3/Stonelands), `karl_august` und
+`__custom` fielen ganz von der Karte.
+
+Vier Aenderungen:
+1. `advance()` schreibt beim Abschluss zusaetzlich `locationZone` und
+   `locationCustom` mit (rein additiv, kein DB-Umbau, Altbestand unveraendert).
+2. Neue reine Funktion `stateNode(nodes, st, dayKey)` direkt hinter
+   `resolveNode` (ca. Z. 2423). `stateLocationId` bleibt unveraendert bestehen.
+3. Die **vier** Kartenlesestellen in `estimateDriverPosition` nutzen `stateNode`.
+   `computeDriverStats.locNow` (Z. 1837) bleibt bewusst bei `stateLocationId`,
+   das ist eine Matrix-Orts-ID und KEIN Kartenknoten.
+4. `goBack()` nimmt den Standort zurueck, aber nur wenn er von der widerrufenen
+   Fahrt stammt (Vergleich `toId` + `dayKey`). Auf `null` statt auf den
+   Vorgaenger, weil Karte und Stats von selbst auf die letzte done-Fahrt
+   zurueckfallen.
+
+Neuer Test `smoke-standort-resolvenode.mjs`, **43/43 gruen**, mit vier echten
+Gegenproben (jede Aenderung einzeln zurueckgedreht faerbt den Test rot).
+
+**dyn_data-Constraint geprueft und unkritisch:** `write_dyn_if_unchanged`
+reicht `p_driver_state` als komplettes jsonb durch
+(`jsonb_build_object('driverState', p_driver_state, ...)`). Der Constraint gilt
+nur fuer TOP-LEVEL-Felder von `dyn_data`. Neue Unterfelder in `driverState`
+gehen nicht verloren.
+
+## 2. Diagnose-Ergebnisse (nichts davon gefixt ausser dem Label)
+
+### 2a. Nebenwirkung des Tagesbezugs-Fix auf die Zuteilungsvorschlaege
+
+`evaluateInsertion` Z. 2243:
+`const prevLoc = prev ? rideEndpointMatrixNode(...) : (stats.locNow || cfg.baseLocationId);`
+
+Ohne Vorfahrt am Tag faellt die Position auf `stats.locNow`. Seit `121c4de`
+ist das bei Altbestand `null`, und `baseLocationId` ist bewusst nicht gesetzt.
+Folge: `travelMin` null -> `deadKnown=false` -> `unknownTiming=true` ->
+**`feasible=false`**.
+
+Gemessen mit echter `seedMatrix()`, identischer Aufbau gegen beide Staende
+(Skript `diag-locnow-vorschlaege.mjs`, committet):
+
+| Fahrer | Zustand | vor 121c4de | aktuell |
+|---|---|---|---|
+| State von heute | bekannt | feasible | feasible |
+| State von gestern | Altbestand | **feasible** | **nicht feasible** |
+| kein State | unbekannt | nicht feasible | nicht feasible |
+
+**Entwarnung:** Die Fahrer verschwinden NICHT aus `suggestDrivers`, sie sind
+weiter gelistet und manuell zuteilbar, nur nicht als machbar empfohlen.
+
+**Betrifft real nur die zeitlich ERSTE Fahrt eines Fahrers am Tag.** Sobald er
+an dem Tag eine frueher liegende zugeteilte Fahrt hat, greift `prev` und
+`locNow` wird gar nicht gebraucht. Praktisch: das morgendliche Einteilen.
+
+**Gefixt wurde nur das Label** (`a910328`): statt "Fahrzeit unbekannt" steht
+jetzt "Standort unbekannt (heute noch keine Fahrt beendet), Anfahrt nicht
+berechenbar", wenn `prevLoc` fehlt. Dieser Text erscheint in der
+Trotzdem-zuweisen-Abfrage (Z. 4937), dort entscheidet die Leitstelle manuell.
+
+**Bewusst NICHT geaendert:** `feasible` bleibt `false`. Einen Fahrer zu
+empfehlen, dessen Position niemand kennt, ist bei Artist-Abholungen riskanter
+als gar keine Empfehlung. **Das ist eine offene Entscheidung fuer Jordan**,
+nicht ein vergessener Fix.
+
+### 2b. Testinfrastruktur: Extraktionsskripte sind seit 121c4de veraltet (OFFEN)
+
+`smoke-teilpaket-e.mjs` und `smoke-teilpaket-g.mjs` scheitern auch NACH dem
+dokumentierten Vorbereitungsschritt mit **`ReferenceError: stateLocationId is
+not defined`**. Ursache: `extract-funcs-teilpaket-e.py` / `-g.py` extrahieren
+`computeDriverStats` / `estimateDriverPosition`, aber nicht die in `121c4de`
+neu eingefuehrte Hilfsfunktion `stateLocationId` (und jetzt auch nicht
+`stateNode`).
+
+**Damit sind die Regressionstests fuer Teilpaket E und G seit `121c4de`
+blind.** Sie melden null FAIL, weil sie gar nicht erst starten.
+
+Konkreter Fix fuer die naechste Session (Testinfrastruktur, kein
+Produktionscode, Risiko null fuer die App): in beiden `.py`-Dateien die
+Funktionsnamen-Liste (in `-e.py` ca. Z. 43, neben `"computeDriverStats"`) um
+`"stateLocationId"` und `"stateNode"` ergaenzen, danach Vorbereitung + Test
+erneut laufen lassen und pruefen, ob beide gruen werden.
+
+`regression-teilpaket-b.mjs` importiert hart `/tmp/reg_alt.mjs` (Altstand-Kopie
+aus einer frueheren Session, nie im Repo). `pruefe.mjs` braucht ZWEI
+Dateipfade (`argv[2]` und `argv[3]`), nicht einen. Beides Aufrufkonvention,
+kein Defekt.
+
+### 2c. Zwei Testleichen (kein Handlungsbedarf am Code)
+
+- `smoke-teilpaket-g2-ui.mjs` Tests **15 und 21** (nicht die bekannten
+  wanduhr-flaky 14/20/25/26/27). Bisect zur selben Uhrzeit gemessen:
+  `24de049` 51 OK / 0 FAIL, ab `121c4de` 49 OK / 2 FAIL. Der Test setzt
+  `driverState[B.id] = { locationId: "festival" }` OHNE `locationDayKey`, also
+  genau den Altbestand-Fall, den `121c4de` bewusst entwertet hat. Der Test
+  prueft das alte, fehlerhafte Verhalten.
+- `smoke-orte-fix.mjs` 2 FAIL: "Bahnhof Puschendorf" und "Flugplatz
+  Herzogenaurach" erwartet der Test als `__custom`. Commit `d8f080a` hat beide
+  bewusst als echte Orte aufgenommen (`matchLoc` Z. 12002/12003,
+  `LOC_MATRIX_NODE` Z. 2047/2048). Code neuer und richtig, Test alt.
+
+### 2d. Restrisiko `baseLocationId` (NICHT angefasst, Tabu)
+
+`cfg.baseLocationId` steht in allen vier Kartenlesestellen weiter als roher,
+unaufgeloester Fallback. Bei euch nicht gesetzt, also wirkungslos. Wuerde
+jemand dort einen Ort ohne Kartenposition eintragen, waere derselbe Effekt
+wieder da.
+
+## 3. Arbeitsumgebung, Stolpersteine dieser Session
+
+- **Arbeitsverzeichnis:** Der alte Opener sagt `/home/claude/repo`. Ich habe in
+  `/home/claude/openbeatz-shuttle` geklont und brauchte deshalb einen Symlink
+  `/home/claude/repo/node_modules` -> Repo-`node_modules`, weil `rendertest.mjs`
+  und mehrere smoke-Skripte den Ausgabepfad `/home/claude/repo/` hart
+  verdrahtet haben. **Naechste Session direkt nach `/home/claude/repo` klonen.**
+- `npm ci` schlaegt ohne Lockfile fehl, `npm install` funktioniert.
+- Duplikat-Grep: der `function c`-Treffer beim `[a-zA-Z]+`-Grep ist das bekannte
+  c3*-Artefakt. Der praezisere Grep ist `[a-zA-Z0-9_]+`.
+- `wc -l` zeigte vor den Commits 13702 statt der im Opener genannten 13703
+  (fehlendes Newline am Dateiende), rein kosmetisch.
+- Git-Identitaet im Container leer, aus der Historie uebernommen:
+  `Claude <claude@merg-and-more.de>`.
+- Extrakte `tmp-t{b,e,g}-funcs.mjs` nach dem Lauf geloescht, nicht committet.
+
+## 4. Referenzwerte (unveraendert)
+
+`rendertest.mjs`: App 25053, IssueModal 2452, StageIssueModal 2413,
+GuestIssueModal 2895, Field ohne mc 101. `kontrast.mjs`: 0 Fails.
+
+Vollstaendige Suite (55 Skripte) nach beiden Commits ohne eine einzige
+Abweichung zum jeweiligen Vorgaengerstand.
+
+---
+
+> **Fertiger Opener fuer den naechsten Chat:**
+>
+> Neue Session, OpenBeatz Shuttle-Leitstelle. Arbeitsverzeichnis MUSS
+> `/home/claude/repo` (mehrere Testskripte haben diesen Pfad hart verdrahtet).
+> Erst Schritt 0 komplett: Repo klonen (frischer PAT von mir), PAT sofort aus
+> der Remote-URL scrubben (`git remote set-url`), `npm install` (nicht `npm ci`,
+> kein Lockfile), `git config user.name Claude` /
+> `user.email claude@merg-and-more.de`. `git fetch` + selbst pruefen
+> HEAD==origin/main.
+>
+> **Letzter Code-Commit ist `a910328`** ("Zuteilung: praeziseres Problem-Label
+> bei unbekanntem Fahrer-Standort"). Kamen nur Doku-Commits dazu, ist der
+> Code-Stand exakt dieser. Exakte Zeilenzahl `src/ShuttleLeitstelle.jsx`:
+> **13745**. Sicherungs-Tags zuletzt: `pre-resolvenode-fix` (= `121c4de`).
+> Werte selbst nachmessen, der Opener kann veraltet sein.
+>
+> Bestands-Regression vor allem Neuen: esbuild, Duplikat-Grep
+> (`[a-zA-Z0-9_]+`), fuer Teilpaket B/E/G ZUERST
+> `python3 extract-funcs-teilpaket-{b,e,g}.py src/ShuttleLeitstelle.jsx
+> tmp-t{b,e,g}-funcs.mjs`, dann alle `smoke*.mjs` mit Dateipfad als
+> `process.argv[2]`, `rendertest.mjs` (5 Werte konstant
+> 25053/2452/2413/2895/101), `kontrast.mjs` (0). Extrakte danach loeschen.
+> **Bester Regressionsnachweis: die komplette Suite zusaetzlich gegen
+> `git show HEAD:src/ShuttleLeitstelle.jsx` laufen lassen und nur ABWEICHUNGEN
+> als Regression werten.** So sind die vielen Alt-Fails sofort eingeordnet.
+>
+> **Vorbestehende Fehler, NICHT anfassen und nicht als Regression werten:**
+> `smoke-orte-fix.mjs` (2 FAIL, veralteter Test), `test_springer_availability.mjs`
+> (8 FAIL), `smoke-teilpaket-g2-ui.mjs` (2 FAIL: Tests 15/21, veralteter Test
+> seit dem Tagesbezugs-Fix; die bekannten wanduhr-flaky Tests 14/20/25/26/27
+> sind davon getrennt zu betrachten), `regression-teilpaket-b.mjs` (braucht
+> `/tmp/reg_alt.mjs`), `pruefe.mjs` (braucht ZWEI Dateipfade).
+>
+> **Themen, aus denen du auswaehlen kannst (nicht alle auf einmal):**
+> 1. `extract-funcs-teilpaket-e.py` / `-g.py` um `stateLocationId` und
+>    `stateNode` ergaenzen. Die Regressionstests fuer Teilpaket E und G sind
+>    seit `121c4de` blind (`ReferenceError` beim Start). Reine
+>    Testinfrastruktur, null Risiko fuer die App, hoechster Nutzen.
+> 2. Entscheidung offen: soll `feasible` bei unbekanntem Fahrer-Standort
+>    weiterhin `false` bleiben (aktuell so, bewusst konservativ) oder soll der
+>    Fahrer mit Warnung wieder empfohlen werden? Details oben unter 2a.
+> 3. Testleichen aufraeumen (g2-ui 15/21, smoke-orte-fix), rein kosmetisch.
+> 4. Post-Festival: Paket 2 (Datei-Modularisierung, Base64-Assets).
+>
+> Regeln unveraendert: Deutsch, informell, keine Gedankenstriche, korrekte
+> Umlaute. Rein additiv wo moeglich, kleinstmoegliche Aenderung, keine Breaking
+> Changes, keine Workflow-/Rollen-/Stage-Aenderungen, keine DB-Struktur-
+> Aenderungen (ausser zwingend), keine kosmetischen Refactorings oder
+> Performance-Optimierungen ausserhalb des Themas. **Vor jeder Code-Aenderung:
+> Verdrahtungsplan + Einfuegestelle + Regressionsrisiko zeigen, meine Freigabe
+> abwarten.** Nach jeder Aenderung: volle Kette (esbuild, Duplikat-Grep,
+> JSX-Referenzabgleich, Smoke mit Pflicht-Gegenprobe, rendertest, kontrast) +
+> Diff-Beweis + konkrete manuelle Testfaelle. Bugs ausserhalb des Themas ->
+> "Weitere gefundene Punkte", NICHT fixen. Festival 23.-27.07., Freeze seit
+> 20.07. aufgehoben. Nur eine Session gleichzeitig. `git fetch` unmittelbar vor
+> jedem Push. Commit-Messages mit Umlauten ueber `/tmp/msg.txt` +
+> `git commit -F`. Proaktiv vor zu langem Chat warnen.
