@@ -36,10 +36,10 @@ def grab_any(name):
 
 # Reihenfolge nach Abhaengigkeit (Definitionen vor Nutzung wo noetig; ESM hoisting
 # deckt function-decls, const-arrows brauchen Reihenfolge -> pad/sortMin zuerst)
-order = ["toMin","pad","localDateISO","sortMin","dayNowMin","driverDay","travel","travelMin","effDur",
+order = ["toMin","pad","localDateISO","todayISO","sortMin","dayNowMin","driverDay","travel","travelMin","effDur",
          "logRide","issueOpen","rideHasOpenIssue","validPassengerCount","seedMatrix",
          "DRIVER_PROFILES","TEAM_LABEL","normDriverName","driverProfile","driverCategoryOf","teamGroupOf","teamLabelOf",
-         "availableFromOf","parseWallClock","checkDriverAvailability","STATUS_TS","computeDriverStats",
+         "availableFromOf","parseWallClock","checkDriverAvailability","STATUS_TS","stateLocationId","computeDriverStats",
          "LOC_ZONE","ZONE_LABEL","LOC_MATRIX_NODE","LOC_ALIASES","KNOWN_FIXED_IDS","PICKUP_RULES",
          "normLoc","resolveLocation","resolveRideEndpoint","resolveOperationalRideLocations",
          "resolveTravelMinutes","rideEndpointMatrixNode",
