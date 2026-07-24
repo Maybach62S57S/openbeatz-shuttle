@@ -6957,3 +6957,233 @@ Abweichung zum jeweiligen Vorgaengerstand.
 > 20.07. aufgehoben. Nur eine Session gleichzeitig. `git fetch` unmittelbar vor
 > jedem Push. Commit-Messages mit Umlauten ueber `/tmp/msg.txt` +
 > `git commit -F`. Proaktiv vor zu langem Chat warnen.
+
+---
+
+# Session 24.07.2026 (Nachmittag): Testinfrastruktur entblindet
+
+**Zwei Commits, beide gepusht. Kein Produktionscode.**
+- `0ed83ce` Testinfrastruktur: stateLocationId in Extraktion für Teilpaket E und G
+- `da6e268` Testinfrastruktur: stateLocationId und todayISO in Extraktion für Teilpaket B
+
+`src/ShuttleLeitstelle.jsx` ist über beide Commits **byte-identisch** geblieben
+(`git show HEAD:... | cmp -` nach jedem Schritt). Letzter Commit, der die App
+tatsächlich verändert, bleibt **`a910328`**, weiterhin **13744 Zeilen**. Kein
+Deploy nötig, für Fahrer und Leitstelle ändert sich nichts. Kein neuer
+Sicherungs-Tag, `pre-resolvenode-fix` (= `121c4de`) bleibt der letzte.
+
+## 1. Was der Defekt wirklich war
+
+Enger als in der Übergabe vom Vormittag beschrieben. `computeDriverStats`
+Z. 1837 ruft `stateLocationId` auf, die Funktion stand in keiner `order`-Liste.
+Das war alles.
+
+**`stateNode` wird NICHT gebraucht und wurde bewusst nicht aufgenommen.** Kein
+einziger extrahierter Block ruft es auf, `resolveNode` ebenso wenig. `stateNode`
+hängt nur an `estimateDriverPosition` und `computeMapPositions`, und die sind in
+keinem Teilpaket drin. Beide Varianten gemessen, identisches Ergebnis:
+
+| Variante | Blöcke E / G | smoke-e | smoke-g |
+|---|---|---|---|
+| Ist-Zustand | 57 / 63 | Absturz | Absturz |
+| nur `stateLocationId` (gebaut) | 58 / 64 | 152 OK, 0 FEHLER | 130 OK, 0 FAIL |
+| + `stateNode` samt Kette | 64 / 70 | 152 OK, 0 FEHLER | 130 OK, 0 FAIL |
+
+Variante zwei hätte sechs Blöcke mitgeschleppt, die kein Test benutzt.
+`stateNode` ohne die Kette (`slug`, `MAP_NODE_ALIAS`, `zoneNodeId`,
+`customNodeId`, `resolveNode`) wäre eine Attrappe gewesen, die beim ersten
+echten Aufruf kracht.
+
+## 2. Wirkung, gemessen über die volle Suite vorher/nachher
+
+Genau drei Abweichungen, alle Verbesserungen:
+
+```
+smoke-teilpaket-e.mjs       ABBRUCH ReferenceError  ->  152 OK, 0 FEHLER
+smoke-teilpaket-g.mjs       ABBRUCH ReferenceError  ->  130 OK, 0 FAIL
+gegenprobe-teilpaket-e.mjs  ABBRUCH rc=1            ->  8/8 kippten wie erwartet
+```
+
+`gegenprobe-teilpaket-e.mjs` war ein nicht dokumentierter Bonusfund, die war
+ebenfalls blind. Alle bekannten Alt-Fails Zeile für Zeile unverändert.
+
+**Kein verdeckter Alt-Fail.** Anders als bei g2-ui 15/21 lag unter dem Absturz
+nichts Veraltetes, beide werden vollständig grün.
+
+## 3. Teilpaket B: zwei Lücken statt einer, plus eine echte Testlücke
+
+`extract-funcs-teilpaket-b.py` fehlte **`stateLocationId` UND `todayISO`**.
+`dayNowMin` ruft `todayISO` auf und läuft gleich zu Beginn von
+`computeDriverStats`, dort wäre also **jeder** Aufruf abgestürzt, nicht nur der
+Sonderfall ohne aktive Fahrt.
+
+`smoke-teilpaket-b.mjs` bleibt trotzdem unverändert bei 69/0. Grund, mit
+Zählern im Extrakt gemessen:
+
+```
+computeDriverStats: 0 Aufrufe
+suggestDrivers:     0 Aufrufe
+```
+
+**Beide werden exportiert, aber nicht getestet.** 69 grüne Tests, die zwei
+Hauptfunktionen des Exports ungeprüft. Das ist eine Testlücke, kein
+Infrastrukturdefekt, und wurde bewusst NICHT geschlossen (neue Tests schreiben
+wäre ausserhalb des Themas gewesen). **Steht als Punkt für später offen.**
+
+Nachweis für den B-Fix deshalb über eine eigene Gegenprobe statt über den
+regulären Test: `computeDriverStats` ohne aktive Fahrt aufrufen.
+Ohne Fix `ReferenceError: todayISO is not defined`, mit Fix läuft es durch.
+
+## 4. Alle drei Extrakte statisch geprüft
+
+Wegwerf-Werkzeug (`/tmp/refcheck.mjs`, nicht committet): Kommentare und
+String-Literale strippen, dann jeden aufgerufenen Bezeichner gegen die im
+Extrakt definierten abgleichen. Gegen eine künstlich entfernte Definition
+gegengeprüft, damit es nachweislich misst.
+
+Ergebnis nach den Fixes: **in E und G keine weiteren Lücken.** In B nur noch ein
+Fehlalarm aus einem deutschen Kommentar.
+
+Falls das nochmal gebraucht wird: das Werkzeug produziert ohne Kommentar- und
+String-Filter massenhaft Fehlalarme aus deutschen Kommentaren (jedes Wort vor
+einer Klammer). Ausserdem meldet es Funktionen als fehlend, die per
+`const name = (...) =>` definiert sind, wenn das Regex sie nicht erwischt. Jeden
+Treffer einzeln mit `grep -c "function X(\|const X"` gegenprüfen.
+
+## 5. Nebenwirkung, bitte in der nächsten Session mitdenken
+
+**E, G und die Gegenprobe E messen ab jetzt wieder wirklich.** Tauchen dort
+künftig Fails auf, sind das echte Funde und nicht erneut kaputte
+Testinfrastruktur.
+
+## 6. Weitere gefundene Punkte für spätere Sessions
+
+- **`smoke-teilpaket-b.mjs` testet `computeDriverStats` und `suggestDrivers`
+  nicht** (0 Aufrufe, s. Punkt 3). Grösster inhaltlicher Fund dieser Session.
+- **`stateNode` fehlt weiterhin in allen drei Extraktoren.** Aktuell folgenlos.
+  Sobald jemand `estimateDriverPosition` oder `computeMapPositions` in ein
+  Teilpaket aufnimmt, braucht es `stateNode` plus `resolveNode`, `zoneNodeId`,
+  `customNodeId`, `MAP_NODE_ALIAS` und `slug`.
+- **Drei Skripte messen nichts, weil ihnen Zwischendateien fehlen:**
+  `smoke-fahrer-23-07.mjs` (`/tmp/prof.js`), `smoke-orte-23-07.mjs`
+  (`/tmp/ml_new.js`, `/tmp/orte.json`), `pruefe-fahrerabgleich.mjs` (versucht
+  eine `.mjs` als JSON zu parsen). Das sind Extrakte aus alten Sessions, die nie
+  als Skript festgehalten wurden. Reparatur hiesse neue Extraktoren schreiben,
+  also kein Ein-Zeilen-Fix.
+- `git rev-parse <annotiertes-tag>` liefert das Tag-Objekt, nicht den Commit.
+  Immer `^{}` anhängen. Kostet sonst Verwirrung beim Anker-Abgleich.
+
+## 7. Diagnose für das NÄCHSTE Thema: Timeline (Jordans drei Wünsche)
+
+Nur Erkundung, **kein Code angefasst, kein Plan freigegeben.**
+
+Jordans Wünsche, wörtlich:
+1. In der Timeline den Fahrer ändern können, mit Vorschlägen beim Klick.
+2. Sammelfahrten in der Timeline besser erkennbar machen, wenn angeklickt.
+3. Andere Farbe für Anfahrt, und Sammelfahrt farblich erkennbar.
+
+**Fundort:** `MissionTimelinePage` ab **Z. 10364**, **449 Zeilen** bis ca.
+Z. 10812 (dort beginnt `TimelineView`, eine separate ältere Komponente, nicht
+verwechseln). Dichteste UI-Komponente im Projekt: Drag-and-Drop mit
+Bestätigungs-Popover, Undo-Hinweis, Zoom, Filter, Fahrerzeilen,
+Konflikterkennung. Höchstes Regressionsrisiko im ganzen File.
+
+**Zu Wunsch 1:** zur Hälfte vorhanden. `onAssign(st.ride)` (ca. Z. 10564) und
+`quickAssign(driverId)` (ca. Z. 10655) existieren bereits. Der kleinste der drei
+Punkte.
+
+**Zu Wunsch 2 und 3, HARTER BLOCKER, Jordan muss entscheiden:**
+Sammelfahrten sind **nicht gespeichert**. Teilpaket F (ab Z. 8330) sagt es im
+Kopfkommentar wörtlich: rein lesend, kein Schreibweg, kein gespeicherter
+Zustand. Es gibt **kein `groupId` an der Fahrt**. Was existiert, ist ein
+berechneter Vorschlag (`GROUP_RIDE_CONFIG`, max. Zweiergruppen, Dreier auf F3
+verschoben).
+
+- **Lesart A:** den Vorschlag anzeigen. Ohne Datenmodell-Änderung machbar. Aber
+  die Timeline markiert dann eine Empfehlung, keine Tatsache.
+- **Lesart B:** tatsächlich gemeinsam fahrende Artists markieren. Im Datenmodell
+  nicht abgebildet. Entweder indirekt erraten (gleicher Fahrer, überlappende
+  Zeit, gleiche Strecke) oder neues Feld, und das wäre eine
+  DB-Struktur-Änderung gegen die stehende Regel.
+
+**Zweite offene Frage zu Wunsch 3:** soll die Anfahrt nur anders eingefärbt
+werden, oder als eigenes Balkenstück VOR der Fahrt sichtbar sein? Das zweite ist
+deutlich mehr Arbeit, weil die Balkenbreite dann nicht mehr allein aus Start und
+Dauer folgt. Farbgebung der Balken läuft aktuell über
+`var(--mc-st-${stKey}-fill)` und `var(--mc-st-${stKey})` (ca. Z. 10623/10624),
+Konfliktfall überschreibt mit `--mc-st-problem`.
+
+**Design-Autorität liegt bei Jordan.** Vor jeder Farbänderung Varianten mit
+Kontrastzahlen vorlegen und Freigabe abwarten, wie beim Problem-Banner.
+
+---
+
+> **Fertiger Opener für den nächsten Chat:**
+>
+> Neue Session, OpenBeatz Shuttle-Leitstelle. Arbeitsverzeichnis MUSS
+> `/home/claude/repo` (mehrere Testskripte haben den Pfad hart verdrahtet).
+> Erst Schritt 0 komplett: Repo klonen (frischer PAT von mir), PAT sofort aus
+> der Remote-URL scrubben (`git remote set-url`), `npm install` (nicht `npm ci`,
+> kein Lockfile), `git config user.name Claude` /
+> `user.email claude@merg-and-more.de`, `git fetch`, selbst prüfen
+> HEAD==origin/main. Zeilenzahl selbst nachmessen.
+>
+> **Stand:** HEAD ist `da6e268`. Die letzten beiden Commits betreffen NUR
+> Testinfrastruktur, `src/ShuttleLeitstelle.jsx` ist seit **`a910328`**
+> byte-identisch, **13744 Zeilen**. Sicherungs-Tag zuletzt
+> `pre-resolvenode-fix` (= `121c4de`, annotiert, mit `^{}` auflösen).
+>
+> Bestands-Regression vor allem Neuen: esbuild, Duplikat-Grep
+> (`[a-zA-Z0-9_]+`), für Teilpaket B/E/G ZUERST
+> `python3 extract-funcs-teilpaket-{b,e,g}.py src/ShuttleLeitstelle.jsx
+> tmp-t{b,e,g}-funcs.mjs`, dann alle `smoke*.mjs` mit Dateipfad als
+> `process.argv[2]`, `rendertest.mjs` (5 Werte konstant
+> 25053/2452/2413/2895/101), `kontrast.mjs` (0). Extrakte danach löschen.
+> Bester Nachweis: komplette Suite zusätzlich gegen
+> `git show HEAD:src/ShuttleLeitstelle.jsx` laufen lassen, nur ABWEICHUNGEN
+> als Regression werten.
+>
+> **Vorbestehende Fehler, NICHT anfassen, nicht als Regression werten:**
+> `smoke-orte-fix.mjs` (2 FAIL, veralteter Test), `test_springer_availability.mjs`
+> (8 FAIL), `smoke-teilpaket-g2-ui.mjs` (2 FAIL: Tests 15/21; die
+> wanduhr-flaky 14/20/25/26/27 sind getrennt zu betrachten, kippen nur
+> 06:00-08:00), `regression-teilpaket-b.mjs` (braucht `/tmp/reg_alt.mjs`),
+> `pruefe.mjs` (braucht ZWEI Dateipfade), `smoke-fahrer-23-07.mjs`
+> (`/tmp/prof.js`), `smoke-orte-23-07.mjs` (`/tmp/ml_new.js`),
+> `pruefe-fahrerabgleich.mjs`. **Neu grün und ab jetzt scharf:**
+> `smoke-teilpaket-e.mjs` (152/0), `smoke-teilpaket-g.mjs` (130/0),
+> `gegenprobe-teilpaket-e.mjs` (8/8).
+>
+> **THEMA: Timeline, drei Änderungswünsche.** Diagnose steht in der Übergabe
+> unter "Session 24.07.2026 (Nachmittag)", Punkt 7. Lies den ZUERST, da steht
+> Fundort, Zeilennummern und der Blocker.
+> 1. In der Timeline den Fahrer ändern können, mit Vorschlägen beim Klick.
+> 2. Sammelfahrten besser erkennbar machen, wenn angeklickt.
+> 3. Andere Farbe für Anfahrt, und Sammelfahrt farblich erkennbar.
+>
+> **Ich muss vorab zwei Dinge entscheiden, frag mich danach, entscheide es
+> NICHT selbst:** (a) Sammelfahrt = berechneter Vorschlag aus Teilpaket F, oder
+> tatsächlich gemeinsam fahrende Artists? Es gibt kein gespeichertes `groupId`.
+> (b) Anfahrt nur anders einfärben, oder als eigenes Balkenstück vor der Fahrt?
+> Farbvarianten immer mit Kontrastzahlen vorlegen, Design entscheide ich.
+>
+> **Weitere offene Punkte** (nicht dieses Thema): `smoke-teilpaket-b.mjs` testet
+> `computeDriverStats` und `suggestDrivers` gar nicht (0 Aufrufe), `stateNode`
+> fehlt in allen drei Extraktoren (aktuell folgenlos), drei Skripte ohne ihre
+> `/tmp`-Zwischendateien, feasible-Entscheidung bei unbekanntem Fahrer-Standort
+> (Punkt 2a der Vormittags-Übergabe), Testleichen g2-ui 15/21 und
+> smoke-orte-fix, Post-Festival Paket 2.
+>
+> Regeln unverändert: Deutsch, informell, keine Gedankenstriche, korrekte
+> Umlaute. Rein additiv wo möglich, kleinstmögliche Änderung, keine Breaking
+> Changes, keine Workflow-/Rollen-/Stage-Änderungen, keine
+> DB-Struktur-Änderungen (ausser zwingend), keine kosmetischen Refactorings oder
+> Performance-Optimierungen ausserhalb des Themas. **Erst Diagnose, dann
+> Verdrahtungsplan mit Einfügestelle und Regressionsrisiko, dann meine Freigabe,
+> dann Bau.** Nach jeder Änderung volle Kette (esbuild, Duplikat-Grep,
+> JSX-Referenzabgleich, Smoke mit Pflicht-Gegenprobe, rendertest, kontrast) +
+> Diff-Beweis + konkrete manuelle Testfälle. Bugs ausserhalb des Themas ->
+> "Weitere gefundene Punkte", NICHT fixen. Festival 23.-27.07., Freeze seit
+> 20.07. aufgehoben. Nur eine Session gleichzeitig. `git fetch` unmittelbar vor
+> jedem Push. Commit-Messages mit Umlauten über `/tmp/msg.txt` +
+> `git commit -F`. Proaktiv vor zu langem Chat warnen.
