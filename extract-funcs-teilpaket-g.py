@@ -39,7 +39,7 @@ order = ["toMin","pad","localDateISO","todayISO","sortMin","dayNowMin","festDayK
          "travel","travelMin","effDur","issueOpen","rideHasOpenIssue","validPassengerCount",
          "DRIVER_PROFILES","TEAM_LABEL","normDriverName","driverProfile","driverCategoryOf",
          "teamGroupOf","teamLabelOf","availableFromOf","parseWallClock","checkDriverAvailability",
-         "computeDriverStats",
+         "stateLocationId","computeDriverStats",
          "LOC_ZONE","ZONE_LABEL","LOC_MATRIX_NODE","LOC_ALIASES","KNOWN_FIXED_IDS","PICKUP_RULES",
          "normLoc","resolveLocation","resolveRideEndpoint","resolveOperationalRideLocations",
          "resolveTravelMinutes","rideEndpointMatrixNode","evaluateInsertion",
