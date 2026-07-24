@@ -2274,7 +2274,14 @@ function evaluateInsertion(setup, dyn, driver, ride) {
   if (overlap) problems.push("zeitlicher Konflikt");
   if (lateToPickup > 0) problems.push(`${lateToPickup} min zu spät zur Abholung`);
   if (lateToNext > 0) problems.push(`Folgefahrt zu knapp (${lateToNext} min)`);
-  if (unknownTiming) problems.push("Fahrzeit unbekannt");
+  // Praezisierung (24.07.): "Fahrzeit unbekannt" war irrefuehrend, wenn die Matrix
+  // vollstaendig ist und nur die Fahrerposition fehlt. Das passiert bei der ersten
+  // Fahrt eines Fahrers am Tag, solange er noch keine Fahrt beendet hat und
+  // baseLocationId nicht gesetzt ist. Der Text erscheint in der Trotzdem-zuweisen-
+  // Abfrage, dort ist die echte Ursache entscheidend. feasible bleibt unveraendert.
+  if (unknownTiming) problems.push(!prevLoc
+    ? "Standort unbekannt (heute noch keine Fahrt beendet), Anfahrt nicht berechenbar"
+    : "Fahrzeit unbekannt");
   if (hasIssue) problems.push("Fahrer hat Problem gemeldet");
   if (!available) problems.push(avail.reason);
 
