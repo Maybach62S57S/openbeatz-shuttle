@@ -6761,7 +6761,7 @@ kontrast 0.
 - `a910328` Zuteilung: praeziseres Problem-Label bei unbekanntem Fahrer-Standort
 
 Sicherungs-Tag `pre-resolvenode-fix` (= `121c4de`) gesetzt und gepusht.
-Zeilenzahl `src/ShuttleLeitstelle.jsx` nach `a910328`: **13745**.
+Zeilenzahl `src/ShuttleLeitstelle.jsx` nach `a910328`: **13744**.
 
 ## 1. resolveNode-Restbug (Hauptthema, abgeschlossen)
 
@@ -6913,7 +6913,7 @@ Abweichung zum jeweiligen Vorgaengerstand.
 > **Letzter Code-Commit ist `a910328`** ("Zuteilung: praeziseres Problem-Label
 > bei unbekanntem Fahrer-Standort"). Kamen nur Doku-Commits dazu, ist der
 > Code-Stand exakt dieser. Exakte Zeilenzahl `src/ShuttleLeitstelle.jsx`:
-> **13745**. Sicherungs-Tags zuletzt: `pre-resolvenode-fix` (= `121c4de`).
+> **13744**. Sicherungs-Tags zuletzt: `pre-resolvenode-fix` (= `121c4de`).
 > Werte selbst nachmessen, der Opener kann veraltet sein.
 >
 > Bestands-Regression vor allem Neuen: esbuild, Duplikat-Grep
