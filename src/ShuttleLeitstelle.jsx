@@ -777,6 +777,13 @@ function fmtDate(iso) {
   const d = new Date(iso + "T12:00:00");
   return `${WD[d.getDay()]} ${pad(d.getDate())}.${pad(d.getMonth() + 1)}.`;
 }
+// Numerisches Datum "25.07.2026" fuer Kopiertexte und den Gast-Link. fmtDate
+// bleibt fuer kompakte UI-Chips ("Sa 25.07.") erhalten.
+function fmtDateNum(iso) {
+  if (!iso) return "";
+  const d = new Date(iso + "T12:00:00");
+  return `${pad(d.getDate())}.${pad(d.getMonth() + 1)}.${d.getFullYear()}`;
+}
 // Excel-Serial (Tage seit 1899-12-30) -> Date
 function excelSerialToDate(n) {
   const ms = Math.round((n - 25569) * 86400 * 1000); // 25569 = Tage 1899-12-30 .. 1970-01-01
@@ -3968,13 +3975,15 @@ function mapsUrl(setup, ride) {
 function guestInfoText(setup, ride) {
   const loc = (id, c) => setup.locations.find((l) => l.id === id)?.name || c || "—";
   const drv = setup.drivers.find((d) => d.id === ride.assignedDriverId);
+  const contact = contactPhoneFor(setup, drv);
   return [
     `Shuttle info — ${ride.djName || ""}`,
-    `Date: ${fmtDate(ride.dayKey)}`,
+    `Date: ${fmtDateNum(ride.dayKey)}`,
     `Pickup time: ${ride.time}`,
     `Pickup location: ${loc(ride.fromId, ride.fromCustom)}${ride.meetingPoint ? " – " + ride.meetingPoint : ""}`,
     `Destination: ${loc(ride.toId, ride.toCustom)}${ride.zone ? " – " + ride.zone : ""}`,
     drv ? `Driver: ${drv.firstName} (${drv.vehicleType === "Van" ? "Van" : "Car"}${drv.plate ? ", " + drv.plate : ""})` : "Driver: not yet assigned",
+    contact ? `${contact.source === "driver" ? "Driver phone" : "Shuttle coordination"}: ${contact.label}` : null,
     ride.guestNote ? `Note: ${ride.guestNote}` : null,
   ].filter(Boolean).join("\n");
 }
@@ -4288,6 +4297,16 @@ function GuestRideCard({ setup, ride, onConfirm, onAtPickup, onReport, onCopy, c
       {(drv || ride.guestNote) && (
         <div className="mt-3 pt-3 border-t border-stone-800 text-xs text-stone-400 space-y-1">
           {drv && <div>Driver: <span className="text-stone-200">{drv.firstName}</span> · {drv.vehicleType === "Van" ? "Van" : "Car"}{drv.plate ? ` · ${drv.plate}` : ""}</div>}
+          {(() => {
+            const contact = contactPhoneFor(setup, drv);
+            if (!contact) return null;
+            return (
+              <div>
+                {contact.source === "driver" ? "Driver phone: " : "Shuttle coordination: "}
+                <a href={`tel:${contact.tel}`} className="text-stone-200 underline decoration-stone-700 hover:decoration-stone-500">{contact.label}</a>
+              </div>
+            );
+          })()}
           {ride.guestNote && <div className="text-orange-300/90">{ride.guestNote}</div>}
         </div>
       )}
@@ -6948,12 +6967,15 @@ function waDriverText(setup, ride) {
 function waArtistText(setup, ride) {
   const drv = setup.drivers.find((d) => d.id === ride.assignedDriverId);
   const veh = drv ? (drv.vehicleType === "Van" ? "Van" : "Car") : null;
+  const contact = contactPhoneFor(setup, drv);
   return [
     "Your shuttle is confirmed.",
+    `Date: ${fmtDateNum(ride.dayKey)}`,
     `Pickup time: ${ride.time}`,
     `Pickup location: ${waLoc(setup, ride.fromId, ride.fromCustom)}${ride.meetingPoint ? `, ${ride.meetingPoint}` : ""}`,
     drv ? `Driver: ${drv.firstName}` : null,
     veh ? `Vehicle: ${veh}` : null,
+    contact ? `${contact.source === "driver" ? "Driver phone" : "Shuttle coordination"}: ${contact.label}` : null,
     `Destination: ${waLoc(setup, ride.toId, ride.toCustom)}${ride.zone ? ` – ${ride.zone}` : ""}`,
     "If anything changes, please contact us.",
   ].filter(Boolean).join("\n");
@@ -7008,6 +7030,47 @@ function phoneLooksInvalid(raw) {
   if (!s) return false;
   const cleaned = s.replace(/[\s\-\/().]/g, "");
   return !/^\+?[0-9]{6,15}$/.test(cleaned);
+}
+// Normalisiert eine deutsche Handynummer auf internationales Format ("+49 ..."):
+// - "0176 1234567" -> "+49 176 1234567"
+// - "0049 176 1234567" -> "+49 176 1234567"
+// - "+49 ..." bleibt (nur weiche Formatierung)
+// - Ausland ("+43 ...") bleibt unveraendert
+// - Leer/null -> null (Aufrufer entscheidet, was dann angezeigt wird)
+// - Nicht erkennbar (Buchstaben etc.) -> Ausgangswert zurueck, blockiert nicht.
+// Format-Ausgabe: Landesvorwahl, dann Netz-/Ortsvorwahl (3-4 Ziffern), Rest.
+function driverPhoneIntl(raw) {
+  const s = String(raw || "").trim();
+  if (!s) return null;
+  const digits = s.replace(/[\s\-\/().]/g, "");
+  if (!/^\+?[0-9]{6,15}$/.test(digits)) return s;
+  let intl;
+  if (digits.startsWith("+")) intl = digits;
+  else if (digits.startsWith("00")) intl = "+" + digits.slice(2);
+  else if (digits.startsWith("0")) intl = "+49" + digits.slice(1);
+  else intl = "+" + digits;
+  // Laendervorwahl abtrennen: 1-stellig fuer +1 (Nordamerika) und +7 (Russland),
+  // 3-stellig fuer bekannte europaeische +3xx/+4xx, sonst 2-stellig als Default
+  // (deckt +49/+43/+41/+33/+44/+39/+34/... ab).
+  const rest = intl.slice(1);
+  let cc;
+  if (/^(420|421|350|351|352|353|354|355|356|357|358|359|370|371|372|373|374|375|376|377|378|380|381|382|385|386|387|389)/.test(rest)) cc = rest.slice(0, 3);
+  else if (/^[17]/.test(rest)) cc = rest.slice(0, 1);
+  else cc = rest.slice(0, 2);
+  const body = rest.slice(cc.length);
+  if (body.length <= 3) return `+${cc} ${body}`;
+  return `+${cc} ${body.slice(0, 3)} ${body.slice(3)}`;
+}
+// Liefert die Kontakt-Nummer, die dem Manager/Gast angezeigt/geschickt werden
+// darf: bevorzugt die private Nummer des zugeteilten Fahrers (Jordans Freigabe
+// vom 24.07.2026), Fallback ist die zentrale Shuttle-Coordination-Nummer aus
+// setup.config.coordinationPhone. Gibt null, wenn beides fehlt.
+function contactPhoneFor(setup, drv) {
+  const drvIntl = drv && drv.phone ? driverPhoneIntl(drv.phone) : null;
+  if (drvIntl) return { label: drvIntl, tel: drvIntl.replace(/\s/g, ""), source: "driver" };
+  const coordIntl = driverPhoneIntl(setup?.config?.coordinationPhone);
+  if (coordIntl) return { label: coordIntl, tel: coordIntl.replace(/\s/g, ""), source: "coord" };
+  return null;
 }
 function DriverPhones({ setup, updateSetup }) {
   const [phones, setPhones] = useState(() => Object.fromEntries(setup.drivers.map((d) => [d.id, d.phone || ""])));
