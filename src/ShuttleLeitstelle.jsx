@@ -3070,6 +3070,9 @@ function DriverApp({ setup, dyn, session, updateDyn, onLogout }) {
   const stats = computeDriverStats(setup, dyn, driver.id, day);
   const rides = stats.rides;
   const [issueFor, setIssueFor] = useState(null);
+  // Neuer Tab-Umschalter: "mine" = wie bisher (eigene Fahrten), "all" = Nur-Lese-Uebersicht,
+  // wer heute welchen Kuenstler faehrt. Kein Zugriff auf Aktionen, keine Zeiten/Notizen/PII.
+  const [activeTab, setActiveTab] = useState("mine");
 
   // Benachrichtigt den Fahrer bei relevanten Änderungen an seinen eigenen Fahrten —
   // nicht nur bei Neuzuteilung: geänderte Zeit/Route/Treffpunkt, Flug jetzt verspätet/
@@ -3305,6 +3308,18 @@ function DriverApp({ setup, dyn, session, updateDyn, onLogout }) {
           <button onClick={onLogout} className="text-stone-500 hover:text-stone-300 p-2 shrink-0"><LogOut className="w-5 h-5" /></button>
         </div>
 
+        {/* Ansicht-Umschalter: Meine Fahrten vs. Uebersicht */}
+        <div className="flex gap-1.5 mt-3">
+          <button onClick={() => setActiveTab("mine")}
+            className={`flex-1 px-3 py-1.5 rounded-lg text-sm ${activeTab === "mine" ? "bg-stone-100 text-stone-900 font-medium" : "bg-stone-900 text-stone-400"}`}>
+            Meine Fahrten
+          </button>
+          <button onClick={() => setActiveTab("all")}
+            className={`flex-1 px-3 py-1.5 rounded-lg text-sm ${activeTab === "all" ? "bg-stone-100 text-stone-900 font-medium" : "bg-stone-900 text-stone-400"}`}>
+            Wer faehrt wen
+          </button>
+        </div>
+
         {/* Tage */}
         <div className="flex gap-1.5 mt-3 overflow-x-auto">
           {days.map((d) => (
@@ -3316,6 +3331,7 @@ function DriverApp({ setup, dyn, session, updateDyn, onLogout }) {
         </div>
       </div>
 
+      {activeTab === "mine" && (<>
       {/* Punkt 12: Nächste Fahrt prominent */}
       {nextRide && (
         <div className="p-4">
@@ -3470,6 +3486,47 @@ function DriverApp({ setup, dyn, session, updateDyn, onLogout }) {
           updateDyn={updateDyn} placeholder="z. B. Rückfrage, Verspätung, brauche Info…" />
         <MyMessages dyn={dyn} fromKey={`driver:${driver.id}`} />
       </div>
+      </>)}
+
+      {activeTab === "all" && (
+        <div className="p-4 space-y-2" style={{ paddingBottom: "max(6rem, calc(env(safe-area-inset-bottom) + 4.5rem))" }}>
+          {(() => {
+            const rank = (r) => {
+              if (r.status === "onboard") return 0;
+              if (r.status === "enroute_pickup") return 1;
+              if (r.status === "accepted") return 2;
+              if (r.status === "planned") return 3;
+              return 4;
+            };
+            const all = (dyn.rides || [])
+              .filter((r) => r.dayKey === day && r.status !== "cancelled")
+              .sort((a, b) => {
+                const ra = rank(a), rb = rank(b);
+                if (ra !== rb) return ra - rb;
+                return sortMin(a.time) - sortMin(b.time);
+              });
+            if (all.length === 0) {
+              return <div className="text-center text-stone-500 text-sm py-8">Keine Fahrten fuer diesen Tag.</div>;
+            }
+            return all.map((r) => {
+              const drv = setup.drivers.find((d) => d.id === r.assignedDriverId);
+              return (
+                <div key={r.id} className="bg-stone-900 border border-stone-800 rounded-xl p-3 flex items-center gap-3">
+                  <div className="min-w-0 flex-1">
+                    <div className="text-sm font-semibold text-orange-300 truncate">
+                      {r.djName || <span className="italic text-stone-400 font-normal">Ohne Kuenstlernamen</span>}
+                    </div>
+                    <div className="text-xs text-stone-400 truncate mt-0.5">
+                      {drv ? `${drv.firstName} ${drv.lastName}` : <span className="italic text-stone-500">Nicht zugeteilt</span>}
+                    </div>
+                  </div>
+                  <StatusPill status={r.status} />
+                </div>
+              );
+            });
+          })()}
+        </div>
+      )}
 
       {issueFor && <IssueModal ride={issueFor} onClose={() => setIssueFor(null)} onReport={reportIssue} setup={setup} />}
     </div>
