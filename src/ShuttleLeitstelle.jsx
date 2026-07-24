@@ -2420,6 +2420,19 @@ function resolveNode(nodes, locId, zone, customText) {
   if (customText) return customNodeId(customText);
   return null;
 }
+// Kartenknoten des zuletzt bekannten Fahrer-Standorts. Wie stateLocationId,
+// loest den rohen Wert aber zusaetzlich ueber resolveNode auf: Festival+Zone
+// -> Zonenknoten, Alias (karl_august -> sheraton) -> Zielknoten, "__custom"
+// -> Custom-Knoten aus dem mitgeschriebenen Text. Ohne diese Aufloesung ging
+// die Zone verloren und Alias-/Custom-Orte fielen ganz von der Karte.
+// NUR fuer die Kartendarstellung. NICHT fuer computeDriverStats.locNow
+// verwenden, das ist eine Matrix-Orts-ID und kein Kartenknoten.
+// Altbestand ohne locationZone/locationCustom verhaelt sich unveraendert.
+function stateNode(nodes, st, dayKey) {
+  const locId = stateLocationId(st, dayKey);
+  if (!locId) return null;
+  return resolveNode(nodes, locId, (st && st.locationZone) || null, (st && st.locationCustom) || null);
+}
 // Knoten -> Matrix-Ort (Zonen zählen als Festival; Custom unbekannt).
 function nodeMatrixLoc(nodeId) {
   if (!nodeId) return null;
@@ -2521,7 +2534,7 @@ function estimateDriverPosition(ctx, driver) {
 
   const base = {
     driver, ride: null, nextRide: null, fromId: null, toId: null, f: 0,
-    nodeId: stateLocationId(st, dayKey) || cfg.baseLocationId, mode: "free", status: null,
+    nodeId: stateNode(nodes, st, dayKey) || cfg.baseLocationId, mode: "free", status: null,
     positionSource: "estimated", gps: st.gps || null,
     uncertain: false, problem, lateMin: 0, etaMin: null, lastChange: null,
   };
@@ -2540,7 +2553,7 @@ function estimateDriverPosition(ctx, driver) {
     if (nxt) {
       const before = sorted.filter((r) => sortMin(r.time) + effDur(cfg, r) <= nowMin);
       const prev = before[before.length - 1];
-      const fromNode = prev ? nodeOf(prev, "to") : (stateLocationId(st, dayKey) || cfg.baseLocationId);
+      const fromNode = prev ? nodeOf(prev, "to") : (stateNode(nodes, st, dayKey) || cfg.baseLocationId);
       const pickup = nodeOf(nxt, "from");
       const dead = fromNode && pickup ? nodeTravel(setup, fromNode, pickup) : null;
       const start = sortMin(nxt.time);
@@ -2573,7 +2586,7 @@ function estimateDriverPosition(ctx, driver) {
   if (enroute) {
     const before = rides.filter((r) => r.id !== enroute.id && sortMin(r.time) <= sortMin(enroute.time)).sort((a, b) => sortMin(a.time) - sortMin(b.time));
     const prev = before[before.length - 1];
-    const fromNode = prev ? nodeOf(prev, "to") : (stateLocationId(st, dayKey) || cfg.baseLocationId);
+    const fromNode = prev ? nodeOf(prev, "to") : (stateNode(nodes, st, dayKey) || cfg.baseLocationId);
     const pickup = nodeOf(enroute, "from");
     const dead = fromNode && pickup ? nodeTravel(setup, fromNode, pickup) : null;
     const elapsed = enroute.enrouteAt ? (Date.now() - enroute.enrouteAt) / 60000 : 0;
@@ -2590,7 +2603,7 @@ function estimateDriverPosition(ctx, driver) {
   // (keine gesetzte locationId, keine letzte done-Fahrt), liefern wir null.
   // computeMapPositions rendert den Fahrer dann nicht am Festival, sondern gar
   // nicht - er taucht stattdessen im "Kein Live-Standort"-Panel auf.
-  const locId = stateLocationId(st, dayKey) || (lastDone ? nodeOf(lastDone, "to") : null) || null;
+  const locId = stateNode(nodes, st, dayKey) || (lastDone ? nodeOf(lastDone, "to") : null) || null;
   let lateMin = 0;
   if (nextPlanned) lateMin = Math.max(0, Math.round(nowMin - sortMin(nextPlanned.time)));
   return { ...base, nextRide: nextPlanned || null, mode: "free", status: nextPlanned ? nextPlanned.status : null, nodeId: locId, lateMin, lastChange: lastChangeOf(lastDone) };
@@ -3200,6 +3213,12 @@ function DriverApp({ setup, dyn, session, updateDyn, onLogout }) {
         // Tagesbezug mitschreiben: ohne ihn galt der Ort unbegrenzt weiter
         // (siehe stateLocationId oben).
         d.driverState[driver.id].locationDayKey = ride.dayKey;
+        // Zone und Custom-Text mitschreiben: ohne sie ist die rohe toId auf der
+        // Karte nicht aufloesbar. "festival" ohne Zone landet am Hauptknoten
+        // statt in Caldera/Zone 3/Stonelands, "__custom" hat ohne den Text gar
+        // keinen Knoten. Gelesen wird das ausschliesslich von stateNode().
+        d.driverState[driver.id].locationZone = ride.zone || null;
+        d.driverState[driver.id].locationCustom = ride.toCustom || null;
       }
       return d;
     }));
@@ -3219,6 +3238,22 @@ function DriverApp({ setup, dyn, session, updateDyn, onLogout }) {
       if (!r) return dynConflict("RIDE_GONE", "Diese Fahrt gibt es nicht mehr.");
       if (r.status !== from) return dynConflict("STATUS_CHANGED", "Der Status wurde inzwischen geaendert.");
       setRideStatus(r, prev, `driver:${driver.id}`);
+      // Standort mit zuruecknehmen (sonst blieb der Fahrer auf dem Ziel der
+      // gerade widerrufenen Fahrt stehen, bis er die naechste abschliesst).
+      // Nur wenn der gespeicherte Standort WIRKLICH von dieser Fahrt stammt,
+      // damit ein aelterer, weiterhin gueltiger Eintrag nicht mit geloescht
+      // wird. Auf null statt auf den Vorgaenger: estimateDriverPosition und
+      // computeDriverStats fallen dann von selbst auf die letzte done-Fahrt
+      // zurueck, das ist dieselbe Quelle und braucht keine eigene Suche.
+      if (from === "done") {
+        const st = d.driverState[driver.id];
+        if (st && st.locationId === r.toId && st.locationDayKey === r.dayKey) {
+          st.locationId = null;
+          st.locationDayKey = null;
+          st.locationZone = null;
+          st.locationCustom = null;
+        }
+      }
       return d;
     }));
   };
