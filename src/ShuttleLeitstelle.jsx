@@ -10440,7 +10440,23 @@ const TL_LANE_GAP = 2; // px Abstand zwischen gestauchten Sub-Lanes
 function timelineLanes(rs, startOf, endOf) {
   const laneEnd = [];
   const laneOf = {};
-  for (const r of rs) {
+  const countOf = {}; // pro Fahrt: Lane-Anzahl NUR ihrer Ueberlappungsgruppe
+  // Eine Ueberlappungsgruppe (zusammenhaengende, sich chain-ueberschneidende
+  // Fahrten) abschliessen: jede Fahrt der Gruppe bekommt deren Lane-Anzahl
+  // (1 + groesster Lane-Index in der Gruppe). Eine allein stehende Fahrt ist
+  // eine Einer-Gruppe -> count 1 -> volle Hoehe, obwohl anderswo in derselben
+  // Zeile Fahrten ueberlappen. rs muss nach Startzeit sortiert sein.
+  let clusterStart = 0;
+  let clusterMaxEnd = -Infinity;
+  const flush = (from, to) => {
+    let mx = 0;
+    for (let k = from; k < to; k++) mx = Math.max(mx, laneOf[rs[k].id]);
+    const c = mx + 1;
+    for (let k = from; k < to; k++) countOf[rs[k].id] = c;
+  };
+  rs.forEach((r, i) => {
+    if (startOf(r) >= clusterMaxEnd) { flush(clusterStart, i); clusterStart = i; clusterMaxEnd = endOf(r); }
+    else { clusterMaxEnd = Math.max(clusterMaxEnd, endOf(r)); }
     let placed = -1;
     for (let L = 0; L < laneEnd.length; L++) {
       if (startOf(r) >= laneEnd[L]) { placed = L; break; }
@@ -10448,8 +10464,9 @@ function timelineLanes(rs, startOf, endOf) {
     if (placed === -1) { placed = laneEnd.length; laneEnd.push(0); }
     laneEnd[placed] = endOf(r);
     laneOf[r.id] = placed;
-  }
-  return { laneOf, count: Math.max(1, laneEnd.length) };
+  });
+  flush(clusterStart, rs.length);
+  return { laneOf, countOf };
 }
 // Variante C: die Zeilenhoehe bleibt fix (TL_ROW_H), die Fahrten teilen sich die
 // Hoehe in gestauchte Sub-Lanes. Bei count === 1 exakt top 6 / height 52, also
@@ -10782,7 +10799,7 @@ function MissionTimelinePage({ setup, dyn, day, onEdit, onAssign, updateDyn, by,
         <div className="relative shrink-0 h-16" style={{ width: contentW }}>
           {hours.map((m) => <div key={m} className="absolute top-0 bottom-0 w-px" style={{ left: `${pct(m)}%`, background: "var(--mc-border)" }} />)}
           <NowLine />
-          {rs.map((r, i) => <Block key={r.id} r={r} warn={warn} conflict={conflictCheck && hasConflict(rs, i)} lane={lanes.laneOf[r.id]} laneCount={lanes.count} />)}
+          {rs.map((r, i) => <Block key={r.id} r={r} warn={warn} conflict={conflictCheck && hasConflict(rs, i)} lane={lanes.laneOf[r.id]} laneCount={lanes.countOf[r.id]} />)}
         </div>
       </div>
     );

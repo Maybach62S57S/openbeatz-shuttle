@@ -1,13 +1,16 @@
-// Smoke: ueberlappende Fahrten desselben Fahrers werden in getrennte, gestauchte
-// Sub-Lanes gelegt (Variante C, feste Zeilenhoehe 64px). Prueft:
-//  (1)+(2) beide ueberlappenden Fahrten gerendert (beide sichtbar),
-//  (3)+(4) je Fahrt beide Knoepfe ("Fahrer aendern" + "Fahrt bearbeiten") vorhanden,
-//          also mindestens 2x -> beide Kacheln bleiben anklickbar,
-//  (5) die beiden Kacheln haben unterschiedliche top-Werte (getrennte Lanes, keine Verdeckung),
-//  (6) Normalfall (Einzelfahrt anderer Fahrer) unveraendert: top 6px / height 52px,
-//  (7) Pflicht-Gegenprobe: mit auf Lane 0 verbogenem timelineLanes fallen beide top gleich
-//      -> die Trennungs-Pruefung (5) kippt, beweist dass sie wirklich misst,
-//  (8) GP-Kontrolle: die Mutation ist wirklich angekommen (beide top == 6px).
+// Smoke: Sub-Lanes NUR fuer tatsaechlich ueberlappende Fahrten (Variante C).
+// Kernfall (Regression aus dem Live-Betrieb): eine allein stehende Fahrt in
+// DERSELBEN Zeile wie eine Ueberlappung darf NICHT mitgestaucht werden, sie
+// bleibt voll hoch. Nur die wirklich ueberlappenden Fahrten teilen sich die Hoehe.
+// Prueft:
+//  (1)-(3) alle drei Fahrten von d1 sichtbar (zwei ueberlappend + eine allein),
+//  (4) beide Knoepfe je Kachel vorhanden (mind. 2x),
+//  (5)+(6) die zwei ueberlappenden: getrennte top-Werte, je 25px hoch,
+//  (7) die allein stehende Fahrt DERSELBEN Zeile: top 6px / height 52px (VOLL),
+//  (8) Einzelfahrt in eigener Zeile: top 6px / height 52px,
+//  (9) GP-A: laneOf auf 0 verbogen -> beide ueberlappenden top gleich (Trennung kippt),
+//  (10) GP-B: Gruppen-Count auf fix 2 verbogen -> allein stehende Fahrt wird 25px
+//       statt 52px (die "bleibt voll"-Pruefung kippt, beweist dass sie misst).
 
 import fs from "fs";
 import { execSync } from "child_process";
@@ -33,11 +36,13 @@ const setup = {
   config: { baseLocationId: "festival" },
 };
 const day = "2026-07-25";
-// r1 und r2 gehoeren beide d1 und ueberschneiden sich (18:00-19:00 vs 18:30-19:30).
-// r3 gehoert d2 und ueberschneidet sich mit nichts -> Einzel-Lane (Normalfall).
+// d1: r1 + r2 ueberlappen (18:00-19:00 vs 18:30-19:30). r4 steht allein (22:00-23:00)
+//     -> muss trotz der Ueberlappung frueher in derselben Zeile VOLL hoch bleiben.
+// d2: r3 steht allein in eigener Zeile.
 const rides = [
   { id: "r1", dayKey: day, time: "18:00", djName: "Timmy Trumpet", fromId: "airport", toId: "festival", status: "accepted", assignedDriverId: "d1", passengerCount: 5, estDurationMin: 60, issues: [], statusHistory: [], log: [] },
   { id: "r2", dayKey: day, time: "18:30", djName: "Da Tweekaz", fromId: "festival", toId: "airport", status: "accepted", assignedDriverId: "d1", passengerCount: 3, estDurationMin: 60, issues: [], statusHistory: [], log: [] },
+  { id: "r4", dayKey: day, time: "22:00", djName: "Allein Fahrt", fromId: "airport", toId: "festival", status: "accepted", assignedDriverId: "d1", passengerCount: 2, estDurationMin: 60, issues: [], statusHistory: [], log: [] },
   { id: "r3", dayKey: day, time: "20:00", djName: "Solo Act", fromId: "airport", toId: "festival", status: "accepted", assignedDriverId: "d2", passengerCount: 2, estDurationMin: 60, issues: [], statusHistory: [], log: [] },
 ];
 const dyn = { rides, driverState: {}, messages: [], rev: 1 };
@@ -58,12 +63,9 @@ function renderTL(out) {
     }))
   );
 }
-
-// Letzter inline-Style-Wert (z.B. top / height) VOR dem Vorkommen des Namens.
-// Die Kachel rendert style="...;top:6px;height:52px;..." vor dem djName-Text.
+// Auf den inneren Kacheltext ">Name" ankern, nicht auf das title-Attribut
+// (dort steht der djName ebenfalls, aber VOR dem style -> falscher Block).
 function styleValBefore(markup, name, key) {
-  // Auf den inneren Kacheltext ">Name" ankern, nicht auf das title-Attribut
-  // (dort steht der djName ebenfalls, aber VOR dem style -> falscher Block).
   const idx = markup.indexOf(">" + name);
   if (idx < 0) return null;
   const before = markup.slice(0, idx);
@@ -75,45 +77,56 @@ const countOcc = (h, needle) => h.split(needle).length - 1;
 const checks = [];
 const pruef = (name, ok, hint) => checks.push({ name, ok, hint });
 
-// --- Aktueller Stand ---
 const src = fs.readFileSync(srcFile, "utf8");
 const outNeu = buildModule(src, "neu");
 let hNeu;
 try { hNeu = await renderTL(outNeu); }
 catch (e) { console.log("FEHLER Render (neu): " + e.message); process.exit(1); }
 
-pruef("neu: erste ueberlappende Fahrt (Timmy Trumpet) sichtbar", hNeu.includes("Timmy Trumpet"));
-pruef("neu: zweite ueberlappende Fahrt (Da Tweekaz) sichtbar", hNeu.includes("Da Tweekaz"));
-pruef("neu: 'Fahrer aendern' mind. 2x (beide Kacheln haben den Knopf)", countOcc(hNeu, 'title="Fahrer ändern"') >= 2);
-pruef("neu: 'Fahrt bearbeiten' mind. 2x (beide Kacheln haben den Stift)", countOcc(hNeu, 'title="Fahrt bearbeiten"') >= 2);
+pruef("neu: ueberlappende Fahrt 1 (Timmy Trumpet) sichtbar", hNeu.includes("Timmy Trumpet"));
+pruef("neu: ueberlappende Fahrt 2 (Da Tweekaz) sichtbar", hNeu.includes("Da Tweekaz"));
+pruef("neu: allein stehende Fahrt derselben Zeile (Allein Fahrt) sichtbar", hNeu.includes("Allein Fahrt"));
+pruef("neu: 'Fahrer aendern' mind. 2x (Kacheln haben den Knopf)", countOcc(hNeu, 'title="Fahrer ändern"') >= 2);
+pruef("neu: 'Fahrt bearbeiten' mind. 2x (Kacheln haben den Stift)", countOcc(hNeu, 'title="Fahrt bearbeiten"') >= 2);
 
 const topA = styleValBefore(hNeu, "Timmy Trumpet", "top");
 const topB = styleValBefore(hNeu, "Da Tweekaz", "top");
-pruef("neu: beide ueberlappenden Kacheln haben top-Wert", topA != null && topB != null, `topA=${topA} topB=${topB}`);
-pruef("neu: getrennte Sub-Lanes (top unterschiedlich) -> keine Verdeckung", topA != null && topB != null && topA !== topB, `topA=${topA} topB=${topB}`);
+const hA = styleValBefore(hNeu, "Timmy Trumpet", "height");
+const hB = styleValBefore(hNeu, "Da Tweekaz", "height");
+pruef("neu: ueberlappende getrennte Sub-Lanes (top unterschiedlich)", topA != null && topB != null && topA !== topB, `topA=${topA} topB=${topB}`);
+pruef("neu: ueberlappende je gestaucht (height 25px)", hA === "25" && hB === "25", `hA=${hA} hB=${hB}`);
+
+const topAllein = styleValBefore(hNeu, "Allein Fahrt", "top");
+const hAllein = styleValBefore(hNeu, "Allein Fahrt", "height");
+pruef("neu: KERNFALL allein stehende Fahrt bleibt VOLL (top 6px)", topAllein === "6", `top=${topAllein}`);
+pruef("neu: KERNFALL allein stehende Fahrt bleibt VOLL (height 52px)", hAllein === "52", `height=${hAllein}`);
 
 const topSolo = styleValBefore(hNeu, "Solo Act", "top");
 const hSolo = styleValBefore(hNeu, "Solo Act", "height");
-pruef("neu: Normalfall (Einzelfahrt) unveraendert top=6px", topSolo === "6", `top=${topSolo}`);
-pruef("neu: Normalfall (Einzelfahrt) unveraendert height=52px", hSolo === "52", `height=${hSolo}`);
+pruef("neu: Einzelfahrt eigene Zeile unveraendert (top 6 / height 52)", topSolo === "6" && hSolo === "52", `top=${topSolo} height=${hSolo}`);
 
-// --- Pflicht-Gegenprobe: timelineLanes so verbiegen, dass alles Lane 0 / count 1 wird ---
-let mut = src;
-const c1 = mut.includes("laneOf[r.id] = placed;");
-const c2 = mut.includes("return { laneOf, count: Math.max(1, laneEnd.length) };");
-mut = mut.replace("laneOf[r.id] = placed;", "laneOf[r.id] = 0;");
-mut = mut.replace("return { laneOf, count: Math.max(1, laneEnd.length) };", "return { laneOf, count: 1 };");
-pruef("GP-Setup: beide Mutationsanker im Quelltext gefunden", c1 && c2);
+// --- GP-A: laneOf auf 0 verbiegen -> alles Lane 0 -> ueberlappende top gleich ---
+const gpA_ok = src.includes("laneOf[r.id] = placed;");
+const mutA = src.replace("laneOf[r.id] = placed;", "laneOf[r.id] = 0;");
+pruef("GP-A-Setup: Mutationsanker (laneOf placed) gefunden", gpA_ok);
+const outA = buildModule(mutA, "gpa");
+let hMutA;
+try { hMutA = await renderTL(outA); }
+catch (e) { console.log("FEHLER Render (gpa): " + e.message); process.exit(1); }
+const aTopA = styleValBefore(hMutA, "Timmy Trumpet", "top");
+const aTopB = styleValBefore(hMutA, "Da Tweekaz", "top");
+pruef("GP-A: mit Lane-0-Mutation liegen die ueberlappenden gleich (Trennung kippt)", aTopA != null && aTopA === aTopB, `aTopA=${aTopA} aTopB=${aTopB}`);
 
-const outMut = buildModule(mut, "mut");
-let hMut;
-try { hMut = await renderTL(outMut); }
-catch (e) { console.log("FEHLER Render (mut): " + e.message); process.exit(1); }
-
-const mTopA = styleValBefore(hMut, "Timmy Trumpet", "top");
-const mTopB = styleValBefore(hMut, "Da Tweekaz", "top");
-pruef("GP: mit Lane-0-Mutation liegen beide Kacheln gleich (Trennung kippt)", mTopA != null && mTopA === mTopB, `mTopA=${mTopA} mTopB=${mTopB}`);
-pruef("GP-Kontrolle: Mutation wirkte, beide top == 6px (voll gestapelt wie vorher)", mTopA === "6" && mTopB === "6", `mTopA=${mTopA} mTopB=${mTopB}`);
+// --- GP-B: Gruppen-Count fix auf 2 -> allein stehende Fahrt wird ebenfalls 25px ---
+const gpB_ok = src.includes("const c = mx + 1;");
+const mutB = src.replace("const c = mx + 1;", "const c = 2;");
+pruef("GP-B-Setup: Mutationsanker (const c = mx + 1) gefunden", gpB_ok);
+const outB = buildModule(mutB, "gpb");
+let hMutB;
+try { hMutB = await renderTL(outB); }
+catch (e) { console.log("FEHLER Render (gpb): " + e.message); process.exit(1); }
+const bHAllein = styleValBefore(hMutB, "Allein Fahrt", "height");
+pruef("GP-B: mit fixem Gruppen-Count wird die allein stehende Fahrt 25px (bleibt-voll kippt)", bHAllein === "25", `height=${bHAllein}`);
 
 // --- Ausgabe ---
 let bad = 0;
