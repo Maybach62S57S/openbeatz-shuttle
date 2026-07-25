@@ -12390,6 +12390,22 @@ function MissionControl({ setup, dyn, session, updateDyn, updateSetup, onLogout,
     setTimeout(() => setErrToasts((cur) => cur.filter((x) => x.id !== id)), 8000);
   }, []);
 
+  // "Erledigt" direkt an der Fahrt (Fahrtenliste): setzt alle offenen
+  // Probleme der Fahrt auf done, wie Problem-Banner/Notfall-Tab. Gleiche
+  // gepruefte Schreibmechanik (updateDyn, idempotenter No-op, Log).
+  const markRideIssuesDone = async (rideId) => {
+    const res = await updateDyn((d) => {
+      const rr = d.rides.find((x) => x.id === rideId);
+      if (!rr) return dynConflict("RIDE_GONE", "Diese Fahrt existiert nicht mehr.");
+      const offen = (rr.issues || []).filter(issueOpen);
+      if (offen.length === 0) return NO_CHANGE;
+      offen.forEach((i) => { i.state = "done"; });
+      logRide(rr, "problem_done", meBy);
+      return d;
+    });
+    if (!res || !res.ok) notifyErr(res?.error || "Problem konnte nicht auf erledigt gesetzt werden, bitte erneut versuchen.");
+  };
+
   const dayRides = useMemo(() => (dyn.rides || [])
     .filter((r) => r.dayKey === day)
     .sort((a, b) => sortMin(a.time) - sortMin(b.time)), [dyn.rides, day]);
@@ -12770,6 +12786,7 @@ function MissionControl({ setup, dyn, session, updateDyn, updateSetup, onLogout,
                               <span className="font-medium truncate" style={{ color: "var(--mc-text)" }}>{locName(r.toId, r.toCustom)}</span>
                               <ReturnZoneChip r={r} rides={dyn.rides} className="shrink-0" />
                               {rideHasOpenIssue(r) && <span className="text-[10px] px-1.5 py-0.5 rounded shrink-0 inline-flex items-center gap-0.5" style={{ background: "var(--mc-st-problem-soft)", color: "var(--mc-st-problem)" }}><AlertTriangle className="w-2.5 h-2.5" />Problem</span>}
+                              {rideHasOpenIssue(r) && <button onClick={() => markRideIssuesDone(r.id)} className="text-[10px] px-1.5 py-0.5 rounded shrink-0 inline-flex items-center gap-0.5 transition" style={{ background: "var(--mc-st-done-soft)", color: "var(--mc-st-done)" }}><Check className="w-2.5 h-2.5" />erledigt</button>}
                               {flightDelayed(r) && <span className="text-[10px] px-1.5 py-0.5 rounded shrink-0 inline-flex items-center gap-0.5" style={{ background: "var(--mc-st-problem-soft)", color: "var(--mc-st-problem)" }}><Plane className="w-2.5 h-2.5" />Flug {flightStyle(r.flightStatus).l}</span>}
                             </div>
                             <div className="flex items-center gap-3 mt-1 text-xs flex-wrap" style={{ color: "var(--mc-text-muted)" }}>
