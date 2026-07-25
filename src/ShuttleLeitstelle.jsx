@@ -10476,7 +10476,10 @@ function MissionTimelinePage({ setup, dyn, day, onEdit, onAssign, updateDyn, by,
       // ok:true und der Push unten ginge faelschlich an einen Fahrer fuer eine
       // nicht mehr existierende Fahrt.
       if (!r) return dynConflict("RIDE_GONE", "Diese Fahrt existiert nicht mehr.");
-      logRide(r, "assigned", by, "Schnellzuteilung über Timeline");
+      // War die Fahrt schon einem anderen Fahrer zugeteilt, ist das eine
+      // Umteilung (reassigned), nicht die Erstzuteilung. Entscheidung auf dem
+      // frischen Stand r (nicht selectedRide), gleiche Fallunterscheidung wie applyDrop.
+      logRide(r, r.assignedDriverId ? "reassigned" : "assigned", by, "Schnellzuteilung über Timeline");
       r.assignedDriverId = driverId;
       if (r.status !== "planned") setRideStatus(r, "planned", by); else r.updatedAt = Date.now();
       return d;
@@ -10559,9 +10562,10 @@ function MissionTimelinePage({ setup, dyn, day, onEdit, onAssign, updateDyn, by,
       const st = dragRef.current; dragRef.current = null; setDrag(null);
       if (!st) return;
       if (!st.moved) {
-        // wie ein normaler Tap behandeln
-        if (!st.ride.assignedDriverId) setSelectedId((s) => (s === st.rideId ? null : st.rideId));
-        else onAssign && onAssign(st.ride);
+        // Tap ohne Ziehen: passende Fahrer in der Timeline aufleuchten lassen
+        // (fuer offene UND bereits zugeteilte Fahrten gleich) -> Zeile antippen
+        // teilt zu bzw. um. Nochmal auf dieselbe Fahrt tippen hebt die Auswahl auf.
+        setSelectedId((s) => (s === st.rideId ? null : st.rideId));
         return;
       }
       const newStart = timeFromClientX(e.clientX - st.grabDx + st.w / 2);
@@ -10644,13 +10648,18 @@ function MissionTimelinePage({ setup, dyn, day, onEdit, onAssign, updateDyn, by,
 
   const Row = ({ driverId, label, sub, rs, conflictCheck, warn }) => {
     const ev = selectedRide && driverId ? evalFor(driverId) : null;
-    const clickable = ev && ev.eligible && !ev.overlap;
+    // Zeile des Fahrers, der die ausgewaehlte Fahrt bereits hat: markieren, aber
+    // NICHT klickbar. Antippen wuerde die Fahrt sinnlos auf denselben Fahrer
+    // umteilen (planned-Reset + Push) -> darum ausgegrenzt.
+    const isCurrent = !!selectedRide && !!driverId && selectedRide.assignedDriverId === driverId;
+    const clickable = !isCurrent && ev && ev.eligible && !ev.overlap;
     const isDropTarget = dragActive && dropDriverId !== undefined && dropDriverId === (driverId || null);
     const rowBg = isDropTarget ? "var(--mc-st-assigned-soft)"
       : !selectedRide ? "var(--mc-panel)"
-        : clickable ? (ev.feasible ? "var(--mc-st-done-soft)" : "var(--mc-st-assigned-soft)")
-          : "var(--mc-panel)";
-    const dimmed = selectedRide && !clickable && !isDropTarget;
+        : isCurrent ? "var(--mc-st-enroute-soft)"
+          : clickable ? (ev.feasible ? "var(--mc-st-done-soft)" : "var(--mc-st-assigned-soft)")
+            : "var(--mc-panel)";
+    const dimmed = selectedRide && !clickable && !isCurrent && !isDropTarget;
     return (
       <div data-row-driver={driverId || "unassigned"} onClick={() => clickable && quickAssign(driverId)}
         className={`mc-tl-row flex items-stretch ${clickable ? "mc-tl-row-click cursor-pointer" : ""}`}
@@ -10658,6 +10667,7 @@ function MissionTimelinePage({ setup, dyn, day, onEdit, onAssign, updateDyn, by,
         <div className="w-40 shrink-0 px-3 py-2.5 sticky left-0 z-10" style={{ background: "var(--mc-panel)" }}>
           <div className="text-sm font-medium truncate" style={{ color: warn ? "var(--mc-st-assigned)" : "var(--mc-text)" }}>{label}</div>
           {sub && <div className="text-[10px] font-mono truncate mt-0.5" style={{ color: "var(--mc-text-muted)" }}>{sub}</div>}
+          {isCurrent && <div className="text-[9px] mt-0.5" style={{ color: "var(--mc-st-enroute)" }}>aktuell zugeteilt</div>}
           {clickable && <div className="text-[9px] mt-0.5" style={{ color: ev.feasible ? "var(--mc-st-done)" : "var(--mc-st-assigned)" }}>{ev.feasible ? "passt · antippen" : "knapp · antippen"}</div>}
         </div>
         <div className="relative shrink-0 h-16" style={{ width: contentW }}>
@@ -10776,8 +10786,8 @@ function MissionTimelinePage({ setup, dyn, day, onEdit, onAssign, updateDyn, by,
 
       <p className="text-xs mb-3" style={{ color: "var(--mc-text-muted)" }}>
         {selectedRide
-          ? <>Offene Fahrt <b style={{ color: "var(--mc-text-secondary)" }}>{selectedRide.djName || selectedRide.time}</b> ausgewählt — grüne/gelbe Zeilen antippen zum Zuteilen, oder nochmal auf die Fahrt tippen zum Abbrechen.</>
-          : "Fahrt ziehen = Zeit ändern / in eine andere Zeile ziehen = Fahrer wechseln, wird erst nach Bestätigung übernommen · Tippen ohne Ziehen = offene Fahrt: passende Fahrer anzeigen, zugeteilte Fahrt: Fahrer ändern · Stift = Details bearbeiten. · Endzeit im Balken ist geschätzt (ca. = Dauer unbekannt)."}
+          ? <>Fahrt <b style={{ color: "var(--mc-text-secondary)" }}>{selectedRide.djName || selectedRide.time}</b> ausgewählt — grüne/gelbe Zeilen antippen zum Zuteilen bzw. Umteilen, oder nochmal auf die Fahrt tippen zum Abbrechen.</>
+          : "Fahrt ziehen = Zeit ändern / in eine andere Zeile ziehen = Fahrer wechseln, wird erst nach Bestätigung übernommen · Tippen ohne Ziehen = passende Fahrer anzeigen und per Antippen zuteilen/umteilen · Stift = Details bearbeiten. · Endzeit im Balken ist geschätzt (ca. = Dauer unbekannt)."}
       </p>
 
       {rides.length === 0 ? (
