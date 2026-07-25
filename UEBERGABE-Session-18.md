@@ -7679,3 +7679,135 @@ festival-Guard, die faelschlich ableitet), gegen HEAD kippen alle Struktur-Anker
 > schreiben. Proaktiv vor zu langem Chat warnen.
 >
 > PAT: [HIER FRISCHEN PAT EINSETZEN]
+
+---
+
+# Session 25.07.2026 (Teil 4): Timeline-Fahrerzeilen nach Van/Car + Springer sortieren
+
+**Ein Code-Commit (`d2dc1ac`), gepusht und live.** Letzter Code-Commit:
+**`d2dc1ac`**, **13818 Zeilen**. Sicherungs-Tag neu:
+**`post-timeline-sortierung`** (= `d2dc1ac`, annotiert, `^{}`).
+
+## Wunsch
+
+Jordan (Screenshot Timeline-Tab): Fahrer-Zeilen nach Fahrzeugtyp ordnen (Vans
+oben, Cars unten) und die Springer "Leon" und "Philipp Stich" nach unten.
+
+## Diagnose
+
+- Timeline-Tab = `MissionTimelinePage` (Titel `<h2>Timeline · wer ist wann
+  belegt</h2>` Z. ~10806, Filter-Buttons, Drag-Hinweis). Fahrer-Zeilen aus
+  `withDriver` (~Z. 10512), bisher feste `setup.drivers`-Reihenfolge (bewusst,
+  gegen Springen).
+- Eingebettete Kompakt-`TimelineView` (in Rueckfahrten- und Karten-Tab
+  eingebunden, Z. 9737 / 11717) hat eigenes `withDriver` (~Z. 10898, zusaetzlich
+  `.filter((x) => x.rs.length > 0)`).
+- **"Leon Merg" und "Philipp Stich" sind im Code bereits als `springer`
+  klassifiziert** (DRIVER_PROFILES Z. 1935-1936). `driverCategoryOf(d)` erkennt
+  sie ueber `normDriverName` auch dann, wenn sie nur in der Live-DB stehen (nicht
+  in der Seed-Liste Z. 565-571). Kein Namens-Hardcoding noetig.
+- `vehicleType` ist "Van" oder "Car" (Grossschreibung, `=== "Van"`).
+
+## Umsetzung (rein additiv)
+
+Neue reine Funktion **`driverLaneRank(d)`** (nach `driverCategoryOf`, ~Z. 1976):
+`springer * 2 + car`, wobei `springer = driverCategoryOf(d)==="springer"?1:0`
+und `car = d.vehicleType==="Van"?0:1`. Ergibt: reg-Van 0, reg-Car 1, spr-Van 2,
+spr-Car 3. `.sort((a,b) => driverLaneRank(a.d) - driverLaneRank(b.d))` an beide
+`withDriver` angehaengt (MissionTimelinePage + TimelineView). Stabiler Sort ->
+Tiebreaker bleibt Stammdaten-Reihenfolge. Kommentar bei ~Z. 10510 an die neue
+Ordnung angepasst.
+
+**Von Jordan bestaetigt:** Springer immer ganz unten (auch falls ein Springer
+ein Van waere), Vans oben / Cars unten, beide Timeline-Stellen.
+
+## Verifikation (volle Kette gruen)
+
+esbuild gruen, keine Duplikate, JSX-Ref gegen HEAD ohne neue undefinierte Ref.
+b/e/g-Extrakte byte-identisch zu HEAD (driverLaneRank nicht erfasst -> Block
+nicht-regressiv). Smoke-Suite: nur die 7 bekannten vorbestehenden Auffaelligen;
+**`test_springer_availability` bei JETZT und HEAD identisch 8/8** (Springer-Logik
+unverschlechtert, wichtig weil die Aenderung Springer-nah ist); MC-UI-Smokes
+gruen; scharfe gruen (e 152/0, g 130/0, gegenprobe-e 8/8, offline-reconnect-GP
+gekippt, buehne-settime 17/0). rendertest 5 Werte konstant, kontrast 0.
+Eigenstaendiger Node-Test (`/tmp/test_lanesort.mjs`, nicht im Repo): 12/0 gegen
+JETZT inkl. R5/R6 (Leon Merg / Philipp Stich via Profil -> springer -> unten) und
+Sortier-Simulation (Vans, reg. Cars, dann Springer), Pflicht-Gegenprobe mit
+kaputter Variante ohne Springer-Rang. Gegen HEAD: Struktur-Anker + Import-Fehler
+-> misst nachweislich.
+
+## Manuelle Testfaelle (Live-Deploy)
+
+1. Timeline-Tab: Reihenfolge oben nach unten = reguläre Vans, reguläre Cars, dann
+   Leon Merg und Philipp Stich (Springer) ganz unten.
+2. Zuteilen/Umteilen einer Fahrt: Zeilen springen nicht (Reihenfolge stabil).
+3. Rueckfahrten-Tab und Karten-Tab (eingebettete Timeline): gleiche Ordnung.
+4. Drag-and-Drop Fahrerwechsel: funktioniert unveraendert (haengt an driverId,
+   nicht an Zeilenposition).
+
+## Weitere gefundene Punkte (unveraendert offen)
+
+Wie Teil 3, plus: `gegenprobe-teilpaket-h-rpc-postgres.mjs` vorbestehend rot
+(fehlende Zwischendatei).
+
+---
+
+> **Fertiger Opener fuer den naechsten Chat:**
+>
+> Neue Session, OpenBeatz Shuttle-Leitstelle. Arbeitsverzeichnis MUSS
+> `/home/claude/repo` (mehrere Testskripte haben den Pfad hart verdrahtet).
+> Erst Schritt 0 komplett: Repo klonen (frischen PAT von mir), PAT sofort aus der
+> Remote-URL scrubben (`git remote set-url`), `npm install` (nicht `npm ci`, kein
+> Lockfile), `git config user.name Claude` / `user.email claude@merg-and-more.de`,
+> `git fetch`, selbst pruefen HEAD==origin/main. Zeilenzahl selbst nachmessen.
+>
+> **Stand:** HEAD ist `d2dc1ac`, **13818 Zeilen**, letzter Code-Commit zugleich.
+> Sicherungs-Tag zuletzt `post-timeline-sortierung` (= `d2dc1ac`, annotiert,
+> `^{}` aufloesen), gepusht. Davor `post-rueckfahrt-chip` (= `849dda2`),
+> `post-buehne-abfahrt` (= `7444b9f`), `pre-buehne-abfahrt` (= `ab76eec`).
+>
+> Bestands-Regression vor allem Neuen: esbuild, Duplikat-Grep (`[a-zA-Z0-9_]+`),
+> fuer Teilpaket B/E/G ZUERST
+> `python3 extract-funcs-teilpaket-{b,e,g}.py src/ShuttleLeitstelle.jsx
+> tmp-t{b,e,g}-funcs.mjs`, dann alle `smoke*.mjs` mit Dateipfad als
+> `process.argv[2]`, `rendertest.mjs` (5 Werte konstant 25053/2452/2413/2895/101),
+> `kontrast.mjs` (0). Extrakte danach loeschen. Bester Nachweis: komplette Suite
+> zusaetzlich gegen `git show HEAD:src/ShuttleLeitstelle.jsx`, nur ABWEICHUNGEN
+> als Regression. Bewaehrt: b/e/g-Extrakte gegen HEAD byte-diffen -> bei
+> Identitaet ist der ganze Block per Konstruktion nicht-regressiv.
+>
+> **Vorbestehende Fehler, NICHT anfassen, nicht als Regression werten:**
+> `smoke-orte-fix.mjs` (2 FAIL), `test_springer_availability.mjs` (8 FAIL),
+> `smoke-teilpaket-g2-ui.mjs` (2 FAIL: Tests 15/21; wanduhr-flaky
+> 14/20/25/26/27 getrennt, kippen nur 06:00-08:00), `smoke-standort-tagesbezug.mjs`
+> ("Jassin am Festival" kippt zeitfensterabhaengig, gegen HEAD gegenpruefen),
+> `regression-teilpaket-b.mjs` (`/tmp/reg_alt.mjs`), `pruefe.mjs` (ZWEI
+> Dateipfade), `smoke-fahrer-23-07.mjs` (`/tmp/prof.js`), `smoke-orte-23-07.mjs`
+> (`/tmp/ml_new.js`), `pruefe-fahrerabgleich.mjs`,
+> `gegenprobe-teilpaket-h-rpc-postgres.mjs` (fehlende Zwischendatei). **Scharf:**
+> `smoke-teilpaket-e.mjs` (152/0), `smoke-teilpaket-g.mjs` (130/0),
+> `gegenprobe-teilpaket-e.mjs` (8/8), `smoke-offline-reconnect-e.mjs` (39/0),
+> `smoke-buehne-settime.mjs` (17/0).
+>
+> **THEMA: [von mir zu setzen].** Offene Kandidaten: `matchLoc`-Fix (hartkodierte
+> 4 Orte), feasible-Entscheidung bei unbekanntem Fahrer-Standort, Karte koennte
+> die abgeleitete Rueckfahrt-Buehne auch fuer die Startprojektion nutzen (Teil 3,
+> aktuell nur Anzeige), Post-Festival Paket 2. Erst Diagnose, dann
+> Verdrahtungsplan mit Einfuegestelle und Regressionsrisiko, dann meine Freigabe,
+> dann Bau.
+>
+> Regeln unveraendert: Deutsch, informell, keine Gedankenstriche, korrekte
+> Umlaute. Rein additiv wo moeglich, kleinstmoegliche Aenderung, keine Breaking
+> Changes, keine Workflow-/Rollen-/Stage-Aenderungen, keine DB-Struktur-Aenderungen
+> (ausser zwingend), keine kosmetischen Refactorings ausserhalb des Themas.
+> **Erst Diagnose, dann Verdrahtungsplan mit Einfuegestelle und Regressionsrisiko,
+> dann meine Freigabe, dann Bau.** Nach jeder Aenderung volle Kette (esbuild,
+> Duplikat-Grep, JSX-Referenzabgleich, Smoke mit Pflicht-Gegenprobe, rendertest,
+> kontrast) + Diff-Beweis + konkrete manuelle Testfaelle. Bugs ausserhalb des
+> Themas -> "Weitere gefundene Punkte", NICHT fixen. Festival 23.-27.07. (laeuft),
+> Freeze seit 20.07. aufgehoben. Nur eine Session gleichzeitig. `git fetch`
+> unmittelbar vor jedem Push. Commit-Messages mit Umlauten ueber `/tmp/msg.txt` +
+> `git commit -F`, Datei in EIGENEM Befehl schreiben. Proaktiv vor zu langem Chat
+> warnen.
+>
+> PAT: [HIER FRISCHEN PAT EINSETZEN]
