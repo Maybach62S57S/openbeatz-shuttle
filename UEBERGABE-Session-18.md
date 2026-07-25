@@ -7529,3 +7529,153 @@ mit alter Logik bestaetigt den Verhaltensunterschied.
 > schreiben. Proaktiv vor zu langem Chat warnen.
 >
 > PAT: [HIER FRISCHEN PAT EINSETZEN]
+
+---
+
+# Session 25.07.2026 (Teil 3): Buehnen-Chip der Rueckfahrt aus letzter Hinfahrt ableiten
+
+**Ein Code-Commit (`849dda2`), gepusht und live.** Anschlussthema an Teil 2:
+Nachdem Buehnen bei Festival-Abfahrten manuell setzbar sind, wollte Jordan, dass
+der Chip auf der Uebersicht auch dann erscheint, wenn an der Rueckfahrt selbst
+keine Buehne gesetzt ist, indem die Buehne der Hinfahrt desselben Artists
+uebernommen wird. Letzter Code-Commit: **`849dda2`**, **13806 Zeilen**.
+Sicherungs-Tag neu: **`post-rueckfahrt-chip`** (= `849dda2`, annotiert, `^{}`).
+
+## Vorgeschichte (wichtig fuer das Verstaendnis)
+
+Zuerst als moeglicher Anzeige-Bug gemeldet (Chip fehlt bei Abfahrt trotz
+funktionierender Auswahl). Diagnose ergab: **kein Code-Bug.** Speicher- und
+Anzeigepfad sind korrekt (empirisch geprueft, voller Pfad inkl.
+onSave-Destrukturierung `Object.assign(r, safeData)`, zone bleibt erhalten; alle
+10 ZoneChip-Stellen haengen an `r.zone`, `r` ist ueberall die Originalfahrt bzw.
+`vm.ride`). Der Chip erscheint nur bei tatsaechlich gesetzter zone; beim Import
+wird zone nur aus dem Ziel gelesen (Z. 12147 `zone: to.zone || ""`), Abfahrten
+haben also anfangs keine. Daraus wurde der Feature-Wunsch: Ableitung aus der
+Hinfahrt.
+
+## Was gebaut wurde (rein additiv)
+
+Neue reine Funktion **`chipZone(r, rides)`** (direkt vor `ZoneChip`, ~Z. 627):
+- eigene `r.zone` gewinnt immer (Rueckgabe unveraendert),
+- nur bei Rueckfahrt (`r.fromId === "festival"`) wird abgeleitet,
+- unter den Hinfahrten (`toId === "festival"`, nicht cancelled, mit zone)
+  desselben `djName` die **zeitlich letzte** (Schluessel `date#sortMin(time)`),
+- sonst `""`.
+
+Wrapper-Komponente **`ReturnZoneChip({ r, rides, className })`** kapselt das und
+rendert `null` bei leerer Buehne. Vier Leitstellen-Chipstellen umgestellt von
+`{r.zone && <ZoneChip zone={r.zone} .../>}` auf
+`<ReturnZoneChip r={r} rides={dyn.rides} .../>`:
+- `MissionReturnsTab` (Rueckfahrten-Leitstand, ~Z. 9471),
+- `MissionEmergencyTab` (Notfall-Tab, ~Z. 10105, von Jordan bestaetigt: "ja
+  mitlaufen"),
+- `MissionControl`-Board (~Z. 12756 und ~Z. 12897).
+
+**Unberuehrt (Do-not-touch):** DriverApp, StageApp, StageTile, GuestRideCard.
+Deren Chip-Stellen haben andere className/Struktur (`ml-1`, ternary, `ride.zone`,
+`x.r.zone`) und waren vom String-Replace nicht betroffen.
+
+## Design-Entscheidungen (von Jordan)
+
+- Nur Chip (Anzeige), kein Schreibvorgang, keine Kartenlogik.
+- Match ueber die **zeitlich letzte** Hinfahrt (spaetestes Datum+Uhrzeit),
+  unabhaengig vom Tag der Rueckfahrt.
+- Notfall-Tab laeuft mit.
+
+## Verifikation (volle Kette gruen)
+
+esbuild gruen, keine Duplikate, JSX-Referenzabgleich gegen HEAD ohne neue
+undefinierte Ref (`ReturnZoneChip` definiert). b/e/g-Extrakte byte-identisch zu
+HEAD (Block nicht-regressiv). Smoke-Suite: nur die 7 bekannten vorbestehenden
+Auffaelligen, alle MC-UI-Smokes gruen (f-ui 48/0, fahrtenliste 35/0,
+fokus-bereich 80/0 mit 12 gegriffenen Gegenproben), scharfe gruen (e 152/0,
+g 130/0, offline-reconnect-GP gekippt, gegenprobe-e 8/8, buehne-settime 17/0).
+rendertest 5 Werte konstant (25053/2452/2413/2895/101), kontrast exit 0.
+Eigenstaendiger Node-Test (`/tmp/test_chipzone.mjs`, nicht im Repo): 13/0 gegen
+JETZT (Verhalten + Struktur + Pflicht-Gegenprobe mit kaputter Variante ohne
+festival-Guard, die faelschlich ableitet), gegen HEAD kippen alle Struktur-Anker
++ Import-Fehler -> misst nachweislich.
+
+## Manuelle Testfaelle (Live-Deploy)
+
+1. Artist mit Hinfahrt (Buehne gesetzt) + Rueckfahrt ohne Buehne: Rueckfahrt
+   zeigt den Chip der Hinfahrt (Board, Rueckfahrten-Leitstand, Notfall-Tab).
+2. Rueckfahrt mit eigener Buehne: eigene gewinnt, keine Ableitung.
+3. Artist mit mehreren Hinfahrten auf verschiedenen Buehnen: Rueckfahrt zeigt die
+   der zeitlich letzten Hinfahrt.
+4. Artist ohne Hinfahrt mit Buehne / nur stornierte Hinfahrt: kein Chip.
+5. Normale Nicht-Rueckfahrt ohne Buehne: unveraendert kein Chip.
+6. Fahrer-/Stage-/Gast-Ansicht: unveraendert (keine Ableitung dort).
+
+## Offen / bewusst nicht gemacht
+
+- Karte: Rueckfahrt startet weiter am generischen Festival-Node, weil `r.zone`
+  leer bleibt (nur Anzeige abgeleitet). Bewusste Entscheidung (nur Chip).
+- Performance: `chipZone` ist O(n) ueber `dyn.rides` pro Chip-Render. Bei ~313
+  Fahrten unkritisch; falls es je zu viel wird, waere eine vorberechnete Map
+  (`artist -> letzte Hinfahrt-zone`, useMemo pro Komponente) der naechste Schritt.
+
+---
+
+> **Fertiger Opener fuer den naechsten Chat:**
+>
+> Neue Session, OpenBeatz Shuttle-Leitstelle. Arbeitsverzeichnis MUSS
+> `/home/claude/repo` (mehrere Testskripte haben den Pfad hart verdrahtet).
+> Erst Schritt 0 komplett: Repo klonen (frischen PAT von mir), PAT sofort aus der
+> Remote-URL scrubben (`git remote set-url`), `npm install` (nicht `npm ci`, kein
+> Lockfile), `git config user.name Claude` / `user.email claude@merg-and-more.de`,
+> `git fetch`, selbst pruefen HEAD==origin/main. Zeilenzahl selbst nachmessen.
+>
+> **Stand:** HEAD ist `849dda2`, **13806 Zeilen**, letzter Code-Commit zugleich.
+> Sicherungs-Tag zuletzt `post-rueckfahrt-chip` (= `849dda2`, annotiert, `^{}`
+> aufloesen), gepusht. Davor `post-buehne-abfahrt` (= `7444b9f`),
+> `pre-buehne-abfahrt` (= `ab76eec`).
+>
+> Bestands-Regression vor allem Neuen: esbuild, Duplikat-Grep (`[a-zA-Z0-9_]+`),
+> fuer Teilpaket B/E/G ZUERST
+> `python3 extract-funcs-teilpaket-{b,e,g}.py src/ShuttleLeitstelle.jsx
+> tmp-t{b,e,g}-funcs.mjs`, dann alle `smoke*.mjs` mit Dateipfad als
+> `process.argv[2]`, `rendertest.mjs` (5 Werte konstant 25053/2452/2413/2895/101),
+> `kontrast.mjs` (0). Extrakte danach loeschen. Bester Nachweis: komplette Suite
+> zusaetzlich gegen `git show HEAD:src/ShuttleLeitstelle.jsx`, nur ABWEICHUNGEN
+> als Regression. Bewaehrt: b/e/g-Extrakte gegen HEAD byte-diffen -> bei
+> Identitaet ist der ganze Block per Konstruktion nicht-regressiv.
+>
+> **Vorbestehende Fehler, NICHT anfassen, nicht als Regression werten:**
+> `smoke-orte-fix.mjs` (2 FAIL), `test_springer_availability.mjs` (8 FAIL),
+> `smoke-teilpaket-g2-ui.mjs` (2 FAIL: Tests 15/21; wanduhr-flaky
+> 14/20/25/26/27 getrennt, kippen nur 06:00-08:00), `smoke-standort-tagesbezug.mjs`
+> ("Jassin am Festival"-Test kippt zeitfensterabhaengig, gegen HEAD gegenpruefen),
+> `regression-teilpaket-b.mjs` (braucht `/tmp/reg_alt.mjs`), `pruefe.mjs` (braucht
+> ZWEI Dateipfade), `smoke-fahrer-23-07.mjs` (`/tmp/prof.js`),
+> `smoke-orte-23-07.mjs` (`/tmp/ml_new.js`), `pruefe-fahrerabgleich.mjs`,
+> `gegenprobe-teilpaket-h-rpc-postgres.mjs` (fehlende Zwischendatei,
+> `ERR_MODULE_NOT_FOUND`). **Scharf (echte Funde bei Fail):**
+> `smoke-teilpaket-e.mjs` (152/0), `smoke-teilpaket-g.mjs` (130/0),
+> `gegenprobe-teilpaket-e.mjs` (8/8), `smoke-offline-reconnect-e.mjs` (39/0, an
+> die `sget`-Zeile mit `withAirportCityShort` verankert),
+> `smoke-buehne-settime.mjs` (17/0, inkl. broken-Gegenprobe).
+>
+> **THEMA: [von mir zu setzen].** Offene Kandidaten: `matchLoc`-Fix (hartkodierte
+> 4 Orte, liest nicht aus `setup.locations`), feasible-Entscheidung bei
+> unbekanntem Fahrer-Standort, Post-Festival Paket 2 (Datei-Modularisierung,
+> Base64-Assets). Falls Buehnen-Thema weiterlaeuft: Karte koennte die abgeleitete
+> Buehne auch fuer die Rueckfahrt-Startprojektion nutzen (aktuell bewusst nur
+> Anzeige). Erst Diagnose, dann Verdrahtungsplan mit Einfuegestelle und
+> Regressionsrisiko, dann meine Freigabe, dann Bau.
+>
+> Regeln unveraendert: Deutsch, informell, keine Gedankenstriche, korrekte
+> Umlaute. Rein additiv wo moeglich, kleinstmoegliche Aenderung, keine Breaking
+> Changes, keine Workflow-/Rollen-/Stage-Aenderungen, keine DB-Struktur-Aenderungen
+> (ausser zwingend), keine kosmetischen Refactorings oder Performance-
+> Optimierungen ausserhalb des Themas. **Erst Diagnose, dann Verdrahtungsplan mit
+> Einfuegestelle und Regressionsrisiko, dann meine Freigabe, dann Bau.** Nach jeder
+> Aenderung volle Kette (esbuild, Duplikat-Grep, JSX-Referenzabgleich, Smoke mit
+> Pflicht-Gegenprobe, rendertest, kontrast) + Diff-Beweis + konkrete manuelle
+> Testfaelle. Bugs ausserhalb des Themas -> "Weitere gefundene Punkte", NICHT
+> fixen. Festival 23.-27.07. (laeuft), Freeze seit 20.07. aufgehoben. Nur eine
+> Session gleichzeitig. `git fetch` unmittelbar vor jedem Push. Commit-Messages
+> mit Umlauten ueber `/tmp/msg.txt` + `git commit -F`, Datei in EIGENEM Befehl
+> schreiben. Proaktiv vor zu langem Chat warnen.
+>
+> PAT: [HIER FRISCHEN PAT EINSETZEN]
