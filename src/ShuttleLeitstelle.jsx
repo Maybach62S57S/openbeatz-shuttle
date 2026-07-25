@@ -10430,6 +10430,36 @@ function dateForNightTime(dayKey, time) {
 }
 const TL_LABEL_W = 160; // px, entspricht w-40
 const TL_DRAG_THRESHOLD = 6; // px Mindestbewegung, bevor aus Klick ein Ziehen wird
+const TL_ROW_H = 64; // px, entspricht h-16 (feste Zeilenhoehe der Timeline-Fahrerzeile)
+const TL_LANE_PAD = 6; // px Rand oben/unten in der Zeile
+const TL_LANE_GAP = 2; // px Abstand zwischen gestauchten Sub-Lanes
+// Ueberlappende Fahrten desselben Fahrers auf Sub-Lanes verteilen (greedy
+// Intervall-Partitionierung): jede Fahrt in die niedrigste Lane, deren letzte
+// Fahrt vor Start endet. rs muss nach Startzeit sortiert sein. count = minimale
+// Anzahl noetiger Lanes (= maximale gleichzeitige Ueberlappung).
+function timelineLanes(rs, startOf, endOf) {
+  const laneEnd = [];
+  const laneOf = {};
+  for (const r of rs) {
+    let placed = -1;
+    for (let L = 0; L < laneEnd.length; L++) {
+      if (startOf(r) >= laneEnd[L]) { placed = L; break; }
+    }
+    if (placed === -1) { placed = laneEnd.length; laneEnd.push(0); }
+    laneEnd[placed] = endOf(r);
+    laneOf[r.id] = placed;
+  }
+  return { laneOf, count: Math.max(1, laneEnd.length) };
+}
+// Variante C: die Zeilenhoehe bleibt fix (TL_ROW_H), die Fahrten teilen sich die
+// Hoehe in gestauchte Sub-Lanes. Bei count === 1 exakt top 6 / height 52, also
+// identisch zu vorher (top-1.5 bottom-1.5 in einer 64px-Zeile).
+function timelineLaneBox(lane, count) {
+  const n = Math.max(1, count || 1);
+  const laneH = (TL_ROW_H - 2 * TL_LANE_PAD - (n - 1) * TL_LANE_GAP) / n;
+  const top = TL_LANE_PAD + (lane || 0) * (laneH + TL_LANE_GAP);
+  return { top, height: laneH };
+}
 
 function MissionTimelinePage({ setup, dyn, day, onEdit, onAssign, updateDyn, by, onUndo, onErr }) {
   const ln = (id, c) => setup.locations.find((l) => l.id === id)?.short || c || "—";
@@ -10677,7 +10707,7 @@ function MissionTimelinePage({ setup, dyn, day, onEdit, onAssign, updateDyn, by,
   const dropNewStart = dragActive ? timeFromClientX(drag.x - drag.grabDx + drag.w / 2) : null;
   const dropDriverId = dragActive ? driverIdFromClientY(drag.x, drag.y) : undefined;
 
-  const Block = ({ r, warn, conflict }) => {
+  const Block = ({ r, warn, conflict, lane = 0, laneCount = 1 }) => {
     const to = ln(r.toId, r.toCustom), from = ln(r.fromId, r.fromCustom);
     const isOpen = !r.assignedDriverId;
     const selected = selectedId === r.id;
@@ -10689,17 +10719,19 @@ function MissionTimelinePage({ setup, dyn, day, onEdit, onAssign, updateDyn, by,
     const stKey = mcRideStatusKey(r.status, !!r.assignedDriverId);
     const durKnown = r.estDurationMin != null;
     const endTime = fromMin(end(r) % 1440);
+    const box = timelineLaneBox(lane, laneCount);
     return (
       <div onPointerDown={(e) => beginDrag(e, r)} onClick={(e) => e.stopPropagation()}
         title={`${r.time} · ${from} → ${to}${r.djName ? " · " + r.djName : ""} — ziehen zum Verschieben, ${isOpen ? "tippen: passende Fahrer anzeigen" : "tippen: Fahrer ändern"}`}
         style={{
           left: `${pct(start(r))}%`, width: `${Math.max(9, pct(end(r)) - pct(start(r)))}%`,
+          top: box.top, height: box.height,
           minWidth: 92, touchAction: "none", opacity: dragging ? 0.25 : 1,
           background: `var(--mc-st-${stKey}-fill)`,
           borderColor: conflict ? "var(--mc-st-problem)" : selected ? "var(--mc-text)" : `var(--mc-st-${stKey})`,
           boxShadow: conflict ? "0 0 0 1.5px var(--mc-st-problem)" : selected ? "0 0 0 1.5px var(--mc-text)" : "var(--mc-shadow-sm)",
         }}
-        className="mc-tl-block absolute top-1.5 bottom-1.5 rounded-lg border pl-2 pr-1 py-1 overflow-hidden cursor-grab active:cursor-grabbing">
+        className="mc-tl-block absolute rounded-lg border pl-2 pr-1 py-1 overflow-hidden cursor-grab active:cursor-grabbing">
         <div className="text-[11px] font-semibold leading-tight truncate" style={{ color: "#ffffff" }}>{r.djName || "—"}</div>
         <div className="text-[9px] leading-tight truncate" style={{ color: "rgba(255,255,255,0.85)" }}>{from} → {to}</div>
         <div className="text-[9px] font-mono leading-tight" style={{ color: "rgba(255,255,255,0.78)" }}>
@@ -10724,6 +10756,7 @@ function MissionTimelinePage({ setup, dyn, day, onEdit, onAssign, updateDyn, by,
 
   const Row = ({ driverId, label, sub, rs, conflictCheck, warn }) => {
     const ev = selectedRide && driverId ? evalFor(driverId) : null;
+    const lanes = timelineLanes(rs, start, end);
     // Zeile des Fahrers, der die ausgewaehlte Fahrt bereits hat: markieren, aber
     // NICHT klickbar. Antippen wuerde die Fahrt sinnlos auf denselben Fahrer
     // umteilen (planned-Reset + Push) -> darum ausgegrenzt.
@@ -10749,7 +10782,7 @@ function MissionTimelinePage({ setup, dyn, day, onEdit, onAssign, updateDyn, by,
         <div className="relative shrink-0 h-16" style={{ width: contentW }}>
           {hours.map((m) => <div key={m} className="absolute top-0 bottom-0 w-px" style={{ left: `${pct(m)}%`, background: "var(--mc-border)" }} />)}
           <NowLine />
-          {rs.map((r, i) => <Block key={r.id} r={r} warn={warn} conflict={conflictCheck && hasConflict(rs, i)} />)}
+          {rs.map((r, i) => <Block key={r.id} r={r} warn={warn} conflict={conflictCheck && hasConflict(rs, i)} lane={lanes.laneOf[r.id]} laneCount={lanes.count} />)}
         </div>
       </div>
     );
