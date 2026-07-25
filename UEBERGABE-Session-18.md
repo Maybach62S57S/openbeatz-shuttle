@@ -7811,3 +7811,141 @@ Wie Teil 3, plus: `gegenprobe-teilpaket-h-rpc-postgres.mjs` vorbestehend rot
 > warnen.
 >
 > PAT: [HIER FRISCHEN PAT EINSETZEN]
+
+---
+
+# Session 25.07.2026 (Teil 5): Erledigt-Button fuer Probleme direkt an der Fahrt
+
+**Ein Code-Commit (`c536370`), gepusht und live.** Letzter Code-Commit:
+**`c536370`**, **13835 Zeilen**. Sicherungs-Tag neu:
+**`post-erledigt-button`** (= `c536370`, annotiert, `^{}`).
+
+## Wunsch
+
+Jordan: Probleme in der Leitstelle direkt an der Fahrt auf "erledigt" setzen,
+der Button fehlt ihm manchmal.
+
+## Diagnose
+
+Der Erledigt-Button gab es bereits im **Probleme-Tab** (`resolveIssues`,
+Button ~Z. 10149) und im **Problem-Banner** in MissionControl (`setIssueState`,
+Button ~Z. 12678). Beide Handler sind lokal in ihren Bloecken. In der
+**Fahrtenliste/Board** (Tab `rideslist`) stand an der Fahrt nur der Problem-Chip
+(~Z. 12772), kein Button. Im geoeffneten Fahrt-Detail (RideForm) werden Probleme
+gar nicht angezeigt. Issue-Zustaende: open/progress/done (`i.state`,
+`issueOpen`), Log-Events `problem_progress`/`problem_done`.
+
+Von Jordan gewaehlt: nur "erledigt", direkt an der Fahrt in der Fahrtenliste.
+
+## Umsetzung (rein additiv, 2 Eingriffe)
+
+1. Neuer Handler **`markRideIssuesDone(rideId)`** auf MissionControl-Ebene (nach
+   `notifyErr`, ~Z. 12392): `updateDyn` -> alle offenen Issues der Fahrt auf
+   `state:"done"`, `logRide("problem_done", meBy)`, idempotenter No-op
+   (`NO_CHANGE`) wenn nichts offen, Fehler via `notifyErr`. Auf
+   Komponentenebene, weil die bestehenden Erledigt-Handler lokal in ihren
+   Bloecken stecken und vom Board nicht erreichbar sind. Nutzt exakt dieselbe
+   gepruefte Schreibmechanik wie die vorhandenen Buttons.
+2. Button **"erledigt"** neben dem Problem-Chip (~Z. 12787), nur bei
+   `rideHasOpenIssue(r)`. Stil dezent im Done-Farbschema
+   (`--mc-st-done-soft` / `--mc-st-done`, `<Check>`-Icon), analog zum
+   Problem-Chip. Keine Sicherheitsabfrage (konsistent, globale Rueckgaengig-
+   Funktion greift), erledigt alle offenen Probleme der Fahrt auf einmal.
+
+**Unberuehrt:** Probleme-Tab, Problem-Banner, Notfall-Tab, RideForm, Fahrer-/
+Stage-/Gast-Ansichten.
+
+## Verifikation (volle Kette gruen)
+
+esbuild gruen, keine Duplikate, JSX-Ref gegen HEAD ohne neue undefinierte Ref
+(`Check` bereits importiert). b/e/g-Extrakte byte-identisch zu HEAD. Smoke-Suite:
+nur die 7 bekannten vorbestehenden Auffaelligen; **`smoke-write-sideeffects`
+39/0** und **`smoke-fahrtenliste` 35/0** gruen (beide relevant: updateDyn-
+Schreibmechanik bzw. die Fahrtenliste, wo der Button sitzt); scharfe gruen
+(e 152/0, g 130/0, gegenprobe-e 8/8, offline-reconnect-GP gekippt,
+buehne-settime 17/0). rendertest 5 Werte konstant, kontrast 0 (Done-Farb-
+kombination verletzt keinen Kontrast). Eigenstaendiger Node-Test
+(`/tmp/test_erledigt.mjs`, nicht im Repo): 10/0 gegen JETZT (Struktur + Mutator-
+Logik mit echter `issueOpen`: alle offenen -> done, No-op wenn nichts offen,
+gemischt korrekt), Pflicht-Gegenprobe mit Variante ohne No-op-Guard. Gegen HEAD:
+Struktur-Anker kippen -> misst nachweislich.
+
+**Ablauf-Lehre dieser Session:** b/e/g-Extrakte NICHT vor der Suite loeschen.
+`smoke-teilpaket-b/e/g` und `gegenprobe-e` importieren `tmp-t{b,e,g}-funcs.mjs`
+und crashen ohne sie (exit=1, realFAIL=0) -> sieht wie Regression aus, ist aber
+nur der fehlende Extrakt. Reihenfolge: Extrakte erzeugen -> ganze Suite -> erst
+DANN Extrakte loeschen.
+
+## Manuelle Testfaelle (Live-Deploy)
+
+1. Fahrtenliste: Fahrt mit gemeldetem Problem zeigt neben dem roten "Problem"-
+   Chip einen gruenen "erledigt"-Button. Klick -> Chip und Button verschwinden,
+   Log-Eintrag "Problem erledigt".
+2. Fahrt ohne Problem: kein Button.
+3. Mehrere Probleme an einer Fahrt: ein Klick erledigt alle.
+4. Rueckgaengig (Header-Button) macht das Erledigen rueckgaengig.
+5. Probleme-Tab / Problem-Banner / Notfall-Tab: unveraendert.
+
+---
+
+> **Fertiger Opener fuer den naechsten Chat:**
+>
+> Neue Session, OpenBeatz Shuttle-Leitstelle. Arbeitsverzeichnis MUSS
+> `/home/claude/repo` (mehrere Testskripte haben den Pfad hart verdrahtet).
+> Erst Schritt 0 komplett: Repo klonen (frischen PAT von mir), PAT sofort aus der
+> Remote-URL scrubben (`git remote set-url`), `npm install` (nicht `npm ci`, kein
+> Lockfile), `git config user.name Claude` / `user.email claude@merg-and-more.de`,
+> `git fetch`, selbst pruefen HEAD==origin/main. Zeilenzahl selbst nachmessen.
+>
+> **Stand:** HEAD ist `c536370`, **13835 Zeilen**, letzter Code-Commit zugleich.
+> Sicherungs-Tag zuletzt `post-erledigt-button` (= `c536370`, annotiert, `^{}`
+> aufloesen), gepusht. Davor `post-timeline-sortierung` (= `d2dc1ac`),
+> `post-rueckfahrt-chip` (= `849dda2`), `post-buehne-abfahrt` (= `7444b9f`).
+>
+> Bestands-Regression vor allem Neuen: esbuild, Duplikat-Grep (`[a-zA-Z0-9_]+`),
+> fuer Teilpaket B/E/G ZUERST
+> `python3 extract-funcs-teilpaket-{b,e,g}.py src/ShuttleLeitstelle.jsx
+> tmp-t{b,e,g}-funcs.mjs`, dann alle `smoke*.mjs` mit Dateipfad als
+> `process.argv[2]`, `rendertest.mjs` (5 Werte konstant 25053/2452/2413/2895/101),
+> `kontrast.mjs` (0). **Extrakte ERST NACH der ganzen Suite loeschen** (sonst
+> crashen b/e/g/gegenprobe-e mit exit=1/realFAIL=0, sieht faelschlich wie
+> Regression aus). Bester Nachweis: komplette Suite zusaetzlich gegen
+> `git show HEAD:src/ShuttleLeitstelle.jsx`, nur ABWEICHUNGEN als Regression.
+> Bewaehrt: b/e/g-Extrakte gegen HEAD byte-diffen -> bei Identitaet ist der Block
+> per Konstruktion nicht-regressiv.
+>
+> **Vorbestehende Fehler, NICHT anfassen, nicht als Regression werten:**
+> `smoke-orte-fix.mjs` (2 FAIL), `test_springer_availability.mjs` (8 FAIL),
+> `smoke-teilpaket-g2-ui.mjs` (2 FAIL: 15/21; wanduhr-flaky 14/20/25/26/27,
+> kippen nur 06:00-08:00), `smoke-standort-tagesbezug.mjs` ("Jassin am Festival"
+> zeitfensterabhaengig, gegen HEAD gegenpruefen), `regression-teilpaket-b.mjs`
+> (`/tmp/reg_alt.mjs`), `pruefe.mjs` (ZWEI Dateipfade), `smoke-fahrer-23-07.mjs`
+> (`/tmp/prof.js`), `smoke-orte-23-07.mjs` (`/tmp/ml_new.js`),
+> `pruefe-fahrerabgleich.mjs`, `gegenprobe-teilpaket-h-rpc-postgres.mjs`
+> (fehlende Zwischendatei). **Scharf:** `smoke-teilpaket-e.mjs` (152/0),
+> `smoke-teilpaket-g.mjs` (130/0), `gegenprobe-teilpaket-e.mjs` (8/8),
+> `smoke-offline-reconnect-e.mjs` (39/0), `smoke-buehne-settime.mjs` (17/0),
+> `smoke-write-sideeffects.mjs` (39/0), `smoke-fahrtenliste.mjs` (35/0).
+>
+> **THEMA: [von mir zu setzen].** Offene Kandidaten: `matchLoc`-Fix (hartkodierte
+> 4 Orte), Erledigt-Button evtl. auch im geoeffneten Fahrt-Detail (RideForm zeigt
+> Probleme aktuell gar nicht), feasible-Entscheidung bei unbekanntem Fahrer-
+> Standort, Karte koennte abgeleitete Rueckfahrt-Buehne fuer die Startprojektion
+> nutzen (Teil 3), Post-Festival Paket 2. Erst Diagnose, dann Verdrahtungsplan mit
+> Einfuegestelle und Regressionsrisiko, dann meine Freigabe, dann Bau.
+>
+> Regeln unveraendert: Deutsch, informell, keine Gedankenstriche, korrekte
+> Umlaute. Rein additiv wo moeglich, kleinstmoegliche Aenderung, keine Breaking
+> Changes, keine Workflow-/Rollen-/Stage-Aenderungen, keine DB-Struktur-Aenderungen
+> (ausser zwingend), keine kosmetischen Refactorings ausserhalb des Themas.
+> **Erst Diagnose, dann Verdrahtungsplan mit Einfuegestelle und Regressionsrisiko,
+> dann meine Freigabe, dann Bau.** Nach jeder Aenderung volle Kette (esbuild,
+> Duplikat-Grep, JSX-Referenzabgleich, Smoke mit Pflicht-Gegenprobe, rendertest,
+> kontrast) + Diff-Beweis + konkrete manuelle Testfaelle. Bugs ausserhalb des
+> Themas -> "Weitere gefundene Punkte", NICHT fixen. Festival 23.-27.07. (laeuft),
+> Freeze seit 20.07. aufgehoben. Nur eine Session gleichzeitig. `git fetch`
+> unmittelbar vor jedem Push. Commit-Messages mit Umlauten ueber `/tmp/msg.txt` +
+> `git commit -F`, Datei in EIGENEM Befehl schreiben. Proaktiv vor zu langem Chat
+> warnen.
+>
+> PAT: [HIER FRISCHEN PAT EINSETZEN]
