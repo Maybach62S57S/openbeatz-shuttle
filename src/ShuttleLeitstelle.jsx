@@ -624,6 +624,30 @@ const ZONE_STYLE = {
   "Zone 3": "bg-fuchsia-500/20 text-fuchsia-300",  // Hardstyle
   "Stonelands": "bg-zinc-500/20 text-zinc-300",    // Techno / Granit
 };
+// Buehnen-Chip fuer Rueckfahrten: eine eigene zone gewinnt immer. Fehlt sie
+// bei einer Rueckfahrt (fromId==="festival"), wird die Buehne der ZEITLICH
+// LETZTEN Hinfahrt (toId==="festival") desselben Artists uebernommen. Reine
+// Anzeige, kein Schreibvorgang, keine Kartenlogik.
+function chipZone(r, rides) {
+  if (r.zone) return r.zone;
+  if (r.fromId !== "festival") return "";
+  const name = (r.djName || "").trim();
+  if (!name) return "";
+  let best = null, bestKey = "";
+  for (const x of (rides || [])) {
+    if (x.status === "cancelled") continue;
+    if (x.toId !== "festival" || x.fromId === "festival") continue;
+    if (!x.zone) continue;
+    if ((x.djName || "").trim() !== name) continue;
+    const key = `${x.date || ""}#${String(sortMin(x.time)).padStart(5, "0")}`;
+    if (!best || key > bestKey) { best = x; bestKey = key; }
+  }
+  return best ? best.zone : "";
+}
+function ReturnZoneChip({ r, rides, className = "" }) {
+  const z = chipZone(r, rides);
+  return z ? <ZoneChip zone={z} className={className} /> : null;
+}
 function ZoneChip({ zone, className = "" }) {
   if (!zone) return null;
   const cls = ZONE_STYLE[zone] || "bg-orange-500/20 text-orange-300";
@@ -9447,7 +9471,7 @@ function MissionReturnsTab({ setup, dyn, day, updateDyn, by, onErr, onAssign, on
                   <ArrowRight className="w-3.5 h-3.5 shrink-0" style={{ color: "var(--mc-text-muted)" }} />
                   <Moon className="w-3.5 h-3.5 shrink-0" style={{ color: "var(--mc-text-secondary)" }} />
                   <span className="font-semibold truncate" style={{ color: "var(--mc-text)" }}>{destName(r)}</span>
-                  {r.zone && <ZoneChip zone={r.zone} className="shrink-0" />}
+                  <ReturnZoneChip r={r} rides={dyn.rides} className="shrink-0" />
                 </div>
                 <div className="text-sm font-semibold truncate mt-0.5" style={{ color: "var(--mc-text)" }}>{r.djName || "—"}</div>
                 <div className="text-xs inline-flex items-center gap-1 mt-0.5" style={{ color: "var(--mc-text-muted)" }}><Users className="w-3 h-3" />{r.passengerCount} Pers.</div>
@@ -10081,7 +10105,7 @@ function MissionEmergencyTab({ setup, dyn, day, updateDyn, by, onErr, onAssign, 
                       <div className="flex items-center gap-2 flex-wrap mt-1.5">
                         <span className="font-mono text-lg font-semibold" style={{ color: "var(--mc-text)" }}>{r.time}</span>
                         <span className="text-sm" style={{ color: "var(--mc-text-secondary)" }}>{ln(r.fromId, r.fromCustom)} → {ln(r.toId, r.toCustom)}</span>
-                        {r.zone && <ZoneChip zone={r.zone} />}
+                        <ReturnZoneChip r={r} rides={dyn.rides} />
                         <span className="text-xs inline-flex items-center gap-1" style={{ color: "var(--mc-text-muted)" }}><Users className="w-3 h-3" />{r.passengerCount}</span>
                       </div>
                       {r.djName && <div className="text-sm font-semibold truncate mt-0.5" style={{ color: "var(--mc-st-assigned)" }}>{r.djName}</div>}
@@ -12732,7 +12756,7 @@ function MissionControl({ setup, dyn, session, updateDyn, updateSetup, onLogout,
                               <span style={{ color: "var(--mc-text-secondary)" }}>{locName(r.fromId, r.fromCustom)}</span>
                               <ArrowRight className="w-3.5 h-3.5 shrink-0" style={{ color: "var(--mc-text-muted)" }} />
                               <span className="font-medium truncate" style={{ color: "var(--mc-text)" }}>{locName(r.toId, r.toCustom)}</span>
-                              {r.zone && <ZoneChip zone={r.zone} className="shrink-0" />}
+                              <ReturnZoneChip r={r} rides={dyn.rides} className="shrink-0" />
                               {rideHasOpenIssue(r) && <span className="text-[10px] px-1.5 py-0.5 rounded shrink-0 inline-flex items-center gap-0.5" style={{ background: "var(--mc-st-problem-soft)", color: "var(--mc-st-problem)" }}><AlertTriangle className="w-2.5 h-2.5" />Problem</span>}
                               {flightDelayed(r) && <span className="text-[10px] px-1.5 py-0.5 rounded shrink-0 inline-flex items-center gap-0.5" style={{ background: "var(--mc-st-problem-soft)", color: "var(--mc-st-problem)" }}><Plane className="w-2.5 h-2.5" />Flug {flightStyle(r.flightStatus).l}</span>}
                             </div>
@@ -12873,7 +12897,7 @@ function MissionControl({ setup, dyn, session, updateDyn, updateSetup, onLogout,
                           <span style={{ color: "var(--mc-text-secondary)" }}>{locName(r.fromId, r.fromCustom)}</span>
                           <ArrowRight className="w-3.5 h-3.5 shrink-0" style={{ color: "var(--mc-text-muted)" }} />
                           <span className="font-medium truncate" style={{ color: "var(--mc-text)" }}>{locName(r.toId, r.toCustom)}</span>
-                          {r.zone && <ZoneChip zone={r.zone} className="shrink-0" />}
+                          <ReturnZoneChip r={r} rides={dyn.rides} className="shrink-0" />
                           <span className="inline-flex items-center gap-1 text-xs" style={{ color: "var(--mc-text-muted)" }}><Users className="w-3 h-3" />{r.passengerCount}</span>
                           {r.flightNo && <span className="inline-flex items-center gap-1 text-xs" style={{ color: flightDelayed(r) ? "var(--mc-st-problem)" : "var(--mc-st-new)" }}><Plane className="w-3 h-3" />{r.flightNo}</span>}
                         </div>
