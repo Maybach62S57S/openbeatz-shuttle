@@ -8158,3 +8158,97 @@ dem style), daher auf inneren Kacheltext `>Name` ankern, nicht auf `title`.
 > warnen.
 >
 > PAT: [HIER FRISCHEN PAT EINSETZEN]
+
+---
+
+# Session 25.07.2026 (Teil 8, Nachtrag): Fix - nur echte Ueberlappungen stauchen
+
+**Ein Code-Commit (`7921031`), 13898 Zeilen, gepusht und live.**
+
+## Was war falsch
+Im ersten Wurf (`254a9c9`) hat `timelineLanes` die Lane-Anzahl **pro ganzer
+Fahrer-Zeile** zurueckgegeben (`count`). `Row` gab dieses eine `count` an jede
+Kachel. Sobald irgendwo in der Zeile zwei Fahrten ueberlappten, wurden **alle**
+Kacheln der Zeile gestaucht, auch die, die voellig allein standen (im Live-Bild
+z.B. Raphael Swiety: Osaro/IGDA ueberlappten, aber Kalte Liebe / Micha Schu /
+Blasterjaxx / Marasi wurden faelschlich mitgestaucht).
+
+## Fix
+`timelineLanes` liefert jetzt `countOf` (pro Fahrt) statt eines Zeilen-`count`.
+Ueber einen Sweep werden **Ueberlappungsgruppen** gebildet (zusammenhaengende,
+sich chain-ueberschneidende Fahrten: neue Gruppe, sobald `start >= clusterMaxEnd`).
+Jede Fahrt bekommt die Lane-Anzahl **ihrer** Gruppe (`1 + groesster Lane-Index
+in der Gruppe`). Allein stehende Fahrt = Einer-Gruppe = count 1 = volle Hoehe
+(52px), auch wenn anderswo in derselben Zeile ueberlappt wird. `Row` reicht
+`lanes.countOf[r.id]` durch. Zeilenhoehe weiter fix 64px (Variante C
+unveraendert), `timelineLaneBox` unveraendert.
+
+## Verifikation
+esbuild gruen, 0 Duplikate, JSX-Ref identisch zu HEAD, rg.mjs-Reachability
+identisch, rendertest 5 Werte konstant (25053/2452/2413/2895/101), kontrast 0.
+`smoke-timeline-sublane-overlap.mjs` erweitert auf **14 Pruefungen**: Kernfall
+"allein stehende Fahrt in einer Zeile mit Ueberlappung bleibt top6/height52",
+ueberlappende weiterhin 25px/getrennte top; zwei Gegenproben (laneOf->0 laesst
+die Trennung kippen; fixer Gruppen-Count `const c = 2` laesst die allein
+stehende Fahrt faelschlich auf 25px schrumpfen -> beweist, dass die
+"bleibt-voll"-Pruefung wirklich misst).
+
+## Live-Testfaelle
+1. Zeile mit einer Ueberlappung PLUS allein stehenden Fahrten: nur die
+   ueberlappenden sind gestaucht/gestapelt, die allein stehenden voll hoch.
+2. Zeile ganz ohne Ueberlappung: alle Kacheln voll hoch (wie immer).
+3. Drei sich chain-ueberschneidende Fahrten: drei Sub-Lanes NUR in dieser Gruppe.
+
+---
+
+> **Fertiger Opener fuer den naechsten Chat (aktualisiert):**
+>
+> Neue Session, OpenBeatz Shuttle-Leitstelle. Arbeitsverzeichnis MUSS
+> `/home/claude/repo`. Schritt 0: Repo klonen (frischen PAT von mir), PAT sofort
+> aus der Remote-URL scrubben (`git remote set-url`), `npm install` (es gibt ein
+> `package-lock.json`), `git config user.name Claude` /
+> `user.email claude@merg-and-more.de`, `git fetch`, selbst HEAD==origin/main
+> pruefen, Zeilenzahl nachmessen.
+>
+> **Stand:** letzter CODE-Commit `7921031` (Timeline-Sub-Lane-Fix: nur echte
+> Ueberlappungen stauchen), **13898 Zeilen**; darueber ggf. dieser Doku-Commit.
+> Sicherungs-Tag zuletzt `post-timeline-sublanes` (= `254a9c9`); der Fix `7921031`
+> liegt darueber.
+>
+> Regression vor allem Neuen: esbuild, Duplikat-Grep (`[a-zA-Z0-9_]+`), fuer B/E/G
+> ZUERST `python3 extract-funcs-teilpaket-{b,e,g}.py src/ShuttleLeitstelle.jsx
+> tmp-t{b,e,g}-funcs.mjs`, dann `smoke*.mjs` (Render-Tests brauchen Dateipfad als
+> `process.argv[2]`: `smoke-fahrer-uebersicht-tab`, `smoke-fahrer-suche-uebersicht`,
+> `smoke-timeline-fahrerknopf`, `smoke-timeline-sublane-overlap`, `rendertest`),
+> `rendertest.mjs` (25053/2452/2413/2895/101), `kontrast.mjs` (0). **Extrakte ERST
+> NACH der Suite loeschen.** Bester Nachweis: Suite zusaetzlich gegen
+> `git show HEAD:src/ShuttleLeitstelle.jsx`, nur ABWEICHUNGEN als Regression.
+>
+> **Scharf gruen:** e (152/0), g (130/0), gegenprobe-e (8/8), offline-reconnect-e,
+> buehne-settime (17/0), write-sideeffects (39/0), fahrtenliste (35/0),
+> fahrer-uebersicht-tab (16), fahrer-suche-uebersicht (19),
+> **smoke-timeline-sublane-overlap (14 inkl. 2 GP)**.
+>
+> **Vorbestehende Fehler, NICHT als Regression:** `smoke-timeline-fahrerknopf`
+> (nur die HEAD-GP kippt, Knopf ist seit `a0fef38` in HEAD), `smoke-orte-fix` (2),
+> `smoke-teilpaket-g2-ui` (wanduhr-flaky 06-08h), `test_springer_availability`,
+> `smoke-standort-tagesbezug` (zeitfensterabhaengig, gegen HEAD gegenpruefen).
+>
+> **THEMA: [von mir zu setzen].** Offene Kandidaten: `matchLoc`-Fix (Z. ~7676,
+> hartkodierte 4 Orte), `TimelineView` (kompakte Uebersicht, Z. ~9755/~11742)
+> verdeckt ueberlappende Fahrten noch (Helfer `timelineLanes`/`timelineLaneBox`
+> sind wiederverwendbar), Erledigt-Button evtl. auch im Fahrt-Detail (RideForm),
+> GuestApp-Poll ohne Ueberlappungsschutz, Post-Festival Paket 2.
+>
+> Regeln unveraendert: Deutsch, informell, keine Gedankenstriche, korrekte
+> Umlaute. Rein additiv wo moeglich, kleinstmoegliche Aenderung, keine Breaking
+> Changes, keine Workflow-/Rollen-/Stage-/DB-Struktur-Aenderungen (ausser
+> zwingend). Erst Diagnose, dann Verdrahtungsplan mit Einfuegestelle und
+> Regressionsrisiko, dann meine Freigabe (inkl. Optik), dann Bau. Nach jeder
+> Aenderung volle Kette + Diff-Beweis + konkrete Leitstellen-Testfaelle. Bugs
+> ausserhalb des Themas -> "Weitere gefundene Punkte", NICHT fixen. Festival
+> 23.-27.07. (laeuft). Nur eine Session gleichzeitig. `git fetch` unmittelbar vor
+> jedem Push. Commit-Messages mit Umlauten ueber `/tmp/msg.txt` + `git commit -F`.
+> Proaktiv vor zu langem Chat warnen.
+>
+> PAT: [HIER FRISCHEN PAT EINSETZEN]
