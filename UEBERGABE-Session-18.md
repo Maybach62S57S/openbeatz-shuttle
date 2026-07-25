@@ -7949,3 +7949,212 @@ DANN Extrakte loeschen.
 > warnen.
 >
 > PAT: [HIER FRISCHEN PAT EINSETZEN]
+
+# Session 25.07.2026 (Teil 6): Fahrer-aendern-Knopf direkt an der Timeline-Kachel
+
+**Nachgezogene Doku zu Code-Commit `a0fef38` (rein additiv, +4 Zeilen App-Code
++ neuer Smoke `smoke-timeline-fahrerknopf.mjs`).** Wurde damals ohne Doku-Commit
+gepusht, hier nachgetragen.
+
+## Wunsch
+Jordan: in der grossen Live-Timeline (`MissionTimelinePage`) den Fahrer einer
+Fahrt direkt an der Kachel wechseln koennen, nicht nur ueber Ziehen oder den
+Stift.
+
+## Umsetzung
+Zweiter Knopf an der Fahrt-Kachel (`Block`), links neben dem vorhandenen Stift
+(`ChevronRight`, `title="Fahrt bearbeiten"`, `right-0.5`): neuer Knopf mit
+`Users`-Icon, `title="Fahrer ändern"`, `top-0.5 right-6`, ruft `onAssign(r)`
+(dieselbe Zuteilungs-Route wie sonst). `onPointerDown`-stopPropagation, damit
+das Antippen nicht als Kachel-Ziehen missverstanden wird. `Users` war bereits
+importiert. Keine Handler-/Datenaenderung, reine Ergaenzung.
+
+## Verifikation
+esbuild gruen, kein Duplikat. Neuer Smoke `smoke-timeline-fahrerknopf.mjs`
+(Dateipfad als `process.argv[2]`): Knopf da, Stift weiter da, Fahrt gerendert,
+Gegenprobe gegen `git show HEAD` (ohne Knopf).
+
+## ACHTUNG, vorbestehender Test-Wartungspunkt (kein Code-Fehler)
+Die Gegenprobe dieses Smokes macht `git show HEAD:src/ShuttleLeitstelle.jsx`
+und erwartet eine Version OHNE den Knopf. Seit `a0fef38` HEAD ist, sieht die GP
+den Knopf und **kippt** (`SMOKE FAIL: 1 von 5`), obwohl die 3 funktionalen
+Checks gruen sind. Das ist ein veralteter Referenzpunkt nach dem Merge, **keine
+Regression**. Nicht als Regression werten. Bei Bedarf spaeter: GP gegen einen
+festen Vor-Knopf-Commit ankern statt gegen HEAD.
+
+---
+
+# Session 25.07.2026 (Teil 7): Artist-Suchfeld im Fahrer-Uebersicht-Tab
+
+**Nachgezogene Doku zu Code-Commit `4f85002` (rein additiv, +15/-3 App-Code
++ neuer Smoke `smoke-fahrer-suche-uebersicht.mjs`).** Ebenfalls ohne Doku-Commit
+gepusht, hier nachgetragen.
+
+## Wunsch
+Jordan: im "Alle"-/Uebersicht-Tab der Fahrer-App (`DriverApp`) nach Artist
+suchen koennen, wenn die Liste lang ist.
+
+## Umsetzung
+Neuer lokaler State `allSearch` in `DriverApp`. Ueber der Uebersichts-Liste ein
+Suchfeld (`Search`-Icon + `input`, Placeholder "Artist suchen"). Die Liste
+filtert auf `djName.toLowerCase().includes(q)` (getrimmt, klein). Leerer Filter
+= alle. Kein Treffer -> "Keine Treffer.", leerer Tag -> "Keine Fahrten fuer
+diesen Tag." Betrifft nur den Uebersicht-Tab, nicht den "meine Fahrten"-Tab,
+keine Dispo-Funktion, kein Schreibpfad.
+
+## Verifikation
+esbuild gruen, kein Duplikat. Neuer Smoke `smoke-fahrer-suche-uebersicht.mjs`
+(19 Pruefungen inkl. 2 Gegenproben: ausgehebelter Filter zeigt Nicht-Treffer,
+ohne `toLowerCase` matcht Gross/Klein nicht mehr).
+
+---
+
+# Session 25.07.2026 (Teil 8): Ueberlappende Timeline-Fahrten in Sub-Lanes (Variante C)
+
+**Ein Code-Commit (`254a9c9`), 13881 Zeilen, gepusht und live.** Sicherungs-Tag
+neu: **`post-timeline-sublanes`** (= `254a9c9`, annotiert, `^{}`).
+
+## Problem
+In der Live-Timeline (`MissionTimelinePage`) faehrt ein Fahrer manchmal zwei
+zeitlich ueberlappende Acts. Die Kacheln (`Block`) waren `absolute top-1.5
+bottom-1.5`, also beide auf voller Zeilenhoehe, nur horizontal nach Zeit
+positioniert. Bei Ueberlappung lagen sie uebereinander, die spaeter gerenderte
+verdeckte die fruehere -> deren Knoepfe (Fahrer aendern / Stift) nicht
+erreichbar.
+
+## Entscheidung (Jordan: Variante C)
+Optik-Varianten vorab gezeigt (A voll gestapelt/unbegrenzt, B Deckel + "+N",
+C gestaucht bei fixer Hoehe, F Zaehler + Popover). Claudes Empfehlung war A;
+**Jordan hat C gewaehlt** (fixe Zeilenhoehe wichtiger). Bedenken (kleinere
+Tap-Ziele, weniger Text pro Kachel) waren benannt, Entscheidung liegt bei Jordan.
+
+## Umsetzung (rein presentational, additiv)
+- Neue Konstanten `TL_ROW_H=64` (= h-16), `TL_LANE_PAD=6`, `TL_LANE_GAP=2`.
+- Neue Modul-Helfer:
+  - `timelineLanes(rs, startOf, endOf)` -> `{ laneOf, count }`, greedy Intervall-
+    Partitionierung (jede Fahrt in die niedrigste Lane, deren letzte Fahrt vor
+    Start endet). `count` = minimale Lane-Anzahl = maximale gleichzeitige
+    Ueberlappung. `rs` ist schon nach Start sortiert.
+  - `timelineLaneBox(lane, count)` -> `{ top, height }`. Bei `count===1` exakt
+    `top:6 / height:52`, also pixelidentisch zu vorher.
+- `Row` berechnet `const lanes = timelineLanes(rs, start, end)` einmal und gibt
+  `lane`/`laneCount` an jeden `Block`.
+- `Block` bekommt Props `lane=0, laneCount=1`, setzt `top`/`height` inline aus
+  `timelineLaneBox`, `top-1.5 bottom-1.5` aus der className entfernt.
+- **Zeilenhoehe bleibt `h-16` (64px)**. Ueberlappende Fahrten teilen sich die
+  Hoehe (2 -> je 25px bei top 6/33; 3 -> je ~16px), Einzelfahrt weiter 52px.
+
+**Drag-Code unveraendert.** Das Y-Ziel loest weiter ueber `data-row-driver` am
+aeusseren Zeilencontainer auf, der alle Sub-Lanes umspannt. `timeFromClientX`
+(horizontal) ist ohnehin lane-unabhaengig.
+
+**Unberuehrt:** `TimelineView` (die kompakte Uebersicht, eingebettet Z. ~9755 /
+~11742) hat dasselbe Problem prinzipiell auch (eigene `Row`, `h-9`, `top-1
+bottom-1`), ist aber ausserhalb des Themas -> siehe "Weitere gefundene Punkte".
+
+## Verifikation (volle Kette gruen)
+esbuild gruen, 0 Duplikate. JSX-Referenzabgleich: unaufgeloeste Liste identisch
+zu HEAD (keine neue Referenz). `rg.mjs`-Reachability Diff gegen HEAD identisch
+(MissionTimelinePage nur aus MissionControl, kein TABU-Baustein). rendertest
+5 Werte konstant (25053/2452/2413/2895/101 -> Timeline steckt nicht im
+App-Root-Render). kontrast 0. Scharfe Suite gruen (e 152/0, g 130/0,
+gegenprobe-e 8/8, write-sideeffects 39/0, fahrtenliste 35/0, buehne-settime
+17/0, fahrer-uebersicht-tab 16, fahrer-suche-uebersicht 19).
+
+Neuer Test **`smoke-timeline-sublane-overlap.mjs`** (Dateipfad als
+`process.argv[2]`, 11 Pruefungen inkl. 2 Gegenproben): zwei ueberlappende
+Fahrten desselben Fahrers -> beide sichtbar, beide mit "Fahrer ändern" +
+"Fahrt bearbeiten" (mind. 2x), unterschiedliche `top` (6/33, je 25px hoch);
+Einzelfahrt unveraendert (top 6 / height 52). Pflicht-Gegenprobe: `timelineLanes`
+auf Lane 0 / count 1 verbogen -> beide top gleich, Trennungs-Pruefung kippt
+erwartungsgemaess (beweist, dass der Test die Trennung wirklich misst).
+Extraktions-Falle im Test geloest: djName steht auch im `title`-Attribut (vor
+dem style), daher auf inneren Kacheltext `>Name` ankern, nicht auf `title`.
+
+## Manuelle Testfaelle (Live-Deploy)
+1. Fahrer mit zwei ueberlappenden Fahrten: beide Kacheln sichtbar, untereinander
+   in der Zeile, keine mehr verdeckt.
+2. An beiden Kacheln je Fahrer-Knopf (Users) und Stift (ChevronRight)
+   erreichbar/tippbar.
+3. Roter Konflikt-Rahmen weiter an beiden ueberlappenden Fahrten.
+4. Fahrer ohne Ueberlappung: Zeile und Kachel exakt wie vorher (64px, 52px hoch).
+5. Eine der beiden ueberlappenden Fahrten auf einen anderen Fahrer ziehen:
+   Ziel-Fahrer korrekt erkannt, Bestaetigungs-Popover, nach Bestaetigen Push
+   und "Rueckgaengig"-Hinweis wie gehabt.
+6. Zeit einer der beiden per Ziehen aendern: horizontal korrekt, Bestaetigung.
+7. Drei ueberlappende Fahrten: drei Sub-Lanes in derselben 64px-Zeile (je ~16px,
+   knapp - bewusst gewaehlte Variante-C-Grenze).
+
+## Weitere gefundene Punkte fuer spaetere Sessions
+- **`TimelineView`** (kompakte Uebersicht, Z. ~9755/~11742 eingebettet, Def.
+  ~Z. 10898) verdeckt ueberlappende Fahrten genauso (eigene `Row`, `h-9`,
+  `top-1 bottom-1`). Nicht gefixt (ausserhalb Thema). Falls gewuenscht: dieselbe
+  Sub-Lane-Logik dort anwenden (die Helfer `timelineLanes`/`timelineLaneBox`
+  sind wiederverwendbar).
+- **`smoke-timeline-fahrerknopf.mjs`** Gegenprobe kippt gegen aktuelles HEAD
+  (Knopf ist einkommittiert), 3 funktionale Checks gruen. Veralteter
+  Referenzpunkt, keine Regression. Ggf. GP auf festen Vor-Knopf-Commit ankern.
+
+---
+
+> **Fertiger Opener fuer den naechsten Chat:**
+>
+> Neue Session, OpenBeatz Shuttle-Leitstelle. Arbeitsverzeichnis MUSS
+> `/home/claude/repo` (mehrere Testskripte haben den Pfad hart verdrahtet).
+> Erst Schritt 0 komplett: Repo klonen (frischen PAT von mir), PAT sofort aus der
+> Remote-URL scrubben (`git remote set-url`), `npm install` (kein `npm ci`; es
+> gibt inzwischen ein `package-lock.json` im Repo), `git config user.name Claude`
+> / `user.email claude@merg-and-more.de`, `git fetch`, selbst pruefen
+> HEAD==origin/main. Zeilenzahl selbst nachmessen.
+>
+> **Stand:** letzter CODE-Commit `254a9c9` (Timeline-Sub-Lanes, Variante C),
+> **13881 Zeilen**; darueber liegt dieser Doku-Commit. Sicherungs-Tag zuletzt
+> `post-timeline-sublanes` (= `254a9c9`, annotiert, `^{}` aufloesen), gepusht.
+> Davor `post-erledigt-button` (= `c536370`), `post-timeline-sortierung`
+> (= `d2dc1ac`).
+>
+> Bestands-Regression vor allem Neuen: esbuild, Duplikat-Grep (`[a-zA-Z0-9_]+`),
+> fuer Teilpaket B/E/G ZUERST
+> `python3 extract-funcs-teilpaket-{b,e,g}.py src/ShuttleLeitstelle.jsx
+> tmp-t{b,e,g}-funcs.mjs`, dann alle `smoke*.mjs` (die mit Render brauchen den
+> Dateipfad als `process.argv[2]`: u.a. `smoke-fahrer-uebersicht-tab`,
+> `smoke-fahrer-suche-uebersicht`, `smoke-timeline-fahrerknopf`,
+> `smoke-timeline-sublane-overlap`, `rendertest`), `rendertest.mjs` (5 Werte
+> konstant 25053/2452/2413/2895/101), `kontrast.mjs` (0). **Extrakte ERST NACH
+> der ganzen Suite loeschen.** Bester Nachweis: Suite zusaetzlich gegen
+> `git show HEAD:src/ShuttleLeitstelle.jsx`, nur ABWEICHUNGEN als Regression.
+>
+> **Scharf gruen:** `smoke-teilpaket-e` (152/0), `smoke-teilpaket-g` (130/0),
+> `gegenprobe-teilpaket-e` (8/8), `smoke-offline-reconnect-e`,
+> `smoke-buehne-settime` (17/0), `smoke-write-sideeffects` (39/0),
+> `smoke-fahrtenliste` (35/0), `smoke-fahrer-uebersicht-tab` (16),
+> `smoke-fahrer-suche-uebersicht` (19), `smoke-timeline-sublane-overlap` (11).
+>
+> **Vorbestehende Fehler, NICHT anfassen, nicht als Regression werten:**
+> `smoke-timeline-fahrerknopf` (kippt nur die HEAD-Gegenprobe, 3 funktionale
+> Checks gruen; Knopf ist seit `a0fef38` in HEAD), `smoke-orte-fix` (2),
+> `smoke-teilpaket-g2-ui` (wanduhr-flaky 06:00-08:00), `test_springer_availability`,
+> `smoke-standort-tagesbezug` (zeitfensterabhaengig, gegen HEAD gegenpruefen).
+>
+> **THEMA: [von mir zu setzen].** Offene Kandidaten: `matchLoc`-Fix (Z. ~7676,
+> hartkodierte 4 Orte), `TimelineView` (kompakte Uebersicht) verdeckt
+> ueberlappende Fahrten genauso wie die grosse Timeline vor Teil 8 (Helfer
+> `timelineLanes`/`timelineLaneBox` wiederverwendbar), Erledigt-Button evtl. auch
+> im geoeffneten Fahrt-Detail (RideForm), GuestApp-Poll ohne
+> Ueberlappungsschutz, Post-Festival Paket 2.
+>
+> Regeln unveraendert: Deutsch, informell, keine Gedankenstriche, korrekte
+> Umlaute. Rein additiv wo moeglich, kleinstmoegliche Aenderung, keine Breaking
+> Changes, keine Workflow-/Rollen-/Stage-/DB-Struktur-Aenderungen (ausser
+> zwingend). **Erst Diagnose, dann Verdrahtungsplan mit Einfuegestelle und
+> Regressionsrisiko, dann meine Freigabe (inkl. Optik, falls sichtbar), dann
+> Bau.** Nach jeder Aenderung volle Kette (esbuild, Duplikat-Grep,
+> JSX-Referenzabgleich, rg.mjs-Diff, Smoke mit Pflicht-Gegenprobe, rendertest,
+> kontrast) + Diff-Beweis + konkrete Leitstellen-Testfaelle. Bugs ausserhalb des
+> Themas -> "Weitere gefundene Punkte", NICHT fixen. Festival 23.-27.07. (laeuft),
+> Freeze seit 20.07. aufgehoben. Nur eine Session gleichzeitig. `git fetch`
+> unmittelbar vor jedem Push. Commit-Messages mit Umlauten ueber `/tmp/msg.txt` +
+> `git commit -F`, Datei in EIGENEM Befehl schreiben. Proaktiv vor zu langem Chat
+> warnen.
+>
+> PAT: [HIER FRISCHEN PAT EINSETZEN]
