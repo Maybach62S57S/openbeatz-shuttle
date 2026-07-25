@@ -7187,3 +7187,216 @@ Kontrastzahlen vorlegen und Freigabe abwarten, wie beim Problem-Banner.
 > 20.07. aufgehoben. Nur eine Session gleichzeitig. `git fetch` unmittelbar vor
 > jedem Push. Commit-Messages mit Umlauten über `/tmp/msg.txt` +
 > `git commit -F`. Proaktiv vor zu langem Chat warnen.
+
+---
+
+# Session 25.07.2026: Timeline-Fahrerwechsel + Anzeige-Fixes (Buehne/Flughafen)
+
+**Drei Themen, zwei Code-Commits, beide gepusht und live. Danach Diagnose fuer
+das naechste Thema (Buehne bei Festival-Abfahrten), kein Code dafuer angefasst.**
+
+Letzter Code-Commit: **`ab76eec`**, **13781 Zeilen**. Sicherungs-Tag neu:
+**`pre-buehne-abfahrt`** (= `ab76eec`, annotiert, mit `^{}` aufloesen), gepusht.
+
+## 1. Timeline: Fahrer per Klick aendern (Commit `85d4e15`)
+
+Klick auf eine Fahrt in der Timeline laesst jetzt fuer offene UND bereits
+zugeteilte Fahrten die passenden Fahrerzeilen aufleuchten (vorher: offene ->
+Hervorhebung, zugeteilte -> AssignModal). Zeile antippen teilt zu bzw. um.
+
+Vier Eingriffe, alle in `MissionTimelinePage`:
+- Tap-Zweig (ehem. Z. 10561ff): beide Faelle `setSelectedId` togglen, `onAssign`
+  entfaellt beim Tap. `onAssign`-Prop bleibt destrukturiert (kein toter Verweis).
+- `quickAssign`: loggt jetzt `r.assignedDriverId ? "reassigned" : "assigned"`
+  (Entscheidung auf frischem Stand `r`, wie `applyDrop`).
+- `Row`: aktueller Fahrer der ausgewaehlten Fahrt = `isCurrent`, nicht klickbar,
+  eigener Hintergrund (`--mc-st-enroute-soft`) + Label "aktuell zugeteilt".
+  Verhindert sinnlosen Self-Reassign (planned-Reset + Push).
+- Info-Texte sprachlich an das vereinheitlichte Verhalten angepasst.
+
+Notfall-Weg fuer nicht sauber passende Fahrer bleibt ueber **Ziehen** erhalten
+(umgeht Eignungspruefung wie bisher). AssignModal per Tap bewusst raus (Jordans
+Freigabe: einfach halten).
+
+## 2. Buehne bei Rueckfahrten + Flughafen NUE/MUC (Commit `ab76eec`)
+
+**2a. Buehnen-Chip bei Rueckfahrten.** `MissionReturnsTab`, Zielzeile: hinter
+`{destName(r)}` ein `{r.zone && <ZoneChip zone={r.zone} className="shrink-0" />}`,
+wortgleich zum Board. Das Board (und andere Listen) zeigten den Chip laengst,
+nur der Rueckfahrten-Leitstand nicht.
+
+**2b. Flughafen eindeutig.** Neue reine Funktion `withAirportCityShort(setup)`
+(vor `sget`, ~Z. 481): haengt bei Flughafen-Orten ein Stadtkuerzel an den `short`
+(Nuernberg "Flughafen" -> "Flughafen NUE", Muenchen bleibt "Flughafen MUC").
+Zentral in `sget` fuer `SETUP_KEY` angewandt -> wirkt in ALLEN Ansichten und
+**DB-unabhaengig** (Orte kommen live aus Supabase, Code-Default allein haette
+nichts gezeigt). Eigenschaften: idempotent, deterministisch, veraendert NUR
+`short` (nirgends fuer Logik verglichen, grep-belegt), NICHT rev/Signatur.
+**GAT bleibt unberuehrt** (Regel greift nur bei short mit "Flughafen"/"Airport").
+
+Warum `sget` die richtige EINE Stelle ist: Initial-Load (Z. 943), Poll (Z. 1060)
+UND CAS-Schreibbasis (`runCasWrite` Z. ~1195) lesen alle ueber `sget`. Poll-
+Uebernahme laeuft rein ueber `rev` (`shouldAcceptRevision`), die Signatur
+(`lastLocSigRef`) betrifft nur dyn/GPS -> `short`-Aenderung stoert den Poll nicht.
+
+**Testinfrastruktur mitgezogen:** `smoke-offline-reconnect-e.mjs` hat eine
+Verankerung auf die exakte `sget`-Zeile. Regex an die neue Zeile
+(`withAirportCityShort(await sbGetSetup())`) angepasst; die geschuetzte
+Invariante (Wurf von `sbGetSetup` wird durchgereicht) bleibt gewahrt, weil
+`await` vor der Umhuellung ausgewertet wird. Gegen HEAD gegengeprueft: bei alter
+Zeile rot, bei neuer gruen -> misst nachweislich.
+
+**Nebenwirkung dokumentiert:** Kartenlabel des NUE-Flughafens wird "Flughafen
+NUE" (etwas laenger). Bei einem spaeteren Setup-Schreibvorgang wird die Kennung
+dauerhaft in die DB uebernommen (harmlos/erwuenscht).
+
+## 3. Verifikation (beide Commits)
+
+Volle Kette gruen. Bester Nachweis wie immer: komplette Suite zusaetzlich gegen
+`git show HEAD:src/ShuttleLeitstelle.jsx`, nur Abweichungen als Regression.
+Ergebnis: keine echte Regression. Der zeitabhaengige `smoke-standort-tagesbezug`
+("Jassin am Festival") kippt bei HEAD identisch -> keine Regression, gehoert zur
+wanduhr-flaky-Familie (kippt im Zeitfenster). rendertest konstant
+25053/2452/2413/2895/101, kontrast 0. Eigenstaendiger Node-Test der Flughafen-
+Logik: 11/11 + gewollter Gegenprobe-FAIL.
+
+## 4. DIAGNOSE fuers NAECHSTE THEMA: Buehne bei Festival-Abfahrten manuell setzbar
+
+**Nur Erkundung, kein Code angefasst, kein Plan gebaut.**
+
+Jordans Wunsch (mit Screenshot belegt): Der Buehnen-Chip erscheint bei Ankunft
+(-> Festival), aber nicht bei Abfahrt (Festival ->). Er will die Buehne auch bei
+Festival-**Abfahrten** manuell waehlen koennen, damit der Chip dort erscheint.
+
+**Ursache (eindeutig):** Der Chip erscheint ueberall automatisch, sobald eine
+Fahrt `zone` gesetzt hat. Festival-Abfahrten haben aber kein `zone`, und man kann
+es nicht setzen, wegen zwei Stellen in `RideForm`:
+- **Z. 5196:** Buehnen-Feld ("Abladezone") wird nur bei `toIsFestival` gerendert.
+- **Z. 5141:** beim Speichern wird `zone` bei Nicht-Festival-Ankunft hart auf
+  `""` gesetzt (`zone: toIsFestival ? f.zone : ""`).
+- `toIsFestival = f.toId === "festival"` (Z. 5078).
+
+**Plan (von Jordan freigegeben):**
+1. Buehnen-Feld auch bei `fromIsFestival` (Fahrt VOM Festival) anzeigen, nicht
+   nur `toIsFestival`. Also neue Bedingung `toIsFestival || fromIsFestival`.
+2. Speicher-Zeile 5141 synchron erweitern, sonst wird das neu gewaehlte `zone`
+   beim Speichern wieder verworfen.
+3. Label kontextabhaengig: "Abladezone" bei Ankunft, "Buehne / Abholung" bei
+   Abfahrt (Jordan hat das Label-Prinzip abgenickt, genauen Text final
+   bestaetigen lassen).
+
+**WICHTIGER RUECKENWIND, schon geprueft:** `zone` bei Festival-Abfahrten zu
+befuellen ist nicht nur unkritisch, die Kartenlogik ist bereits darauf ausgelegt:
+`resolveNode(nodes, r.fromId, r.fromId === "festival" ? r.zone : null, ...)`
+(Z. 2565 und Z. 11298) liest `zone` als STARTknoten, sobald `fromId==="festival"`.
+Aktuell immer leer -> sobald befuellt, startet die Kartenprojektion die Abfahrt
+korrekt an der Buehne. Kein Konflikt, eher ein Bonus.
+
+**`zone`-Nutzung insgesamt (grep-belegt):** ueberwiegend Anzeige (ZoneChip,
+Texte, WhatsApp/Artist-Texte, Stage-Filter), NIE fuer Vergleich/Statuslogik.
+Die zwei `resolveNode`-Stellen sind der einzige Logikpfad und sind wie oben
+vorbereitet. `locationZone = ride.zone` (Z. 3253) ist rein informativ.
+
+**Regressionsrisiko:** Sichtbarkeitsbedingung wird von "nach Festival" auf "nach
+ODER von Festival" erweitert -> Verhalten aendert sich NUR fuer Festival-
+Abfahrten, alle anderen Fahrten byte-identisch. Kritischer Punkt ist die
+Synchronitaet von Z. 5196 (Anzeige) und Z. 5141 (Speichern) -> gezielt testen:
+Festival-Abfahrt oeffnen, Buehne waehlen, speichern, zone bleibt erhalten, Chip
+erscheint in Board + Rueckfahrten-Leitstand.
+
+**Zeilennummern koennen leicht abweichen** (das File waechst), immer selbst per
+grep verankern: `toIsFestival`, `zone: toIsFestival ? f.zone : ""`, das
+`{toIsFestival && (` vor dem Abladezone-Field.
+
+## 5. Weitere gefundene Punkte fuer spaetere Sessions (unveraendert offen)
+
+- `smoke-teilpaket-b.mjs` testet `computeDriverStats`/`suggestDrivers` nicht.
+- `stateNode` fehlt in allen drei Extraktoren (folgenlos).
+- Drei Skripte ohne ihre `/tmp`-Zwischendateien (smoke-fahrer-23-07,
+  smoke-orte-23-07, pruefe-fahrerabgleich).
+- feasible-Entscheidung bei unbekanntem Fahrer-Standort.
+- Testleichen `smoke-orte-fix` (2) und `smoke-teilpaket-g2-ui` 15/21 (2).
+- Post-Festival: Paket 2 (Datei-Modularisierung, Base64-Assets).
+
+---
+
+> **Fertiger Opener fuer den naechsten Chat:**
+>
+> Neue Session, OpenBeatz Shuttle-Leitstelle. Arbeitsverzeichnis MUSS
+> `/home/claude/repo` (mehrere Testskripte haben den Pfad hart verdrahtet).
+> Erst Schritt 0 komplett: Repo klonen (frischen PAT von mir), PAT sofort aus der
+> Remote-URL scrubben (`git remote set-url`), `npm install` (nicht `npm ci`, kein
+> Lockfile), `git config user.name Claude` / `user.email claude@merg-and-more.de`,
+> `git fetch`, selbst pruefen HEAD==origin/main. Zeilenzahl selbst nachmessen.
+>
+> **Stand:** HEAD ist `ab76eec`, **13781 Zeilen**, letzter Code-Commit zugleich.
+> Sicherungs-Tag zuletzt `pre-buehne-abfahrt` (= `ab76eec`, annotiert, mit `^{}`
+> aufloesen). Davor `pre-timeline-fahrerwechsel` (= `a713f42`, lokal gesetzt,
+> NICHT gepusht -> im frischen Klon nicht vorhanden, egal).
+>
+> Bestands-Regression vor allem Neuen: esbuild, Duplikat-Grep (`[a-zA-Z0-9_]+`),
+> fuer Teilpaket B/E/G ZUERST
+> `python3 extract-funcs-teilpaket-{b,e,g}.py src/ShuttleLeitstelle.jsx
+> tmp-t{b,e,g}-funcs.mjs`, dann alle `smoke*.mjs` mit Dateipfad als
+> `process.argv[2]`, `rendertest.mjs` (5 Werte konstant 25053/2452/2413/2895/101),
+> `kontrast.mjs` (0). Extrakte danach loeschen. Bester Nachweis: komplette Suite
+> zusaetzlich gegen `git show HEAD:src/ShuttleLeitstelle.jsx`, nur ABWEICHUNGEN
+> als Regression.
+>
+> **Vorbestehende Fehler, NICHT anfassen, nicht als Regression werten:**
+> `smoke-orte-fix.mjs` (2 FAIL), `test_springer_availability.mjs` (8 FAIL),
+> `smoke-teilpaket-g2-ui.mjs` (2 FAIL: Tests 15/21; wanduhr-flaky
+> 14/20/25/26/27 getrennt, kippen nur 06:00-08:00), `smoke-standort-tagesbezug.mjs`
+> (der "Jassin am Festival"-Test kippt zeitfensterabhaengig, KEINE Regression,
+> gegen HEAD gegenpruefen), `regression-teilpaket-b.mjs` (braucht
+> `/tmp/reg_alt.mjs`), `pruefe.mjs` (braucht ZWEI Dateipfade),
+> `smoke-fahrer-23-07.mjs` (`/tmp/prof.js`), `smoke-orte-23-07.mjs`
+> (`/tmp/ml_new.js`), `pruefe-fahrerabgleich.mjs`. **Scharf (echte Funde bei
+> Fail):** `smoke-teilpaket-e.mjs` (152/0), `smoke-teilpaket-g.mjs` (130/0),
+> `gegenprobe-teilpaket-e.mjs` (8/8), `smoke-offline-reconnect-e.mjs` (39/0, seit
+> dieser Session an die neue `sget`-Zeile mit `withAirportCityShort` verankert).
+>
+> **THEMA: Buehne bei Festival-Abfahrten manuell setzbar.** Diagnose steht in der
+> Uebergabe unter "Session 25.07.2026", Punkt 4. Lies den ZUERST, da stehen
+> Fundort, Zeilennummern, Plan, gepruefter Rueckenwind und Regressionsrisiko.
+>
+> Kurz: Der Buehnen-Chip erscheint ueberall automatisch, sobald `ride.zone`
+> gesetzt ist. Festival-Abfahrten haben kein `zone` und koennen es nicht setzen,
+> weil `RideForm` das Buehnen-Feld nur bei `toIsFestival` zeigt (~Z. 5196) und
+> beim Speichern `zone` bei Nicht-Festival-Ankunft leert (~Z. 5141,
+> `zone: toIsFestival ? f.zone : ""`). Plan (freigegeben): Feld auch bei
+> `fromIsFestival` zeigen, Speicher-Zeile synchron erweitern, Label
+> kontextabhaengig ("Abladezone" bei Ankunft, "Buehne / Abholung" bei Abfahrt).
+> Zeilennummern per grep verankern (`toIsFestival`,
+> `zone: toIsFestival ? f.zone : ""`), das File waechst.
+>
+> **Rueckenwind, schon geprueft:** `resolveNode(..., r.fromId === "festival" ?
+> r.zone : null, ...)` (Z. ~2565 und ~11298) liest `zone` bereits als STARTknoten
+> bei Festival-Abfahrten -> sobald befuellt, startet die Karte die Abfahrt korrekt
+> an der Buehne, kein Konflikt. `zone` wird sonst nur angezeigt, nie fuer Logik
+> verglichen.
+>
+> **Ein Design-Detail von mir bestaetigen lassen:** genauer Label-Text bei
+> Abfahrt ("Buehne / Abholung" oder anders?). Farb-/Designfragen entscheide ICH.
+>
+> **Weitere offene Punkte** (nicht dieses Thema): `smoke-teilpaket-b.mjs` testet
+> `computeDriverStats`/`suggestDrivers` nicht, `stateNode` fehlt in allen drei
+> Extraktoren (folgenlos), drei Skripte ohne ihre `/tmp`-Zwischendateien,
+> feasible-Entscheidung bei unbekanntem Fahrer-Standort, Testleichen g2-ui 15/21
+> und smoke-orte-fix, Post-Festival Paket 2.
+>
+> Regeln unveraendert: Deutsch, informell, keine Gedankenstriche, korrekte
+> Umlaute. Rein additiv wo moeglich, kleinstmoegliche Aenderung, keine Breaking
+> Changes, keine Workflow-/Rollen-/Stage-Aenderungen, keine DB-Struktur-Aenderungen
+> (ausser zwingend), keine kosmetischen Refactorings oder Performance-
+> Optimierungen ausserhalb des Themas. **Erst Diagnose, dann Verdrahtungsplan mit
+> Einfuegestelle und Regressionsrisiko, dann meine Freigabe, dann Bau.** Nach jeder
+> Aenderung volle Kette (esbuild, Duplikat-Grep, JSX-Referenzabgleich, Smoke mit
+> Pflicht-Gegenprobe, rendertest, kontrast) + Diff-Beweis + konkrete manuelle
+> Testfaelle. Bugs ausserhalb des Themas -> "Weitere gefundene Punkte", NICHT
+> fixen. Festival 23.-27.07., Freeze seit 20.07. aufgehoben. Nur eine Session
+> gleichzeitig. `git fetch` unmittelbar vor jedem Push. Commit-Messages mit
+> Umlauten ueber `/tmp/msg.txt` + `git commit -F`, Datei in EIGENEM Befehl
+> schreiben. Proaktiv vor zu langem Chat warnen.
+>
+> PAT: [HIER FRISCHEN PAT EINSETZEN]
