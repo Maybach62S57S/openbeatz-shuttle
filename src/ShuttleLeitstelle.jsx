@@ -3176,6 +3176,7 @@ function DriverApp({ setup, dyn, session, updateDyn, onLogout }) {
   // Neuer Tab-Umschalter: "mine" = wie bisher (eigene Fahrten), "all" = Nur-Lese-Uebersicht,
   // wer heute welchen Kuenstler faehrt. Kein Zugriff auf Aktionen, keine Zeiten/Notizen/PII.
   const [activeTab, setActiveTab] = useState("mine");
+  const [allSearch, setAllSearch] = useState("");
 
   // Benachrichtigt den Fahrer bei relevanten Änderungen an seinen eigenen Fahrten —
   // nicht nur bei Neuzuteilung: geänderte Zeit/Route/Treffpunkt, Flug jetzt verspätet/
@@ -3620,6 +3621,12 @@ function DriverApp({ setup, dyn, session, updateDyn, onLogout }) {
 
       {activeTab === "all" && (
         <div className="p-4 space-y-2" style={{ paddingBottom: "max(6rem, calc(env(safe-area-inset-bottom) + 4.5rem))" }}>
+          <div className="relative">
+            <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none text-stone-500" />
+            <input value={allSearch} onChange={(e) => setAllSearch(e.target.value)}
+              placeholder="Artist suchen"
+              className="w-full bg-stone-900 border border-stone-800 rounded-lg pl-9 pr-3 py-2 text-sm text-stone-100 placeholder-stone-500" />
+          </div>
           {(() => {
             const rank = (r) => {
               if (r.status === "onboard") return 0;
@@ -3635,10 +3642,12 @@ function DriverApp({ setup, dyn, session, updateDyn, onLogout }) {
                 if (ra !== rb) return ra - rb;
                 return sortMin(a.time) - sortMin(b.time);
               });
-            if (all.length === 0) {
-              return <div className="text-center text-stone-500 text-sm py-8">Keine Fahrten fuer diesen Tag.</div>;
+            const q = allSearch.trim().toLowerCase();
+            const shown = q ? all.filter((r) => (r.djName || "").toLowerCase().includes(q)) : all;
+            if (shown.length === 0) {
+              return <div className="text-center text-stone-500 text-sm py-8">{q ? "Keine Treffer." : "Keine Fahrten fuer diesen Tag."}</div>;
             }
-            return all.map((r) => {
+            return shown.map((r) => {
               const drv = setup.drivers.find((d) => d.id === r.assignedDriverId);
               return (
                 <div key={r.id} className="bg-stone-900 border border-stone-800 rounded-xl p-3 flex items-center gap-3">
