@@ -10710,6 +10710,10 @@ function MissionTimelinePage({ setup, dyn, day, onEdit, onAssign, updateDyn, by,
             <AlertTriangle className="w-2.5 h-2.5 text-white" />
           </span>
         )}
+        <button onPointerDown={(e) => e.stopPropagation()} onClick={(e) => { e.stopPropagation(); onAssign && onAssign(r); }} title="Fahrer ändern"
+          className="absolute top-0.5 right-6 w-5 h-5 rounded-md flex items-center justify-center" style={{ background: "rgba(0,0,0,0.32)" }}>
+          <Users className="w-3 h-3" style={{ color: "var(--mc-text)" }} />
+        </button>
         <button onPointerDown={(e) => e.stopPropagation()} onClick={(e) => { e.stopPropagation(); onEdit && onEdit(r); }} title="Fahrt bearbeiten"
           className="absolute top-0.5 right-0.5 w-5 h-5 rounded-md flex items-center justify-center" style={{ background: "rgba(0,0,0,0.32)" }}>
           <ChevronRight className="w-3 h-3" style={{ color: "var(--mc-text)" }} />
