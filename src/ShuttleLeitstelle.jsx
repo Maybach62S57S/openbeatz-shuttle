@@ -1975,6 +1975,15 @@ function driverCategoryOf(d) {
   const p = driverProfile(d);
   return p && p.driverCategory === "springer" ? "springer" : "regular";
 }
+// Reihenfolge der Fahrer-Zeilen in der Timeline: regulaere vor Springer
+// (Springer wie Leon/Philipp ans Ende), Van vor Car. Rein anzeigend und
+// stabil (haengt nur an Fahrzeugtyp + Kategorie, nicht an Fahrten), damit
+// Zeilen sich beim Zuteilen nicht verschieben.
+function driverLaneRank(d) {
+  const springer = driverCategoryOf(d) === "springer" ? 1 : 0;
+  const car = (d && d.vehicleType) === "Van" ? 0 : 1;
+  return springer * 2 + car;
+}
 function availableFromOf(d) {
   const v = d && d.availableFrom;
   if (typeof v === "string" && v.trim()) return v.trim();
@@ -10507,10 +10516,12 @@ function MissionTimelinePage({ setup, dyn, day, onEdit, onAssign, updateDyn, by,
   // Auf Jordans Wunsch: ALLE Fahrer sichtbar, auch ohne Fahrten heute (vorher
   // .filter((x) => x.rs.length > 0) rausgenommen), UND feste Reihenfolge, die
   // sich nicht mit Zuteilungen verschiebt (vorher nach Beginn der ersten
-  // Fahrt sortiert -> Zeilen sprangen um). Reihenfolge jetzt einfach wie in
-  // den Fahrer-Stammdaten (Einstellungen → Fahrer), bleibt stabil.
+  // Fahrt sortiert -> Zeilen sprangen um). Ordnung: Van vor Car, Springer
+  // (Leon/Philipp) ans Ende, Rest wie Stammdaten (Einstellungen → Fahrer).
+  // Stabil, da nur fahrzeugtyp-/kategorieabhaengig, nicht fahrtabhaengig.
   const withDriver = setup.drivers
-    .map((d) => ({ d, rs: rides.filter((r) => r.assignedDriverId === d.id).sort((a, b) => start(a) - start(b)) }));
+    .map((d) => ({ d, rs: rides.filter((r) => r.assignedDriverId === d.id).sort((a, b) => start(a) - start(b)) }))
+    .sort((a, b) => driverLaneRank(a.d) - driverLaneRank(b.d));
   const unassigned = rides.filter((r) => !r.assignedDriverId).sort((a, b) => start(a) - start(b));
 
   // Lücken-Hervorhebung: offene Fahrt anklicken -> passende Fahrer leuchten in der
@@ -10897,7 +10908,8 @@ function TimelineView({ setup, dyn, day, onEdit }) {
 
   const withDriver = setup.drivers
     .map((d) => ({ d, rs: rides.filter((r) => r.assignedDriverId === d.id).sort((a, b) => start(a) - start(b)) }))
-    .filter((x) => x.rs.length > 0);
+    .filter((x) => x.rs.length > 0)
+    .sort((a, b) => driverLaneRank(a.d) - driverLaneRank(b.d));
   const unassigned = rides.filter((r) => !r.assignedDriverId).sort((a, b) => start(a) - start(b));
 
   // Konflikt = Überschneidung zweier Fahrten desselben Fahrers
