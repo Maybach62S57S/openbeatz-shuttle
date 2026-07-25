@@ -471,6 +471,31 @@ function shouldAcceptPolledDyn(prevRev, incomingRev, prevSig, incomingSig) {
   return incomingSig !== prevSig;
 }
 
+// Flughafen-Anzeige eindeutig machen: Nuernberg (nur "Flughafen") und Muenchen
+// werden sonst leicht verwechselt. Rein presentational -> haengt bei einem
+// Flughafen-Ort ein Stadtkuerzel (NUE/MUC) an den short, falls noch keins da
+// ist. Idempotent (laeuft ohne Effekt erneut), deterministisch, veraendert NUR
+// short (nirgends fuer Logik verglichen), NICHT rev/Signatur. Wird zentral in
+// sget angewandt -> wirkt in allen Ansichten, unabhaengig davon ob die Orte aus
+// dem Code-Default oder aus der Datenbank kommen. Andere Ortstypen unberuehrt.
+function withAirportCityShort(setup) {
+  if (!setup || !Array.isArray(setup.locations)) return setup;
+  const hasCityTag = (s) => /\b(NUE|MUC)\b|münchen|munich|nürnberg|nuernberg/i.test(s || "");
+  let changed = false;
+  const locations = setup.locations.map((l) => {
+    if (!l || l.type !== "airport") return l;
+    const short = l.short || "";
+    if (hasCityTag(short)) return l; // schon eindeutig -> unangetastet
+    if (!/flughafen|airport/i.test(short)) return l; // nur echte "Flughafen"-Labels; GAT o.ae. bleibt unberuehrt
+    const hay = `${l.name || ""} ${l.address || ""}`;
+    const isMuc = /münchen|munich|\bMUC\b/i.test(hay);
+    const suffix = isMuc ? " MUC" : " NUE"; // Region Nuernberg ist der Normalfall
+    changed = true;
+    return { ...l, short: short + suffix };
+  });
+  return changed ? { ...setup, locations } : setup;
+}
+
 async function sget(key) {
   // WICHTIG: der Supabase-Pfad bewusst NICHT in dieses try/catch einschließen.
   // sbGetSetup/sbGetDyn werfen bei einem echten Ladefehler (Netzwerk, RLS,
@@ -478,11 +503,12 @@ async function sget(key) {
   // Aufrufer durchgereicht werden — sonst sieht ein Ladefehler für die App
   // identisch aus wie "es gibt einfach noch keine Daten", und sie zeigt sich
   // im schlimmsten Fall leer statt einen Fehler zu melden.
-  if (hasSupabase()) return key === SETUP_KEY ? await sbGetSetup() : await sbGetDyn();
+  if (hasSupabase()) return key === SETUP_KEY ? withAirportCityShort(await sbGetSetup()) : await sbGetDyn();
   try {
-    if (!hasStore) return mem[key] ? JSON.parse(mem[key]) : null;
+    if (!hasStore) { const v = mem[key] ? JSON.parse(mem[key]) : null; return key === SETUP_KEY ? withAirportCityShort(v) : v; }
     const r = await window.storage.get(key, SHARED);
-    return r ? JSON.parse(r.value) : null;
+    const v = r ? JSON.parse(r.value) : null;
+    return key === SETUP_KEY ? withAirportCityShort(v) : v;
   } catch { return null; } // window.storage: fehlender Key wirft laut API, das ist hier der Normalfall "keine Daten"
 }
 // Rückgabe jetzt { ok, value } statt boolean: bei Supabase ist "ok" das
@@ -9420,6 +9446,7 @@ function MissionReturnsTab({ setup, dyn, day, updateDyn, by, onErr, onAssign, on
                   <ArrowRight className="w-3.5 h-3.5 shrink-0" style={{ color: "var(--mc-text-muted)" }} />
                   <Moon className="w-3.5 h-3.5 shrink-0" style={{ color: "var(--mc-text-secondary)" }} />
                   <span className="font-semibold truncate" style={{ color: "var(--mc-text)" }}>{destName(r)}</span>
+                  {r.zone && <ZoneChip zone={r.zone} className="shrink-0" />}
                 </div>
                 <div className="text-sm font-semibold truncate mt-0.5" style={{ color: "var(--mc-text)" }}>{r.djName || "—"}</div>
                 <div className="text-xs inline-flex items-center gap-1 mt-0.5" style={{ color: "var(--mc-text-muted)" }}><Users className="w-3 h-3" />{r.passengerCount} Pers.</div>

@@ -58,7 +58,10 @@ ok(/if \(wasConnBadRef\.current && !bad\)/.test(src), "Verankerung: Uebergang nu
 ok(/const hasSupabase = \(\) => typeof window !== "undefined" && !!window\.__obfSupabase;/.test(src),
    "Verankerung: hasSupabase() an Konfiguration gebunden (nicht an Erreichbarkeit)");
 // sget/sset nehmen bei hasSupabase() den Supabase-Zweig VOR dem window.storage-Zweig.
-ok(/if \(hasSupabase\(\)\) return key === SETUP_KEY \? await sbGetSetup\(\) : await sbGetDyn\(\);/.test(src),
+// sbGetSetup() ist inzwischen von withAirportCityShort(...) umhuellt (reine
+// Anzeige-Normalisierung der Flughafen-Kuerzel); der Fehler von sbGetSetup()
+// wird durch das await davor weiterhin unveraendert durchgereicht.
+ok(/if \(hasSupabase\(\)\) return key === SETUP_KEY \? withAirportCityShort\(await sbGetSetup\(\)\) : await sbGetDyn\(\);/.test(src),
    "Verankerung: sget nimmt bei hasSupabase() den Supabase-Zweig (wirft, kein Fallthrough)");
 
 // ===========================================================================
