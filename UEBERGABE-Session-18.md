@@ -7400,3 +7400,132 @@ grep verankern: `toIsFestival`, `zone: toIsFestival ? f.zone : ""`, das
 > schreiben. Proaktiv vor zu langem Chat warnen.
 >
 > PAT: [HIER FRISCHEN PAT EINSETZEN]
+
+---
+
+# Session 25.07.2026 (Teil 2): Buehne bei Festival-Abfahrten manuell setzbar
+
+**Ein Code-Commit (`7444b9f`), gepusht und live. Thema aus Punkt 4 der ersten
+25.07.-Session vollstaendig umgesetzt.** Letzter Code-Commit: **`7444b9f`**,
+**13782 Zeilen** (+1 gegenueber `ab76eec`). Sicherungs-Tag neu:
+**`post-buehne-abfahrt`** (= `7444b9f`, annotiert, mit `^{}` aufloesen), gepusht.
+
+## Was geaendert wurde (nur `RideForm`, rein additiv, 3 Eingriffe)
+
+1. **Neue Ableitung** direkt neben `toIsFestival`:
+   `const fromIsFestival = f.fromId === "festival";` (existierte nirgends sonst).
+2. **Sichtbarkeit + Label** (ehem. Z. 5196/5197):
+   `{(toIsFestival || fromIsFestival) && (` und
+   `<Field label={toIsFestival ? "Abladezone" : "Bühne"} mc>`.
+   Label bei Ankunft "Abladezone", bei Abfahrt "Bühne" (Jordans Freigabe:
+   "nur bühne", nicht "Bühne / Abholung"). Bei Fest->Fest hat `toIsFestival`
+   Prioritaet -> bleibt "Abladezone".
+3. **Speicher-Zeile synchron** (ehem. Z. 5141):
+   `zone: (toIsFestival || fromIsFestival) ? f.zone : "",` -- kritischer
+   Synchronpunkt zu Eingriff 2, sonst geht die gewaehlte Zone beim Speichern
+   verloren.
+
+Folge: Der Buehnen-Chip erscheint jetzt auch bei Festival-Abfahrten (Board +
+Rueckfahrten-Leitstand, dort seit `ab76eec` vorhanden). Kartenlogik war bereits
+vorbereitet: `resolveNode(nodes, r.fromId, r.fromId === "festival" ? r.zone :
+null, ...)` an drei Stellen (Z. ~2565, ~11088, ~11298) liest `zone` als
+Startknoten; `resolveNode` faellt sauber auf den Festival-Node zurueck, falls
+kein Zonen-Node existiert (kein Crash). `zone` wird sonst nie fuer Logik
+verglichen, nur angezeigt.
+
+## Verifikation (volle Kette gruen)
+
+esbuild gruen, keine Duplikat-Funktionsnamen. JSX-Referenzabgleich gegen HEAD:
+keine neue undefinierte Ref (Delta leer). Komplette Smoke-Suite gegen JETZT
+plus HEAD-Vergleich: alle scharfen gruen (teilpaket-e 152/0, teilpaket-g 130/0,
+gegenprobe-e 8/8 gekippt, offline-reconnect-e 39/0, buehne-settime 17/0 inkl.
+broken-Gegenprobe-Kompilierung). Alle roten Skripte bei JETZT und HEAD
+**identisch** (vorbestehende Fails / fehlende /tmp-Zwischendateien). Zusaetzlich:
+**b/e/g-Extrakte byte-identisch zu HEAD** -> der ganze b/e/g-Block per
+Konstruktion nicht-regressiv. rendertest 5 Werte konstant (25053/2452/2413/2895/
+101), kontrast 0. Eigenstaendiger themengenauer Node-Test
+(`/tmp/test_buehne_abfahrt.mjs`, nicht im Repo): 17/0 gegen JETZT, gegen HEAD
+kippen genau die 6 Struktur-Anker -> misst nachweislich; eingebaute Gegenprobe
+mit alter Logik bestaetigt den Verhaltensunterschied.
+
+## Manuelle Testfaelle (im Live-Deploy zu pruefen)
+
+1. Festival-Abfahrt oeffnen (Von = Festival, Nach = Hotel): Feld erscheint,
+   Label "Bühne", Zone waehlbar. Speichern -> Zone bleibt, Chip erscheint in
+   Board + Rueckfahrten-Leitstand.
+2. Festival-Ankunft (Von = Hotel, Nach = Festival): unveraendert, Label
+   "Abladezone", Zone bleibt.
+3. Fremde Fahrt (kein Festival beteiligt): Feld bleibt unsichtbar, keine Zone.
+4. Karte: Festival-Abfahrt mit gewaehlter Zone startet die Projektion an der
+   Buehne statt am generischen Festival-Node.
+
+## Neu unter "Weitere gefundene Punkte" (nicht gefixt)
+
+- `gegenprobe-teilpaket-h-rpc-postgres.mjs` failt vorbestehend mit
+  `ERR_MODULE_NOT_FOUND` (fehlende Zwischendatei), war im letzten Opener nicht
+  in der Liste der vorbestehenden Fehler -> hier nachgetragen. Bei JETZT und
+  HEAD identisch, keine Regression.
+
+---
+
+> **Fertiger Opener fuer den naechsten Chat:**
+>
+> Neue Session, OpenBeatz Shuttle-Leitstelle. Arbeitsverzeichnis MUSS
+> `/home/claude/repo` (mehrere Testskripte haben den Pfad hart verdrahtet).
+> Erst Schritt 0 komplett: Repo klonen (frischen PAT von mir), PAT sofort aus der
+> Remote-URL scrubben (`git remote set-url`), `npm install` (nicht `npm ci`, kein
+> Lockfile), `git config user.name Claude` / `user.email claude@merg-and-more.de`,
+> `git fetch`, selbst pruefen HEAD==origin/main. Zeilenzahl selbst nachmessen.
+>
+> **Stand:** HEAD ist `7444b9f`, **13782 Zeilen**, letzter Code-Commit zugleich.
+> Sicherungs-Tag zuletzt `post-buehne-abfahrt` (= `7444b9f`, annotiert, mit `^{}`
+> aufloesen), gepusht. Davor `pre-buehne-abfahrt` (= `ab76eec`).
+>
+> Bestands-Regression vor allem Neuen: esbuild, Duplikat-Grep (`[a-zA-Z0-9_]+`),
+> fuer Teilpaket B/E/G ZUERST
+> `python3 extract-funcs-teilpaket-{b,e,g}.py src/ShuttleLeitstelle.jsx
+> tmp-t{b,e,g}-funcs.mjs`, dann alle `smoke*.mjs` mit Dateipfad als
+> `process.argv[2]`, `rendertest.mjs` (5 Werte konstant 25053/2452/2413/2895/101),
+> `kontrast.mjs` (0). Extrakte danach loeschen. Bester Nachweis: komplette Suite
+> zusaetzlich gegen `git show HEAD:src/ShuttleLeitstelle.jsx`, nur ABWEICHUNGEN
+> als Regression. Trick, der sich bewaehrt hat: b/e/g-Extrakte gegen HEAD
+> erzeugen und byte-diffen -> bei Identitaet ist der ganze Block per Konstruktion
+> nicht-regressiv.
+>
+> **Vorbestehende Fehler, NICHT anfassen, nicht als Regression werten:**
+> `smoke-orte-fix.mjs` (2 FAIL), `test_springer_availability.mjs` (8 FAIL),
+> `smoke-teilpaket-g2-ui.mjs` (2 FAIL: Tests 15/21; wanduhr-flaky
+> 14/20/25/26/27 getrennt, kippen nur 06:00-08:00), `smoke-standort-tagesbezug.mjs`
+> ("Jassin am Festival"-Test kippt zeitfensterabhaengig, gegen HEAD gegenpruefen),
+> `regression-teilpaket-b.mjs` (braucht `/tmp/reg_alt.mjs`), `pruefe.mjs` (braucht
+> ZWEI Dateipfade), `smoke-fahrer-23-07.mjs` (`/tmp/prof.js`),
+> `smoke-orte-23-07.mjs` (`/tmp/ml_new.js`), `pruefe-fahrerabgleich.mjs`,
+> `gegenprobe-teilpaket-h-rpc-postgres.mjs` (fehlende Zwischendatei,
+> `ERR_MODULE_NOT_FOUND`). **Scharf (echte Funde bei Fail):**
+> `smoke-teilpaket-e.mjs` (152/0), `smoke-teilpaket-g.mjs` (130/0),
+> `gegenprobe-teilpaket-e.mjs` (8/8), `smoke-offline-reconnect-e.mjs` (39/0, an
+> die `sget`-Zeile mit `withAirportCityShort` verankert),
+> `smoke-buehne-settime.mjs` (17/0, inkl. broken-Gegenprobe).
+>
+> **THEMA: [von mir zu setzen].** Offene Kandidaten aus "Weitere gefundene
+> Punkte": `matchLoc`-Fix (hartkodierte 4 Orte, liest nicht aus
+> `setup.locations`), feasible-Entscheidung bei unbekanntem Fahrer-Standort,
+> Post-Festival Paket 2 (Datei-Modularisierung, Base64-Assets). Erst Diagnose,
+> dann Verdrahtungsplan mit Einfuegestelle und Regressionsrisiko, dann meine
+> Freigabe, dann Bau.
+>
+> Regeln unveraendert: Deutsch, informell, keine Gedankenstriche, korrekte
+> Umlaute. Rein additiv wo moeglich, kleinstmoegliche Aenderung, keine Breaking
+> Changes, keine Workflow-/Rollen-/Stage-Aenderungen, keine DB-Struktur-Aenderungen
+> (ausser zwingend), keine kosmetischen Refactorings oder Performance-
+> Optimierungen ausserhalb des Themas. **Erst Diagnose, dann Verdrahtungsplan mit
+> Einfuegestelle und Regressionsrisiko, dann meine Freigabe, dann Bau.** Nach jeder
+> Aenderung volle Kette (esbuild, Duplikat-Grep, JSX-Referenzabgleich, Smoke mit
+> Pflicht-Gegenprobe, rendertest, kontrast) + Diff-Beweis + konkrete manuelle
+> Testfaelle. Bugs ausserhalb des Themas -> "Weitere gefundene Punkte", NICHT
+> fixen. Festival 23.-27.07. (laeuft), Freeze seit 20.07. aufgehoben. Nur eine
+> Session gleichzeitig. `git fetch` unmittelbar vor jedem Push. Commit-Messages
+> mit Umlauten ueber `/tmp/msg.txt` + `git commit -F`, Datei in EIGENEM Befehl
+> schreiben. Proaktiv vor zu langem Chat warnen.
+>
+> PAT: [HIER FRISCHEN PAT EINSETZEN]
