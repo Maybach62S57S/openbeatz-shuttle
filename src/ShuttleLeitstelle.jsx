@@ -5076,6 +5076,7 @@ function RideForm({ setup, ride, onClose, onSave, onDelete }) {
   };
 
   const toIsFestival = f.toId === "festival";
+  const fromIsFestival = f.fromId === "festival";
   // Teilpaket C2: rein lesende Timetable-Zuordnung. Live aus dem Formular-State
   // abgeleitete Ride-Ansicht (aktualisiert sich beim Tippen von Artist/Datum/
   // Richtung). Nur Anzeige, keine Speicherung des Ergebnisses am Ride.
@@ -5138,7 +5139,7 @@ function RideForm({ setup, ride, onClose, onSave, onDelete }) {
       const res = await onSave({
         ...clean, ...f,
         passengerCount: pax,
-        zone: toIsFestival ? f.zone : "",
+        zone: (toIsFestival || fromIsFestival) ? f.zone : "",
         dayKey,
         estDurationMin: Number.isFinite(est) ? est : null,
         type: classify(f.fromId, f.toId, f.fromCustom, f.toCustom),
@@ -5193,8 +5194,8 @@ function RideForm({ setup, ride, onClose, onSave, onDelete }) {
           onId={(v) => set("fromId", v)} onCustom={(v) => set("fromCustom", v)} />
         <LocSelect setup={setup} label="Nach" value={f.toId} custom={f.toCustom}
           onId={(v) => set("toId", v)} onCustom={(v) => set("toCustom", v)} />
-        {toIsFestival && (
-          <Field label="Abladezone" mc>
+        {(toIsFestival || fromIsFestival) && (
+          <Field label={toIsFestival ? "Abladezone" : "Bühne"} mc>
             <select className={mcInp} value={f.zone} onChange={(e) => set("zone", e.target.value)}>
               <option value="">– wählen –</option>
               {setup.zones.map((z) => <option key={z} value={z}>{z}</option>)}
