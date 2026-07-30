@@ -9949,12 +9949,42 @@ function FlightTab({ setup, dyn, day, updateDyn, by, onErr, onEdit }) {
   );
 }
 
+/* ---------- Quittieren ("Gesehen") fuer zeitbasierte Notfaelle ------------ *
+ * Die zeitbasierten Faelle (flight / nodriver / waiting) haben kein issues[],
+ * der bestehende "Problem erledigt"-Knopf greift dort also nicht (resolveIssues
+ * waere ein No-op). Statt sie hart auszublenden oder einen Status zu faelschen,
+ * merkt sich die Fahrt eine Quittung: die Leitstelle hat den Fall gesehen und
+ * kuemmert sich, er verschwindet fuer ACK_SNOOZE_MIN Minuten aus der Liste und
+ * kommt danach automatisch zurueck, falls die Lage weiter kritisch ist.
+ *
+ * Eskalation bricht die Quittung sofort durch, weil sie an der Stufe haengt:
+ * wechselt ein Fall von warn nach critical (oder ueberschreitet er die naechste
+ * Ueberfaelligkeits-Schwelle), passt caseAckSev nicht mehr und der Fall ist
+ * wieder da. Bei Fluegen zaehlt zusaetzlich der Alarmtext, weil flightAlert dort
+ * nur die eine Stufe "critical" kennt und sich die Lage sonst unbemerkt aendern
+ * koennte (gelandet ohne Fahrer -> annulliert). Bei nodriver/waiting waere
+ * derselbe Textvergleich falsch: dort laeuft die Minutenzahl im Text mit, die
+ * Quittung wuerde schon nach einer Minute wieder aufbrechen.
+ *
+ * issue-Faelle sind bewusst NICHT dabei, die behalten "Problem erledigt".
+ * Die vier Felder sitzen im Ride-Objekt (dyn_data->'rides'), also normaler
+ * updateDyn-Weg, kein neues Top-Level-dyn-Feld und keine Schema-Aenderung.     */
+const ACK_SNOOZE_MIN = 10;
+const ACK_CASE_TYPES = ["flight", "nodriver", "waiting"];
+function caseAckActive(r, type, sev, label, nowMs) {
+  if (!r || !r.caseAckAt) return false;
+  if (r.caseAckType !== type || r.caseAckSev !== sev) return false;
+  if (type === "flight" && r.caseAckLabel !== label) return false;
+  return nowMs - r.caseAckAt < ACK_SNOOZE_MIN * 60000;
+}
+
 /* -------------------------- Notfallmodus (Punkt 6) ----------------------- */
 // Ermittelt akute Fälle: kritische/offene Probleme, Flug gelandet ohne Fahrer,
 // annulliert, kurzfristig ohne Fahrer, Fahrer nicht gestartet (Artist wartet).
 function emergencyCases(setup, dyn, day) {
   const now = dayNowMin(day);
   const live = now >= 0 && now < 90000;
+  const nowMs = Date.now();
   const cases = [];
   const rides = (dyn.rides || []).filter((r) => r.dayKey === day && r.status !== "cancelled" && r.status !== "done");
   rides.forEach((r) => {
@@ -9964,15 +9994,23 @@ function emergencyCases(setup, dyn, day) {
     else if (issues.length) cases.push({ r, sev: "warn", type: "issue", label: issues.map((i) => i.type).join(", ") });
 
     const al = flightAlert(r);
-    if (al.level === "critical") cases.push({ r, sev: "critical", type: "flight", label: al.label });
+    if (al.level === "critical" && !caseAckActive(r, "flight", "critical", al.label, nowMs)) cases.push({ r, sev: "critical", type: "flight", label: al.label });
 
     if (live && !r.assignedDriverId) {
       const dt = sortMin(r.time) - now;
-      if (dt <= 45 && dt > -120) cases.push({ r, sev: dt <= 15 ? "critical" : "warn", type: "nodriver", label: dt <= 0 ? "ohne Fahrer · Start überfällig" : `ohne Fahrer · Start in ${dt} min` });
+      if (dt <= 45 && dt > -120) {
+        const sev = dt <= 15 ? "critical" : "warn";
+        const label = dt <= 0 ? "ohne Fahrer · Start überfällig" : `ohne Fahrer · Start in ${dt} min`;
+        if (!caseAckActive(r, "nodriver", sev, label, nowMs)) cases.push({ r, sev, type: "nodriver", label });
+      }
     }
     if (live && r.assignedDriverId && ["planned", "accepted"].includes(r.status)) {
       const over = now - sortMin(r.time);
-      if (over >= 5) cases.push({ r, sev: over >= 20 ? "critical" : "warn", type: "waiting", label: `Fahrer nicht gestartet · ${over} min über Zeit` });
+      if (over >= 5) {
+        const sev = over >= 20 ? "critical" : "warn";
+        const label = `Fahrer nicht gestartet · ${over} min über Zeit`;
+        if (!caseAckActive(r, "waiting", sev, label, nowMs)) cases.push({ r, sev, type: "waiting", label });
+      }
     }
   });
   return cases.sort((a, b) => (a.sev !== b.sev ? (a.sev === "critical" ? -1 : 1) : sortMin(a.r.time) - sortMin(b.r.time)));
@@ -10050,6 +10088,30 @@ function MissionEmergencyTab({ setup, dyn, day, updateDyn, by, onErr, onAssign, 
     if ((!res || !res.ok) && onErr) onErr(res?.error || "Problem konnte nicht als erledigt gespeichert werden, bitte erneut versuchen.");
   };
 
+  // Quittieren ("Gesehen") fuer die zeitbasierten Faelle. Schreibt AUSSCHLIESSLICH
+  // die vier Quittungs-Felder am Ride, nie Status, Fahrer oder issues. Eigener
+  // Ladezustand, damit der bestehende "Problem erledigt"-Knopf unberuehrt bleibt.
+  const [acking, setAcking] = useState(null);
+  const ackCase = async (rideId, type, sev, label) => {
+    if (acking) return;
+    setAcking(rideId);
+    const res = await updateDyn((d) => {
+      const r = d.rides.find((x) => x.id === rideId);
+      if (!r) return dynConflict("RIDE_GONE", "Diese Fahrt existiert nicht mehr.");
+      // Von einem anderen Leitstellen-Geraet bereits fuer dieselbe Lage quittiert
+      // und noch im Fenster -> echter No-op (kein rev+1, kein doppelter Log).
+      if (caseAckActive(r, type, sev, label, Date.now())) return NO_CHANGE;
+      r.caseAckAt = Date.now();
+      r.caseAckType = type;
+      r.caseAckSev = sev;
+      r.caseAckLabel = label;
+      logRide(r, "case_ack", by, `${type}: ${label}`);
+      return d;
+    });
+    setAcking(null);
+    if ((!res || !res.ok) && onErr) onErr(res?.error || "Quittierung konnte nicht gespeichert werden, bitte erneut versuchen.");
+  };
+
   const critCount = cases.filter((c) => c.sev === "critical").length;
   const warnCount = cases.length - critCount;
   const shown = filter === "all" ? cases : cases.filter((c) => c.sev === filter);
@@ -10107,6 +10169,7 @@ function MissionEmergencyTab({ setup, dyn, day, updateDyn, by, onErr, onAssign, 
               const crit = c.sev === "critical";
               const key = crit ? "problem" : "assigned";
               const busy = resolving === r.id;
+              const ackBusy = acking === r.id;
               return (
                 <div key={i} className={"mc-ride-card" + (c.type === "issue" && pulseIds[r.id] ? " mc-flash-problem" : "")}
                   style={{ padding: "14px", borderLeft: `3px solid var(--mc-st-${key})` }}>
@@ -10158,6 +10221,13 @@ function MissionEmergencyTab({ setup, dyn, day, updateDyn, by, onErr, onAssign, 
                           <button onClick={() => resolveIssues(r.id)} disabled={busy} className={secBtn + " disabled:opacity-60"}
                             style={{ background: "var(--mc-st-done-soft)", color: "var(--mc-st-done)", border: "1px solid var(--mc-st-done)" }}>
                             {busy ? <RefreshCw className="w-4 h-4 animate-spin" /> : <CheckCircle2 className="w-4 h-4" />}{busy ? "wird gespeichert" : "Problem erledigt"}
+                          </button>
+                        )}
+                        {ACK_CASE_TYPES.includes(c.type) && (
+                          <button onClick={() => ackCase(r.id, c.type, c.sev, c.label)} disabled={ackBusy} className={secBtn + " disabled:opacity-60"}
+                            title={`Fall für ${ACK_SNOOZE_MIN} Minuten ausblenden. Kommt automatisch zurück, wenn die Lage weiter kritisch ist.`}
+                            style={{ background: "var(--mc-st-assigned-soft)", color: "var(--mc-st-assigned)", border: "1px solid var(--mc-st-assigned)" }}>
+                            {ackBusy ? <RefreshCw className="w-4 h-4 animate-spin" /> : <CheckCircle2 className="w-4 h-4" />}{ackBusy ? "wird gespeichert" : "Gesehen"}
                           </button>
                         )}
                         <button onClick={() => onEdit(r)} className="text-sm px-2 py-2 transition" style={{ color: "var(--mc-text-secondary)" }}>Fahrt öffnen</button>
