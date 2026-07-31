@@ -855,3 +855,249 @@ alter table drivers add constraint drivers_driver_category_check check (driver_c
 -- update drivers set driver_category = 'springer' where first_name = 'Philipp' and last_name = 'Stich';
 -- update drivers set available_from  = '2026-07-25 14:00' where first_name = 'Philipp' and last_name = 'Baumeister';
 -- update drivers set team_group = 'timmy-team' where (first_name,last_name) in (('Patrick','Ibrahimi'),('Mustafa','Ünver'),('Lukas','Bieber'));
+
+-- ============================================================================
+-- Nachtrag Gast-Idempotenz (DB-Ebene) — 2026-07-31
+--
+-- PROBLEM: guest_confirm_pickup / guest_at_pickup setzten ihren Zeitstempel
+-- BEDINGUNGSLOS neu (kein "schon gesetzt"-Guard). Ein Retry (Netzfehler, die
+-- Antwort kam beim Client nicht an, obwohl der Schreibvorgang durchlief) oder
+-- ein zweiter Tab überschrieb den ersten Zeitstempel, zählte dyn_rev ein
+-- zweites Mal hoch und erzeugte einen zweiten Log-Eintrag. Analog hängte
+-- guest_report_issue bei einem Retry einen zweiten, identischen Issue-Eintrag
+-- an. Der Client-Schutz (inFlightRef gegen Doppelklick, NO_CHANGE-Guard im
+-- Artifact-Fallback) greift nur im Artifact-Pfad; der Supabase-Pfad geht am
+-- NO_CHANGE-Guard vorbei direkt in den RPC. Genau dort fehlte die Absicherung.
+--
+-- LÖSUNG: Das UPDATE bekommt einen zusätzlichen WHERE-Zweig ("Zielfeld noch
+-- nicht gesetzt"). Betrifft das UPDATE 0 Zeilen, unterscheidet eine
+-- Nachprüfung die beiden möglichen Ursachen:
+--   - Fahrt/Token passt nicht                        -> false (echter Fehler)
+--   - Feld war bereits gesetzt (Retry/paralleler Ruf) -> true  (sauberer No-op)
+-- Kein dyn_rev-Bump, kein zweiter Log-Eintrag im No-op-Fall.
+--
+-- RACE-SICHER, nicht nur retry-sicher: die Guard-Bedingung ist TEIL des
+-- atomaren UPDATE, keine separate Vorab-Prüfung. Postgres serialisiert über
+-- den Row-Lock auf settings id=1. Verifiziert mit 10 wirklich gleichzeitigen
+-- Aufrufen gegen eine echte lokale Postgres-Instanz: alle 10 liefern true,
+-- aber es entsteht nur EIN Log-Eintrag und dyn_rev steigt nur um 1.
+--
+-- Rückgabewert im No-op-Fall bewusst true (nicht false): sonst löst ein
+-- legitimer Retry beim Gast eine Fehlermeldung aus ("Could not confirm"),
+-- obwohl technisch alles in Ordnung ist. Der Artifact-Fallback-Pfad verhält
+-- sich genauso (updateDyn liefert { ok:true, unchanged:true }).
+--
+-- guest_report_issue dedupliziert über ein 20-Sekunden-Zeitfenster, nicht
+-- über "schon irgendwann gemeldet". Absichtlich: ein Gast muss dasselbe
+-- Problem später legitim erneut melden können (z. B. dieselbe Verspätung
+-- 20 Minuten später erneut). Nur der unmittelbare Retry wird geschluckt.
+--
+-- SIGNATUREN: guest_confirm_pickup(text,text), guest_at_pickup(text,text) und
+-- guest_report_issue(text,text,text,text) bleiben UNVERÄNDERT -> die GRANTs
+-- weiter oben (Zeilen 651-653) bleiben gültig und müssen nicht neu vergeben
+-- werden. Kein Frontend-Redeploy nötig, die App ruft dieselben RPCs auf.
+--
+-- Der interne Helfer _guest_patch_ride bekommt dagegen einen zusätzlichen
+-- Parameter. "create or replace function" ersetzt nur bei IDENTISCHER
+-- Parameterliste -> ohne das explizite DROP unten bliebe die alte
+-- 5-Parameter-Version als toter Zombie-Overload in der DB liegen (nichts
+-- ruft sie mehr auf, aber sie existiert weiter und verwirrt bei späterer
+-- Fehlersuche). Das DROP und die Neuanlage stehen in EINER Transaktion,
+-- damit zwischen beiden kein Zeitfenster entsteht, in dem
+-- guest_confirm_pickup/guest_at_pickup ins Leere zeigen würden.
+--
+-- Gefahrlos erneut ausführbar.
+-- ============================================================================
+
+begin;
+
+drop function if exists _guest_patch_ride(text, text, jsonb, text, text);
+
+-- p_idempotent_field bewusst OHNE Default-Wert: mit "default null" wäre die
+-- neue Version auch mit 5 Argumenten aufrufbar und ein 5-Argument-Aufruf damit
+-- mehrdeutig ("function is not unique"), sobald die alte 5-Parameter-Version
+-- gleichzeitig existiert. Genau das passiert, wenn jemand die KOMPLETTE
+-- supabase-schema.sql erneut einspielt: weiter oben (Zeile 341) wird die alte
+-- Version dann neu angelegt und die Aufrufe in Zeile 389/396 könnten sich
+-- nicht mehr entscheiden. Ohne Default löst 5 Argumente immer eindeutig auf
+-- die alte und 6 Argumente immer eindeutig auf die neue Version auf; der
+-- Nachtrag hier räumt die alte am Ende ohnehin wieder weg.
+create or replace function _guest_patch_ride(
+  p_token text, p_ride text, p_patch jsonb, p_log_event text, p_log_detail text,
+  p_idempotent_field text
+)
+returns boolean
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_dj text;
+  v_rows int;
+  v_now bigint := (extract(epoch from now()) * 1000)::bigint;
+  v_already_set boolean;
+begin
+  select dj_name into v_dj from guest_tokens where token = p_token;
+  if v_dj is null then
+    return false;
+  end if;
+
+  update settings s
+  set dyn_data = jsonb_set(
+        s.dyn_data,
+        '{rides}',
+        (
+          select jsonb_agg(
+            case
+              when elem->>'id' = p_ride and lower(trim(coalesce(elem->>'djName',''))) = lower(trim(v_dj))
+                then (elem || p_patch || jsonb_build_object('updatedAt', v_now))
+                     || jsonb_build_object('log', coalesce(elem->'log', '[]'::jsonb) || jsonb_build_array(
+                          jsonb_build_object('event', p_log_event, 'at', v_now, 'by', 'guest:' || v_dj, 'detail', p_log_detail)
+                        ))
+              else elem
+            end
+          )
+          from jsonb_array_elements(coalesce(s.dyn_data->'rides', '[]'::jsonb)) as elem
+        )
+      ),
+      dyn_rev = dyn_rev + 1,
+      updated_at = now()
+  where s.id = 1
+    and exists (
+      select 1 from jsonb_array_elements(coalesce(s.dyn_data->'rides', '[]'::jsonb)) as e
+      where e->>'id' = p_ride and lower(trim(coalesce(e->>'djName',''))) = lower(trim(v_dj))
+        and (p_idempotent_field is null or coalesce(e->>p_idempotent_field, '') = '')
+    );
+
+  get diagnostics v_rows = row_count;
+  if v_rows > 0 then
+    return true;
+  end if;
+
+  -- 0 Zeilen betroffen: entweder gab es die Fahrt für diesen Gast nicht, oder
+  -- das Zielfeld war (von diesem oder einem parallelen Aufruf) bereits
+  -- gesetzt. Die Nachprüfung unterscheidet die beiden Fälle.
+  if p_idempotent_field is not null then
+    select true into v_already_set
+    from settings s
+    cross join lateral jsonb_array_elements(coalesce(s.dyn_data->'rides', '[]'::jsonb)) as e
+    where s.id = 1
+      and e->>'id' = p_ride
+      and lower(trim(coalesce(e->>'djName',''))) = lower(trim(v_dj))
+      and coalesce(e->>p_idempotent_field, '') <> ''
+    limit 1;
+    if v_already_set then
+      return true;
+    end if;
+  end if;
+
+  return false;
+end $$;
+
+create or replace function guest_confirm_pickup(p_token text, p_ride text)
+returns boolean language sql security definer set search_path = public as $$
+  select _guest_patch_ride(p_token, p_ride,
+    jsonb_build_object('guestConfirmedAt', (extract(epoch from now()) * 1000)::bigint),
+    'guest_confirm', 'Confirmed pickup info', 'guestConfirmedAt');
+$$;
+
+create or replace function guest_at_pickup(p_token text, p_ride text)
+returns boolean language sql security definer set search_path = public as $$
+  select _guest_patch_ride(p_token, p_ride,
+    jsonb_build_object('guestAtPickupAt', (extract(epoch from now()) * 1000)::bigint),
+    'guest_at_pickup', 'At the pickup point', 'guestAtPickupAt');
+$$;
+
+-- Eigene Funktion statt _guest_patch_ride, weil hier an ein Array (issues)
+-- angehängt wird statt ein Skalarfeld zu ersetzen. Idempotenz deshalb über
+-- ein Zeitfenster statt über "Feld schon gesetzt" (siehe Kopf oben).
+create or replace function guest_report_issue(p_token text, p_ride text, p_type text, p_note text)
+returns boolean
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_dj text;
+  v_rows int;
+  v_now bigint := (extract(epoch from now()) * 1000)::bigint;
+  v_issue jsonb;
+  v_detail text;
+  v_dup boolean;
+  v_dedupe_window_ms constant bigint := 20000;
+begin
+  select dj_name into v_dj from guest_tokens where token = p_token;
+  if v_dj is null then
+    return false;
+  end if;
+
+  v_issue := jsonb_build_object(
+    'id', 'i' || v_now, 'type', p_type, 'note', coalesce(p_note, ''),
+    'at', v_now, 'by', 'guest:' || v_dj, 'state', 'open'
+  );
+  v_detail := p_type || case when p_note is not null and p_note <> '' then ': ' || p_note else '' end;
+
+  update settings s
+  set dyn_data = jsonb_set(
+        s.dyn_data,
+        '{rides}',
+        (
+          select jsonb_agg(
+            case
+              when elem->>'id' = p_ride and lower(trim(coalesce(elem->>'djName',''))) = lower(trim(v_dj))
+                then elem
+                     || jsonb_build_object('issues', coalesce(elem->'issues', '[]'::jsonb) || jsonb_build_array(v_issue))
+                     || jsonb_build_object('log', coalesce(elem->'log', '[]'::jsonb) || jsonb_build_array(
+                          jsonb_build_object('event', 'problem', 'at', v_now, 'by', 'guest:' || v_dj, 'detail', v_detail)
+                        ))
+                     || jsonb_build_object('updatedAt', v_now)
+              else elem
+            end
+          )
+          from jsonb_array_elements(coalesce(s.dyn_data->'rides', '[]'::jsonb)) as elem
+        )
+      ),
+      dyn_rev = dyn_rev + 1,
+      updated_at = now()
+  where s.id = 1
+    and exists (
+      select 1 from jsonb_array_elements(coalesce(s.dyn_data->'rides', '[]'::jsonb)) as e
+      where e->>'id' = p_ride and lower(trim(coalesce(e->>'djName',''))) = lower(trim(v_dj))
+        and not exists (
+          select 1 from jsonb_array_elements(coalesce(e->'issues', '[]'::jsonb)) as iss
+          where lower(trim(coalesce(iss->>'type',''))) = lower(trim(coalesce(p_type,'')))
+            and lower(trim(coalesce(iss->>'note',''))) = lower(trim(coalesce(p_note,'')))
+            and iss->>'by' = 'guest:' || v_dj
+            and (v_now - coalesce((iss->>'at')::bigint, 0)) < v_dedupe_window_ms
+        )
+    );
+
+  get diagnostics v_rows = row_count;
+  if v_rows > 0 then
+    return true;
+  end if;
+
+  -- 0 Zeilen: entweder passt Fahrt/Token nicht, oder es gab gerade (< 20 s)
+  -- schon einen identischen Eintrag von diesem Gast. Zweiten Fall als
+  -- sauberen No-op-Erfolg zurückgeben statt als Fehler.
+  select true into v_dup
+  from settings s
+  cross join lateral jsonb_array_elements(coalesce(s.dyn_data->'rides', '[]'::jsonb)) as e
+  cross join lateral jsonb_array_elements(coalesce(e->'issues', '[]'::jsonb)) as iss
+  where s.id = 1
+    and e->>'id' = p_ride
+    and lower(trim(coalesce(e->>'djName',''))) = lower(trim(v_dj))
+    and lower(trim(coalesce(iss->>'type',''))) = lower(trim(coalesce(p_type,'')))
+    and lower(trim(coalesce(iss->>'note',''))) = lower(trim(coalesce(p_note,'')))
+    and iss->>'by' = 'guest:' || v_dj
+    and (v_now - coalesce((iss->>'at')::bigint, 0)) < v_dedupe_window_ms
+  limit 1;
+
+  if v_dup then
+    return true;
+  end if;
+
+  return false;
+end $$;
+
+commit;
