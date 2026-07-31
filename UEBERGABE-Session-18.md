@@ -2,10 +2,12 @@
 
 Ersetzt UEBERGABE-Session-17.md.
 
-> **AKTUELLSTER STAND: Abschnitt "STAND SESSION 23" ganz unten**, dazu
-> "VORARBEIT FUER SESSION 24". Diese Datei waechst nach UNTEN an. Alle
-> Zeilennummern und Stand-Angaben weiter oben sind aelter und stimmen nicht
-> mehr. Reihenfolge der Staende in der Datei: 18 (oben), 19, 21, 22, 23 (unten).
+> **AKTUELLSTER STAND: Abschnitt "Session 31.07.2026 (Teil 9)" GANZ UNTEN**,
+> dazu direkt danach die Korrektur zu `smoke-teilpaket-g2-ui`, die Liste
+> "Weitere gefundene Punkte" und der fertige Opener. Diese Datei waechst nach
+> UNTEN an. Alle Zeilennummern und Stand-Angaben weiter oben sind aelter und
+> stimmen nicht mehr. Reihenfolge der Staende in der Datei: 18 (oben), 19, 21,
+> 22, 23, dann die Sessions vom 25.07. (Teile 6-8) und 31.07. (Teil 9, unten).
 > Jede Zeilennummer vor der Benutzung per grep gegenpruefen.
 
 > **NACHTRAG Session 19 weiter unten beachten** (Abschnitt
@@ -8252,3 +8254,249 @@ stehende Fahrt faelschlich auf 25px schrumpfen -> beweist, dass die
 > Proaktiv vor zu langem Chat warnen.
 >
 > PAT: [HIER FRISCHEN PAT EINSETZEN]
+
+---
+
+# Session 31.07.2026 (Teil 9): "Gesehen"-Knopf fuer zeitbasierte Notfaelle
+
+**Ein Code-Commit (`b9fa1a6`), 13968 Zeilen, gepusht und live.**
+Sicherungs-Tag: `post-quittieren-gesehen` (= `b9fa1a6`).
+
+## Das Problem
+
+Der bestehende Knopf "Problem erledigt" in `MissionEmergencyTab` haengt an
+`c.type === "issue"` und ruft `resolveIssues(r.id)`, das die gemeldeten
+`issues[]` auf `done` setzt. Die **zeitbasierten** Faelle haben aber gar kein
+`issues[]`:
+
+- `waiting` ("Fahrer nicht gestartet, X min ueber Zeit")
+- `nodriver` ("ohne Fahrer, Start in X min" / "Start ueberfaellig")
+- `flight` (annulliert, gelandet ohne Fahrer)
+
+Die bekamen deshalb keinen Knopf, und `resolveIssues` waere dort ein reiner
+No-Op gewesen. In der Praxis: ein Fall, um den sich die Leitstelle laengst
+kuemmert, blieb rot in der Liste stehen und war nicht wegzubekommen, ausser
+durch eine echte Statusaenderung.
+
+## Die Loesung (Variante B, von Jordan freigegeben)
+
+Kein hartes Ausblenden, kein gefaelschter Status. Stattdessen eine **Quittung
+mit Rueckkehr**: vier neue Felder im Ride-Objekt.
+
+```
+caseAckAt     Zeitstempel der Quittierung (ms)
+caseAckType   "flight" | "nodriver" | "waiting"
+caseAckSev    "warn" | "critical"   (Stufe ZUM ZEITPUNKT der Quittierung)
+caseAckLabel  Alarmtext zum Zeitpunkt der Quittierung
+```
+
+Neuer reiner Helfer direkt ueber `emergencyCases`:
+
+```js
+const ACK_SNOOZE_MIN = 10;
+const ACK_CASE_TYPES = ["flight", "nodriver", "waiting"];
+function caseAckActive(r, type, sev, label, nowMs) {
+  if (!r || !r.caseAckAt) return false;
+  if (r.caseAckType !== type || r.caseAckSev !== sev) return false;
+  if (type === "flight" && r.caseAckLabel !== label) return false;
+  return nowMs - r.caseAckAt < ACK_SNOOZE_MIN * 60000;
+}
+```
+
+**Warum der Label-Vergleich NUR bei `flight`:** `flightAlert` kennt fuer
+kritische Lagen nur die eine Stufe `critical`. Ein Wechsel von "gelandet, aber
+kein Fahrer unterwegs" zu "Flug annulliert" wuerde ueber `sev` allein NICHT
+durchbrechen. Bei `nodriver`/`waiting` waere derselbe Vergleich dagegen falsch:
+dort laeuft die Minutenzahl im Text mit (`... 8 min ueber Zeit`), die Quittung
+wuerde schon nach einer Minute wieder aufbrechen und der Knopf waere sinnlos.
+
+**Warum die Eskalation automatisch durchbricht:** die Quittung haengt an der
+Stufe. Wechselt ein Fall von `warn` auf `critical` (Ueberfaelligkeit >= 20 min,
+bzw. `nodriver` Start in <= 15 min), passt `caseAckSev` nicht mehr, und der Fall
+steht sofort wieder in der Liste, egal wie frisch die Quittung ist.
+
+## Einfuegestellen (drei, rein additiv)
+
+1. **`emergencyCases`** (jetzt ab Z. ~9985): `const nowMs = Date.now();` oben,
+   dann bei `flight`/`nodriver`/`waiting` je ein `!caseAckActive(...)` vor dem
+   `cases.push`. `sev`/`label` wurden dafuer in lokale Konstanten gezogen, damit
+   Check und Push denselben Wert sehen (das sind die drei "geloeschten" Zeilen
+   im Diff, inhaltlich unveraendert). **`issue` bleibt komplett unangetastet.**
+2. **`ackCase`** in `MissionEmergencyTab`, direkt nach `resolveIssues`. Gleiches
+   Muster: `updateDyn`, `RIDE_GONE`-Guard, `NO_CHANGE` wenn schon quittiert
+   (Idempotenz bei zwei Geraeten), `logRide(r, "case_ack", by, ...)`. **Eigener
+   Ladezustand `acking`**, damit `resolving` und der bestehende Knopf unberuehrt
+   bleiben.
+3. **Button-Block**: zusaetzlicher Zweig `ACK_CASE_TYPES.includes(c.type)` mit
+   Text "Gesehen", Amber-Tokens (`--mc-st-assigned*`), `title` nennt die Dauer.
+
+## Schreibpfad (verifiziert)
+
+Die vier Felder sitzen **im Ride-Objekt**, nicht als Top-Level-`dyn`-Feld.
+`rides` ist bereits vollwertig in `DYN_FIELDS` und wird als `p_rides` komplett
+als JSONB an `write_dyn_if_unchanged` uebergeben. Daher: **keine Aenderung an
+DYN_FIELDS, keine an der SQL-Signatur, kein Schema-Re-Run.** `assertKnownDynKeys`
+prueft nur Top-Level-Felder und ist nicht betroffen. `dyn_rev` zaehlt ueber den
+normalen `updateDyn`-Weg hoch.
+
+## Verifikation
+
+esbuild gruen, 0 Duplikate, **JSX-Referenzen identisch zu HEAD**, **rg.mjs
+Reachability identisch zu HEAD**, rendertest 5 Werte konstant
+(25053/2452/2413/2895/101), kontrast 0.
+
+Regression alle unveraendert: e 152/0, g 130/0, gegenprobe-e 8/8,
+offline-reconnect-e 39/0, buehne-settime 17/0, write-sideeffects 39/0,
+fahrtenliste 35/0, **fokus-bereich 80/0 (12 GP, einziger Test der
+`emergencyCases` beruehrt)**, fahrer-uebersicht-tab 16, fahrer-suche 19,
+sublane-overlap 14.
+
+**Neuer Test `smoke-quittieren-gesehen.mjs`: 31 Pruefungen, inkl. 3 Gegenproben.**
+- Teil 1 (8): `caseAckActive` rein, mit festem Bezugspunkt (wanduhr-unabhaengig).
+- Teil 2 (5): `emergencyCases` ueber den `flight`-Fall (haengt nicht am
+  live-Zeitfenster, laeuft also immer).
+- Teil 3 (5): `waiting`/`nodriver` inkl. **echter Eskalation warn -> critical**.
+  Laeuft nur im sicheren Tagesfenster (nm 150..1290), sonst sauber uebersprungen
+  mit Hinweis, damit der Test nicht wanduhr-flaky wird wie `g2-ui`.
+- Teil 4 (7): UI-Render. "Gesehen" beim flight-Fall vorhanden, beim issue-Fall
+  NICHT, "Problem erledigt" unveraendert, Render read-only (kein `updateDyn`).
+- Teil 5 (6): Gegenproben. Zeitfenster entfernt -> Pruefung 11 kippt;
+  sev-Vergleich entfernt -> Eskalationspruefung 16 kippt; `"issue"` in
+  `ACK_CASE_TYPES` -> Pruefung 23 kippt.
+
+Gegen `git show HEAD:src/...` bricht der Test **sauber mit Exit 2 und Klartext**
+ab (die Symbole fehlen dort), statt mit Stacktrace. Das ist der erwartete
+HEAD-Gegenbeweis.
+
+## Bewusste Design-Entscheidung, die man kennen muss
+
+`emergencyCases` speist **drei** Stellen: die Fall-Liste selbst
+(`MissionEmergencyTab`), "Was brennt" im Ueberblick (`MissionOverviewTab`) und
+den **Notfall-Zaehler in der MC-Nav** (Shell, `emCrit`/`emCount`). Eine Quittung
+blendet den Fall folglich **ueberall** aus, nicht nur in der Liste. Das ist
+gewollt (eine Wahrheit statt drei), heisst aber: ein zweiter Dispatcher sieht am
+Badge nicht mehr, dass da etwas quittiert wurde. Falls das im Betrieb zu still
+ist, waere ein kleiner "3 quittiert"-Zaehler ein eigenes Thema.
+
+## Live-Testfaelle
+
+1. Fahrt mit Flugnummer auf "annulliert" -> Fall kritisch. "Gesehen" -> weg,
+   auch aus dem Nav-Badge. Fahrt oeffnen, Log zeigt `case_ack`. Nach 10 min
+   wieder da.
+2. Fahrt mit Fahrer, Zeit 8 min in der Vergangenheit, Status "angenommen" ->
+   Warnung. "Gesehen" -> weg. Zeit auf 25 min zurueck -> **sofort wieder da,
+   jetzt kritisch** (Eskalation).
+3. Zwei Geraete: auf A quittieren, B laedt nach 3s -> auch dort weg, kein
+   Fehler, keine doppelte Log-Zeile (`NO_CHANGE`).
+4. Fahrt mit gemeldetem Problem -> nur "Problem erledigt", kein "Gesehen".
+
+---
+
+# KORREKTUR zum Opener: `smoke-teilpaket-g2-ui` ist NICHT wanduhr-flaky
+
+Bisher stand im Opener, `smoke-teilpaket-g2-ui` sei zwischen 06 und 08h UTC
+flaky (Tests 14/20/25/26/27). **Das stimmt so nicht.** Gemessen am 31.07. um
+15h UTC, also weit ausserhalb des angeblichen Fensters: **49 OK, 2 FAIL**, und
+zwar konstant die Tests **15 und 21** ("Fahrer B idle am Festival aus
+locationId").
+
+Ursache: das Test-Fixture setzt fuer Fahrer B `driverState.locationId =
+"festival"` **ohne** `locationDayKey`. Seit Einfuehrung der Tagesbezug-Pruefung
+verwirft `stateLocationId` einen Standort ohne passenden Tagesbezug
+grundsaetzlich, unabhaengig von der Uhrzeit. Es ist also ein **veraltetes
+Test-Fixture, kein Uhrzeit-Problem und kein App-Bug.**
+
+Fuer den naechsten Opener: **`smoke-teilpaket-g2-ui` = 2 dauerhafte FAILs
+(Tests 15 und 21), nicht zeitabhaengig.** Der Fix waere ein Einzeiler im Test
+(`locationDayKey` im Fixture ergaenzen), gehoert aber in ein eigenes Thema.
+
+---
+
+# Weitere gefundene Punkte (offen, NICHT angefasst)
+
+- **`TimelineView`** (kompakte Uebersicht, eingebettet Z. ~9755/~11742,
+  Definition ~10898) verdeckt ueberlappende Fahrten noch so, wie es die grosse
+  Timeline vor dem Sub-Lane-Umbau tat. Die Helfer `timelineLanes` /
+  `timelineLaneBox` sind wiederverwendbar, der Umbau waere entsprechend klein.
+- **`matchLoc`-Fix** (Z. ~7676, hartkodierte Orte). Nur zur Importzeit aktiv,
+  Substring-Matching, permissiver als `resolveLocation`.
+- **Erledigt-/Gesehen-Knopf evtl. auch im geoeffneten Fahrt-Detail** (`RideForm`).
+- **`smoke-teilpaket-g2-ui`-Fixture** (siehe Korrektur oben).
+- **GuestApp-Poll ohne Ueberlappungsschutz.**
+- **Post-Festival Paket 2** (u.a. Traccar-Client-GPS).
+
+---
+
+> **Fertiger Opener fuer den naechsten Chat (Stand 31.07.2026):**
+>
+> Neue Session, OpenBeatz Shuttle-Leitstelle. Arbeitsverzeichnis MUSS
+> `/home/claude/repo` (mehrere Testskripte haben den Pfad hart verdrahtet).
+> Erst Schritt 0 komplett: Repo klonen (frischen PAT von mir), PAT sofort aus der
+> Remote-URL scrubben (`git remote set-url`), `npm install` (kein `npm ci`; es
+> gibt ein `package-lock.json`), `git config user.name Claude` /
+> `user.email claude@merg-and-more.de`, `git fetch`, selbst pruefen
+> HEAD==origin/main. Zeilenzahl selbst nachmessen.
+>
+> **Stand:** letzter CODE-Commit `b9fa1a6` ("Gesehen"-Knopf fuer zeitbasierte
+> Notfaelle), **13968 Zeilen**; darueber liegt ggf. der Doku-Commit.
+> Sicherungs-Tags: `post-timeline-sublanes-fix` (= `7921031`),
+> **`post-quittieren-gesehen` (= `b9fa1a6`)**.
+>
+> Zuletzt gebaut: Quittieren ("Gesehen") fuer `flight`/`nodriver`/`waiting` in
+> der Mission-Control-Fahrtenliste. Vier Felder am Ride-Objekt
+> (`caseAckAt`/`caseAckType`/`caseAckSev`/`caseAckLabel`), 10 min Snooze,
+> Eskalation bricht durch, `issue`-Faelle unveraendert bei "Problem erledigt".
+>
+> **Bestands-Regression vor allem Neuen:** esbuild, Duplikat-Grep
+> (`[a-zA-Z0-9_]+`), fuer Teilpaket B/E/G **ZUERST** `python3
+> extract-funcs-teilpaket-{b,e,g}.py src/ShuttleLeitstelle.jsx
+> tmp-t{b,e,g}-funcs.mjs` (sonst crashen die scharfen Tests faelschlich), dann
+> `smoke*.mjs`. Render-Tests brauchen den Dateipfad als `process.argv[2]`:
+> `smoke-fahrer-uebersicht-tab`, `smoke-fahrer-suche-uebersicht`,
+> `smoke-timeline-fahrerknopf`, `smoke-timeline-sublane-overlap`,
+> **`smoke-quittieren-gesehen`**, `smoke-fokus-bereich`, `rendertest`. Dann
+> `rendertest.mjs` (5 Werte konstant 25053/2452/2413/2895/101), `kontrast.mjs`
+> (0). **Extrakte ERST NACH der ganzen Suite loeschen.** Bester Nachweis: Suite
+> zusaetzlich gegen `git show HEAD:src/ShuttleLeitstelle.jsx`, nur ABWEICHUNGEN
+> als Regression werten.
+>
+> **Scharf gruen:** `smoke-teilpaket-e` (152/0), `smoke-teilpaket-g` (130/0),
+> `gegenprobe-teilpaket-e` (8/8), `smoke-offline-reconnect-e` (39/0),
+> `smoke-buehne-settime` (17/0), `smoke-write-sideeffects` (39/0),
+> `smoke-fahrtenliste` (35/0), `smoke-fokus-bereich` (80/0, 12 GP),
+> `smoke-fahrer-uebersicht-tab` (16), `smoke-fahrer-suche-uebersicht` (19 inkl.
+> 2 GP), `smoke-timeline-sublane-overlap` (14 inkl. 2 GP),
+> **`smoke-quittieren-gesehen` (31 inkl. 3 GP)**.
+>
+> **Vorbestehende Fehler NICHT als Regression werten:**
+> `smoke-timeline-fahrerknopf` (nur die HEAD-Gegenprobe kippt, 3 funktionale
+> Checks gruen, weil der Fahrer-Knopf seit `a0fef38` in HEAD ist),
+> `smoke-orte-fix` (2), **`smoke-teilpaket-g2-ui` (2 FAILs, Tests 15 und 21 --
+> veraltetes Fixture ohne `locationDayKey`, NICHT wanduhr-abhaengig, entgegen
+> aelterer Notiz)**, `test_springer_availability` (8),
+> `smoke-standort-tagesbezug` (1 von 23, zeitfensterabhaengig, gegen HEAD
+> gegenpruefen).
+>
+> **THEMA: [von mir zu setzen].** Offene Kandidaten: `TimelineView` (kompakte
+> Uebersicht, Z. ~9755/~11742, Def. ~10898) verdeckt ueberlappende Fahrten noch
+> wie die grosse Timeline vor dem Sub-Lane-Umbau (Helfer `timelineLanes`/
+> `timelineLaneBox` wiederverwendbar); `matchLoc`-Fix (Z. ~7676, hartkodierte
+> Orte); Gesehen-/Erledigt-Knopf auch im geoeffneten Fahrt-Detail (`RideForm`);
+> `g2-ui`-Fixture reparieren (`locationDayKey` ergaenzen); GuestApp-Poll ohne
+> Ueberlappungsschutz; Post-Festival Paket 2 (Traccar-Client-GPS).
+>
+> **Regeln:** Deutsch, informell, keine Gedankenstriche, korrekte Umlaute. Rein
+> additiv wo moeglich, kleinstmoegliche Aenderung, keine Breaking Changes, keine
+> Workflow-/Rollen-/Stage-/DB-Struktur-Aenderungen (ausser zwingend). Erst
+> Diagnose, dann Verdrahtungsplan mit Einfuegestelle und Regressionsrisiko, dann
+> meine Freigabe (inkl. Optik falls sichtbar), dann Bau. Nach jeder Aenderung
+> volle Kette (esbuild, Duplikat-Grep, JSX-Referenzabgleich, rg.mjs-Diff, Smoke
+> mit Pflicht-Gegenprobe, rendertest, kontrast) + Diff-Beweis + konkrete
+> Leitstellen-Testfaelle. Jeder neue Test braucht eine Gegenprobe, die beweist,
+> dass er wirklich misst. Bugs ausserhalb des Themas -> "Weitere gefundene
+> Punkte", NICHT fixen. Nur eine Session gleichzeitig. `git fetch` unmittelbar
+> vor jedem Push. Commit-Messages mit Umlauten ueber `/tmp/msg.txt` +
+> `git commit -F` (Datei in eigenem Befehl schreiben). Proaktiv vor zu langem
+> Chat warnen.
+>
+> PAT: [HIER FRISCHEN PAT MIT CONTENTS: READ AND WRITE EINSETZEN]
