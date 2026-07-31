@@ -135,7 +135,13 @@ const ridesA = [
 const retRide = { ...rbase, id: "ret1", date: DAY, time: nextTime, fromId: "festival", toId: "sheraton", status: "planned", assignedDriverId: null, type: "return", djName: "GastX" };
 const allRides = [...ridesA, retRide];
 const driverState = {}; drivers.forEach((d) => { driverState[d.id] = {}; });
-driverState[B.id] = { locationId: "festival" }; // B idle am Festival, aber ohne Fahrt -> not_evaluable (Kontrolle)
+// B idle am Festival, aber ohne Fahrt -> not_evaluable (Kontrolle).
+// locationDayKey gehoert zwingend dazu: stateLocationId() liefert einen
+// gespeicherten Standort nur zurueck, wenn der Tagesbezug zum geprueften Tag
+// passt. Ohne das Feld gilt der Eintrag als Altbestand und wird ignoriert,
+// die Precondition in Pruefung 15 waere dann gar nicht hergestellt.
+// advance() schreibt beide Felder immer gemeinsam (siehe smoke-standort-tagesbezug D3).
+driverState[B.id] = { locationId: "festival", locationDayKey: DAY };
 const dyn = { rides: allRides, artistPresence: {}, driverState, rev: 1 };
 
 const sA = computeDriverStats(setup, dyn, A.id, DAY);
