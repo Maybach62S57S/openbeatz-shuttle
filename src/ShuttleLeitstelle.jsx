@@ -11881,6 +11881,13 @@ function SettingsTab({ setup, dyn, day, updateSetup, updateDyn, onPreviewGuest }
   const [importing, setImporting] = useState(false); // Doppelklick-/Mehrfachimport-Schutz
   const [importErr, setImportErr] = useState("");     // sichtbare Meldung, falls der Import nicht gespeichert wird
   const [newFestDate, setNewFestDate] = useState(""); // Hinzufuegen-Feld "Festival-Tage" (kontrolliert, damit es sich nach dem Speichern leert)
+  // Sichtbare Meldung, falls ein Schreibvorgang in diesen beiden Abschnitten
+  // scheitert. Vorher liefen Matrix und Festival-Tage als fire-and-forget:
+  // updateSetup ohne await und ohne Ergebnispruefung, ein Fehlschlag war fuer
+  // die Leitstelle unsichtbar. Getrennt statt gemeinsam, damit die Meldung
+  // eindeutig am betroffenen Abschnitt steht.
+  const [matrixErr, setMatrixErr] = useState("");
+  const [festErr, setFestErr] = useState("");
 
   // Punkt 14: robustere Signatur – zusätzlich Flug, Passagiere, Treffpunkt (oder Zeilen-ID)
   const rideSig = (r) => r.srcId ? `src:${r.srcId}` :
@@ -11975,9 +11982,17 @@ function SettingsTab({ setup, dyn, day, updateSetup, updateDyn, onPreviewGuest }
     const t = travel(setup.matrix, a, b);
     return t ? `${t.min}/${t.km}` : "";
   };
-  const setMatrix = (a, b, raw) => {
+  // Die Matrix ist die Grundlage fuer evaluateInsertion/suggestDrivers, also fuer
+  // alle Fahrervorschlaege. Ein still verschluckter Schreibvorgang laesst die
+  // Leitstelle mit alten Fahrzeiten weiterarbeiten, ohne es zu merken. Das Feld
+  // ist uncontrolled (defaultValue): der getippte Wert bleibt im Fehlerfall
+  // sichtbar stehen, obwohl er nicht in der DB ist, darum sagt die Meldung
+  // ausdruecklich, dass der alte Stand nach dem Neuladen zurueckkommt.
+  const setMatrix = async (a, b, raw) => {
     const [min, km] = raw.split("/").map((x) => Number(x.trim()));
-    updateSetup((s) => { s.matrix[`${a}|${b}`] = { min: min || 0, km: km || 0 }; return s; });
+    const res = await updateSetup((s) => { s.matrix[`${a}|${b}`] = { min: min || 0, km: km || 0 }; return s; });
+    if (!res || !res.ok) setMatrixErr(res?.error || "Fahrzeit konnte nicht gespeichert werden. Der Wert im Feld ist noch nicht gesichert, nach dem Neuladen steht wieder der alte Stand da. Bitte erneut eintragen.");
+    else setMatrixErr("");
   };
 
   const locs = setup.locations;
@@ -12053,13 +12068,21 @@ function SettingsTab({ setup, dyn, day, updateSetup, updateDyn, onPreviewGuest }
             <div key={d} className="flex items-center gap-2">
               <span className="text-xs w-10 shrink-0" style={{ color: "var(--mc-text-muted)" }}>{fmtDate(d)}</span>
               <input type="date" className={mcInp} value={d} autoComplete="off"
-                onChange={(e) => updateSetup((s) => {
-                  const arr = (s.config.festivalDates || []).map((x) => (x === d ? e.target.value : x));
-                  s.config.festivalDates = [...new Set(arr.filter(Boolean))].sort(); return s;
-                })} />
-              <button onClick={() => updateSetup((s) => {
-                s.config.festivalDates = (s.config.festivalDates || []).filter(Boolean).filter((x) => x !== d); return s;
-              })} title="Tag entfernen" aria-label="Tag entfernen" className="mc-iconbtn shrink-0"><X className="w-4 h-4" /></button>
+                onChange={async (e) => {
+                  const res = await updateSetup((s) => {
+                    const arr = (s.config.festivalDates || []).map((x) => (x === d ? e.target.value : x));
+                    s.config.festivalDates = [...new Set(arr.filter(Boolean))].sort(); return s;
+                  });
+                  if (!res || !res.ok) setFestErr(res?.error || "Festival-Tag konnte nicht geaendert werden, bitte erneut versuchen.");
+                  else setFestErr("");
+                }} />
+              <button onClick={async () => {
+                const res = await updateSetup((s) => {
+                  s.config.festivalDates = (s.config.festivalDates || []).filter(Boolean).filter((x) => x !== d); return s;
+                });
+                if (!res || !res.ok) setFestErr(res?.error || "Festival-Tag konnte nicht entfernt werden, bitte erneut versuchen.");
+                else setFestErr("");
+              }} title="Tag entfernen" aria-label="Tag entfernen" className="mc-iconbtn shrink-0"><X className="w-4 h-4" /></button>
             </div>
           ))}
           {/* Eigener State statt konstantem value="": nur so setzt React das Feld
@@ -12070,12 +12093,18 @@ function SettingsTab({ setup, dyn, day, updateSetup, updateDyn, onPreviewGuest }
               const v = e.target.value;
               setNewFestDate(v);
               if (!v) return;
-              await updateSetup((s) => {
+              const res = await updateSetup((s) => {
                 s.config.festivalDates = [...new Set([...(s.config.festivalDates || []), v].filter(Boolean))].sort(); return s;
               });
+              // Feld erst NACH bestaetigtem Speichern leeren. Vorher lief das
+              // Leeren immer, auch im Fehlerfall, und hat damit aktiv Erfolg
+              // vorgetaeuscht: der Tag war weder in der DB noch im Feld.
+              if (!res || !res.ok) { setFestErr(res?.error || "Festival-Tag konnte nicht hinzugefuegt werden, bitte erneut versuchen."); return; }
+              setFestErr("");
               setNewFestDate("");
             }} />
         </div>
+        {festErr && <div className="text-xs mt-2" style={{ color: "var(--mc-st-problem)" }}>{festErr}</div>}
       </section>
 
       {/* Fahrzeit-Matrix */}
@@ -12104,6 +12133,7 @@ function SettingsTab({ setup, dyn, day, updateSetup, updateDyn, onPreviewGuest }
             </tbody>
           </table>
         </div>
+        {matrixErr && <div className="text-xs mt-2" style={{ color: "var(--mc-st-problem)" }}>{matrixErr}</div>}
       </section>
 
       {/* Fahrer/Fahrzeuge Übersicht */}
